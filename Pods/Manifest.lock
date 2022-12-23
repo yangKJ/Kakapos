@@ -1,0 +1,16 @@
+PODS:
+  - Toast-Swift (5.0.1)
+
+DEPENDENCIES:
+  - Toast-Swift
+
+SPEC REPOS:
+  trunk:
+    - Toast-Swift
+
+SPEC CHECKSUMS:
+  Toast-Swift: 9b6a70f28b3bf0b96c40d46c0c4b9d6639846711
+
+PODFILE CHECKSUM: ee46fe6c5d9e3269d8d2df6fc9605cbba41c8f46
+
+COCOAPODS: 1.11.3
