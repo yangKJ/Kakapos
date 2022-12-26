@@ -11,8 +11,8 @@ import CoreVideo
 
 class Compositor: NSObject, AVVideoCompositing {
     
-    let renderQueue = DispatchQueue(label: "com.condy.exporter.renderingqueue")
-    let renderContextQueue = DispatchQueue(label: "com.condy.exporter.rendercontextqueue")
+    let renderQueue = DispatchQueue(label: "com.condy.exporter.rendering.queue")
+    let renderContextQueue = DispatchQueue(label: "com.condy.exporter.rendercontext.queue")
     
     var renderContext: AVVideoCompositionRenderContext!
     
@@ -26,15 +26,10 @@ class Compositor: NSObject, AVVideoCompositing {
     
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         self.renderQueue.sync {
-            guard let instruction = request.videoCompositionInstruction as? CompositionInstruction else {
-                request.finish(with: NSError(domain: "condy.com", code: 760, userInfo: nil))
+            guard let instruction = request.videoCompositionInstruction as? CompositionInstruction,
+                  let pixels = request.sourceFrame(byTrackID: instruction.trackID) else {
                 return
             }
-            guard let pixels = request.sourceFrame(byTrackID: instruction.trackID) else {
-                request.finish(with: NSError(domain: "condy.com", code: 761, userInfo: nil))
-                return
-            }
-            
             let buffer = instruction.bufferCallback(pixels)
             request.finish(withComposedVideoFrame: buffer)
         }

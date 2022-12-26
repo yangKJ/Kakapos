@@ -10,6 +10,7 @@ import Photos
 import AVKit
 import MobileCoreServices
 import Toast_Swift
+import Harbeth
 
 class ViewController: UIViewController {
     
@@ -37,12 +38,6 @@ class ViewController: UIViewController {
         button.titleLabel?.font = UIFont.systemFont(ofSize: 30)
         button.addTarget(self, action: #selector(photoAction), for: UIControl.Event.touchUpInside)
         return button
-    }()
-    
-    lazy var context: CIContext = {
-        let eagl = EAGLContext(api: EAGLRenderingAPI.openGLES2)
-        let context = CIContext(eaglContext: eagl!, options: nil)
-        return context
     }()
     
     override func viewDidLoad() {
@@ -99,26 +94,22 @@ extension ViewController {
             }
         }
         
-        //        let filter = CIFilter(name: "CIGaussianBlur")
-        //        filter?.setValue(20, forKey: "inputRadius")
-        
-        let filter = CIFilter(name: "CIGammaAdjust")
-        filter?.setValue(5, forKey: "inputPower")
-        
-        //        let filter2 = CIFilter(name: "CIWhitePointAdjust")
-        //        filter2?.setValue(CIColor(color: .green), forKey: "inputColor")
+        let filters: [C7FilterProtocol] = [
+            C7Flip(horizontal: true, vertical: false),
+            C7SoulOut(soul: 0.3),
+            MPSGaussianBlur(radius: 5),
+            C7WhiteBalance(temperature: 5000),
+        ]
         
         self.view.makeToast("Exporting..", duration: 600, position: .center)
         
-        exporter.export(outputURL: outputURL, filtering: { [weak self] (buffer) in
-            var image = CIImage(cvPixelBuffer: buffer)
-            filter?.setValue(image, forKey: kCIInputImageKey)
-            image = filter?.outputImage ?? image
-            self?.context.render(image, to: buffer)
-            return buffer
+        exporter.export(outputURL: outputURL, filtering: { (buffer) in
+            let dest = BoxxIO(element: buffer, filters: filters)
+            return (try? dest.output()) ?? buffer
         }, completionHandler: { [weak self] url, _ in
             self?.view.hideAllToasts()
-            let player = AVPlayer(url: url!)
+            guard let url = url else { return }
+            let player = AVPlayer(url: url)
             let vc = AVPlayerViewController()
             vc.player = player
             self?.present(vc, animated: true) {
