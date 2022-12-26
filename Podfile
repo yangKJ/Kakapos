@@ -5,6 +5,7 @@ target 'Exporter' do
   # Comment the next line if you don't want to use dynamic frameworks
   use_frameworks!
   pod 'Toast-Swift'
+  pod 'Harbeth'
 
   # Pods for Exporter
 
