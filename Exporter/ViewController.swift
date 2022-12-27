@@ -14,6 +14,12 @@ import Harbeth
 
 class ViewController: UIViewController {
     
+    lazy var playerView: UIView = {
+        let view = UIView.init()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+    
     lazy var videoButton: UIButton = {
         let button = UIButton.init(type: .custom)
         button.setTitle("URL Export", for: .normal)
@@ -43,14 +49,20 @@ class ViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         self.setupUI()
+        self.setupPlayer()
     }
     
     func setupUI() {
         title = "Video Exporter"
         view.backgroundColor = UIColor.white
+        view.addSubview(playerView)
         view.addSubview(videoButton)
         view.addSubview(photoButton)
         NSLayoutConstraint.activate([
+            playerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            playerView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: 20),
+            playerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: -20),
+            playerView.heightAnchor.constraint(equalTo: playerView.widthAnchor, multiplier: 16/9),
             videoButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -80),
             videoButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             videoButton.widthAnchor.constraint(equalToConstant: 200),
@@ -60,6 +72,20 @@ class ViewController: UIViewController {
             photoButton.widthAnchor.constraint(equalToConstant: 200),
             photoButton.heightAnchor.constraint(equalToConstant: 80),
         ])
+    }
+    
+    func setupPlayer() {
+        let url = URL(string: "https://mp4.vjshi.com/2017-11-21/7c2b143eeb27d9f2bf98c4ab03360cfe.mp4")!
+        let playerItem = AVPlayerItem(url: url)
+        let player = AVPlayer(playerItem: playerItem)
+        let playerLayer = AVPlayerLayer(player: player)
+        // 显示比例，默认resizeAspect，会在承载范围内缩放视频大小保持原始宽高比
+        // resizeAspectFill会保持视频的宽高比，并使其通过缩放填满层的范围区域，通常会导致图像被部分裁剪
+        // resize会将视频内容拉伸来匹配承载层的范围，这种情况最不常用，因为他通常会导致图片扭曲而导致的funhouse effect效应
+        playerLayer.videoGravity = .resize
+        //playerLayer.frame = CGRect(x: 0, y: 100, width: SCREEN_WIDTH, height: 300)
+        playerView.layer.addSublayer(playerLayer)
+        player.play()
     }
 }
 
@@ -83,7 +109,7 @@ extension ViewController {
         
         // Creating temp path to save the converted video
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] as URL
-        let outputURL = documentsDirectory.appendingPathComponent("rendered-Video.mp4")
+        let outputURL = documentsDirectory.appendingPathComponent("condy_exporter_video.mp4")
         
         // Check if the file already exists then remove the previous file
         if FileManager.default.fileExists(atPath: outputURL.path) {

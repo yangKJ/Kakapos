@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		4F3CB3CC4B0AD4029314E86D /* Pods_Exporter.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 715BC8CF071A9F9A60FB60B0 /* Pods_Exporter.framework */; };
+		87508073295A849100C4B01A /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 87508072295A849000C4B01A /* README.md */; };
 		879CB65929553A380020E820 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 879CB65829553A380020E820 /* AppDelegate.swift */; };
 		879CB65B29553A380020E820 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 879CB65A29553A380020E820 /* SceneDelegate.swift */; };
 		879CB65D29553A380020E820 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 879CB65C29553A380020E820 /* ViewController.swift */; };
@@ -21,6 +22,7 @@
 
 /* Begin PBXFileReference section */
 		715BC8CF071A9F9A60FB60B0 /* Pods_Exporter.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Exporter.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		87508072295A849000C4B01A /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = SOURCE_ROOT; };
 		879CB65529553A380020E820 /* Exporter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Exporter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		879CB65829553A380020E820 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		879CB65A29553A380020E820 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
@@ -99,6 +101,7 @@
 		879CB67329553A700020E820 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				87508072295A849000C4B01A /* README.md */,
 				879CB65E29553A380020E820 /* Main.storyboard */,
 				879CB66129553A390020E820 /* Assets.xcassets */,
 				879CB66329553A390020E820 /* LaunchScreen.storyboard */,
@@ -179,6 +182,7 @@
 			files = (
 				879CB66529553A390020E820 /* LaunchScreen.storyboard in Resources */,
 				879CB66229553A390020E820 /* Assets.xcassets in Resources */,
+				87508073295A849100C4B01A /* README.md in Resources */,
 				879CB66029553A380020E820 /* Main.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
