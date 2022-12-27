@@ -1693,6 +1693,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 9CD0793AF7B61BB631DEFD709B5D229A /* Harbeth.release.xcconfig */;
 			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
 				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/Harbeth";
 				IBSC_MODULE = Harbeth;
 				INFOPLIST_FILE = "Target Support Files/Harbeth/ResourceBundle-Harbeth-Harbeth-Info.plist";
@@ -1709,6 +1710,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 773977FD0AF676A8C55E46CA5191EE62 /* Harbeth.debug.xcconfig */;
 			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
 				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/Harbeth";
 				IBSC_MODULE = Harbeth;
 				INFOPLIST_FILE = "Target Support Files/Harbeth/ResourceBundle-Harbeth-Harbeth-Info.plist";
