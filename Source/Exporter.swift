@@ -37,7 +37,8 @@ public struct Exporter {
     ///   - outputURL: Specifies the sandbox address of the exported video.
     ///   - filtering: Filters work to filter pixel buffer.
     ///   - completionHandler: The export is complete.
-    public func export(outputURL: URL, filtering: @escaping PixelBufferCallback, completionHandler: @escaping CompletionCallback) {
+    public func export(outputURL: URL? = nil, filtering: @escaping PixelBufferCallback, completionHandler: @escaping CompletionCallback) {
+        let outputURL = outputURL ?? creatrOutputURL()
         guard let track = self.asset.tracks(withMediaType: .video).first else {
             completionHandler(nil, nil)
             return
@@ -99,5 +100,23 @@ public struct Exporter {
                 break
             }
         }
+    }
+}
+
+extension Exporter {
+    // Creating temp path to save the converted video
+    func creatrOutputURL() -> URL {
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] as URL
+        let outputURL = documentsDirectory.appendingPathComponent("condy_exporter_video.mp4")
+        
+        // Check if the file already exists then remove the previous file
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            do {
+                try FileManager.default.removeItem(at: outputURL)
+            } catch {
+                //completionHandler(nil, error)
+            }
+        }
+        return outputURL
     }
 }
