@@ -105,27 +105,22 @@ extension ViewController {
     func export(at url: URL) {
         self.view.makeToast("Exporting..", duration: 600, position: .center)
         
+        let commands: [ExporterCommand] = [
+            
+        ]
+        
         let filters: [C7FilterProtocol] = [
             C7Flip(horizontal: true, vertical: false),
             C7SoulOut(soul: 0.3),
             MPSGaussianBlur(radius: 5),
-            C7WhiteBalance(temperature: 5000),
+            C7ColorConvert(with: .gray),
         ]
         
-        let exporter = Exporter.init(videoURL: url)
-        exporter.export(outputURL: nil, filtering: { (buffer) in
+        let exporter = Exporter.init(videoURL: url, delegate: self, commands: commands)
+        exporter.exportVideo(outputURL: nil) { (buffer) -> ExporterBuffer? in
             let dest = BoxxIO(element: buffer, filters: filters)
-            return (try? dest.output()) ?? buffer
-        }, completionHandler: { [weak self] url, _ in
-            self?.view.hideAllToasts()
-            guard let url = url else { return }
-            let player = AVPlayer(url: url)
-            let vc = AVPlayerViewController()
-            vc.player = player
-            self?.present(vc, animated: true) {
-                vc.player?.play()
-            }
-        })
+            return try? dest.output()
+        }
     }
 }
 
@@ -149,6 +144,24 @@ extension ViewController {
     
     @objc func videoAction() {
         self.export(at: videoURL)
+    }
+}
+
+extension ViewController: ExporterDelegate {
+    
+    func export(_ exporter: Exporter, success videoURL: URL) {
+        self.view.hideAllToasts()
+        let player = AVPlayer(url: videoURL)
+        let vc = AVPlayerViewController()
+        vc.player = player
+        self.present(vc, animated: true) {
+            vc.player?.play()
+        }
+    }
+    
+    func export(_ exporter: Exporter, failed error: Exporter.Error) {
+        self.view.hideAllToasts()
+        print(error.localizedDescription)
     }
 }
 
