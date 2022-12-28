@@ -16,6 +16,22 @@ class ViewController: UIViewController {
     
     let videoURL: URL = URL(string: "https://mp4.vjshi.com/2017-11-21/7c2b143eeb27d9f2bf98c4ab03360cfe.mp4")!
     
+    // Creating temp path to save the converted video
+    let outputURL: URL = {
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] as URL
+        let outputURL = documentsDirectory.appendingPathComponent("condy_exporter_video.mp4")
+        
+        // Check if the file already exists then remove the previous file
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            do {
+                try FileManager.default.removeItem(at: outputURL)
+            } catch {
+                //completionHandler(nil, error)
+            }
+        }
+        return outputURL
+    }()
+    
     lazy var player: AVPlayer = {
         let playerItem = AVPlayerItem(url: videoURL)
         let player = AVPlayer(playerItem: playerItem)
@@ -97,7 +113,8 @@ class ViewController: UIViewController {
     }
     
     func setupPlayer() {
-        player.play()
+        //player.play()
+        let _ = player
     }
 }
 
@@ -117,7 +134,7 @@ extension ViewController {
         ]
         
         let exporter = Exporter.init(videoURL: url, delegate: self, commands: commands)
-        exporter.exportVideo(outputURL: nil) { (buffer) -> ExporterBuffer? in
+        exporter.export(outputURL: outputURL) { (buffer) -> ExporterBuffer? in
             let dest = BoxxIO(element: buffer, filters: filters)
             return try? dest.output()
         }
