@@ -29,7 +29,7 @@ EXTERNAL SOURCES:
     :path: "../"
 
 SPEC CHECKSUMS:
-  Exporter: 0716958ab8261aa130f553793cc693a9277a486d
+  Exporter: 26ec5ef303be9a5eab3799f263ce6753deb0e9ab
   Harbeth: 9decb4f8083f71d3683384aa729ed66582739e22
   Toast-Swift: 9b6a70f28b3bf0b96c40d46c0c4b9d6639846711
 

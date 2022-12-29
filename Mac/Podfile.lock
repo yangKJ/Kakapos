@@ -1,0 +1,34 @@
+PODS:
+  - Exporter (0.0.1)
+  - Harbeth (0.5.3):
+    - Harbeth/Basic (= 0.5.3)
+    - Harbeth/Collector (= 0.5.3)
+    - Harbeth/Compute (= 0.5.3)
+    - Harbeth/CoreImage (= 0.5.3)
+  - Harbeth/Basic (0.5.3)
+  - Harbeth/Collector (0.5.3):
+    - Harbeth/Basic
+  - Harbeth/Compute (0.5.3):
+    - Harbeth/Basic
+  - Harbeth/CoreImage (0.5.3):
+    - Harbeth/Basic
+
+DEPENDENCIES:
+  - Exporter (from `../`)
+  - Harbeth
+
+SPEC REPOS:
+  trunk:
+    - Harbeth
+
+EXTERNAL SOURCES:
+  Exporter:
+    :path: "../"
+
+SPEC CHECKSUMS:
+  Exporter: 26ec5ef303be9a5eab3799f263ce6753deb0e9ab
+  Harbeth: 9decb4f8083f71d3683384aa729ed66582739e22
+
+PODFILE CHECKSUM: f18fb5bff000509a822f49589b7aaf708d49036e
+
+COCOAPODS: 1.11.3

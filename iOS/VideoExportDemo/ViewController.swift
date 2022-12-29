@@ -134,7 +134,7 @@ extension ViewController {
             C7ColorConvert(with: .gray),
         ]
         
-        let exporter = Exporter.init(videoURL: url, delegate: self, commands: commands)
+        let exporter = VideoExporter.init(videoURL: url, delegate: self, commands: commands)
         exporter.export(outputURL: outputURL) { (buffer) -> ExporterBuffer? in
             let dest = BoxxIO(element: buffer, filters: filters)
             return try? dest.output()
@@ -166,8 +166,7 @@ extension ViewController {
 }
 
 extension ViewController: ExporterDelegate {
-    
-    func export(_ exporter: Exporter, success videoURL: URL) {
+    func export(_ exporter: Exporter.VideoExporter, success videoURL: URL) {
         self.view.hideAllToasts()
         let player = AVPlayer(url: videoURL)
         let vc = AVPlayerViewController()
@@ -177,7 +176,7 @@ extension ViewController: ExporterDelegate {
         }
     }
     
-    func export(_ exporter: Exporter, failed error: Exporter.Error) {
+    func export(_ exporter: Exporter.VideoExporter, failed error: Exporter.VideoExporter.Error) {
         self.view.hideAllToasts()
         print(error.localizedDescription)
     }

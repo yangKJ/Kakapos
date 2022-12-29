@@ -8,7 +8,7 @@
 import Foundation
 import AVFoundation
 
-extension Exporter {
+extension VideoExporter {
     public enum Error {
         case unknown
         case error(Swift.Error)
@@ -19,7 +19,7 @@ extension Exporter {
     }
 }
 
-extension Exporter.Error {
+extension VideoExporter.Error {
     /// A textual representation of `self`, suitable for debugging.
     public var localizedDescription: String {
         switch self {
