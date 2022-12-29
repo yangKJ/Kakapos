@@ -1,0 +1,34 @@
+{
+  "name": "Exporter",
+  "version": "0.0.1",
+  "summary": "About Metal graphics processing.",
+  "homepage": "https://github.com/yangKJ/Exporter",
+  "license": {
+    "type": "MIT",
+    "file": "LICENSE"
+  },
+  "authors": {
+    "Condy": "ykj310@126.com"
+  },
+  "source": {
+    "git": "https://github.com/yangKJ/Exporter.git",
+    "tag": "0.0.1"
+  },
+  "swift_versions": "5.0",
+  "requires_arc": true,
+  "static_framework": true,
+  "platforms": {
+    "ios": "10.0",
+    "osx": "10.13"
+  },
+  "pod_target_xcconfig": {
+    "SWIFT_VERSION": "5.0"
+  },
+  "source_files": "Sources/*.swift",
+  "weak_frameworks": [
+    "ImageIO",
+    "MetalKit",
+    "AVFoundation"
+  ],
+  "swift_version": "5.0"
+}
