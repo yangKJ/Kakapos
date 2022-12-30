@@ -123,10 +123,6 @@ extension ViewController {
     func export(at url: URL) {
         self.view.makeToast("Exporting..", duration: 600, position: .center)
         
-        let commands: [ExporterCommand] = [
-            
-        ]
-        
         let filters: [C7FilterProtocol] = [
             C7Flip(horizontal: true, vertical: false),
             C7SoulOut(soul: 0.3),
@@ -134,7 +130,7 @@ extension ViewController {
             C7ColorConvert(with: .gray),
         ]
         
-        let exporter = VideoExporter.init(videoURL: url, delegate: self, commands: commands)
+        let exporter = VideoExporter.init(videoURL: url, delegate: self)
         exporter.export(outputURL: outputURL) { (buffer) -> ExporterBuffer? in
             let dest = BoxxIO(element: buffer, filters: filters)
             return try? dest.output()

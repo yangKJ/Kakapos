@@ -1,22 +1,17 @@
 //
-//  VideoExporter.swift
-//  Exporter
+//  Boxer.swift
+//  VideoBox
 //
 //  Created by Condy on 2022/12/20.
 //
 
 import Foundation
 import AVFoundation
-import CoreVideo
 
-public typealias ExporterBuffer = CVPixelBuffer
-
-public struct VideoExporter {
-    
-    public typealias PixelBufferCallback = (_ buffer: ExporterBuffer) -> ExporterBuffer?
+public struct Boxer {
     
     let asset: AVAsset
-    weak var delegate: ExporterDelegate?
+    let commands: [Command]
     
     public var presetName: String = AVAssetExportPresetHighestQuality {
         didSet {
@@ -26,37 +21,36 @@ public struct VideoExporter {
         }
     }
     
-    public init(videoURL: URL, delegate: ExporterDelegate) {
-        self.init(asset: AVAsset(url: videoURL), delegate: delegate)
+    public init(videoURL: URL, commands: [Command]) {
+        self.init(asset: AVAsset(url: videoURL), commands: commands)
     }
     
-    public init(asset: AVAsset, delegate: ExporterDelegate) {
+    public init(asset: AVAsset, commands: [Command]) {
         self.asset = asset
-        self.delegate = delegate
+        self.commands = commands
     }
     
-    /// Export the video after injecting the filter.
+    /// Export the video.
     /// - Parameters:
     ///   - outputURL: Specifies the sandbox address of the exported video.
-    ///   - optimizeForNetworkUse: Indicates that the output file should be optimized for network use.
-    ///   - filtering: Filters work to filter pixel buffer.
-    public func export(outputURL: URL, optimizeForNetworkUse: Bool = true, filtering: @escaping PixelBufferCallback) {
+    ///   - completionHandler: Action completed callback.
+    public func outputVideo(_ outputURL: URL, completionHandler: @escaping (_ videoURL: URL?, _ error: Error?) -> Void) {
         guard let track = self.asset.tracks(withMediaType: .video).first else {
-            delegate?.export(self, failed: VideoExporter.Error.videoTrackEmpty)
+            completionHandler(nil, nil)
             return
         }
         
         let composition = AVMutableComposition()
         composition.naturalSize = track.naturalSize
         guard let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            delegate?.export(self, failed: VideoExporter.Error.addVideoTrack)
+            completionHandler(nil, nil)
             return
         }
         
         do {
             try videoTrack.insertTimeRange(CMTimeRangeMake(start: .zero, duration: self.asset.duration), of: track, at: .zero)
         } catch {
-            delegate?.export(self, failed: VideoExporter.Error.error(error))
+            completionHandler(nil, error)
         }
         
         var audioTrack: AVMutableCompositionTrack? = nil
@@ -66,46 +60,45 @@ public struct VideoExporter {
             do {
                 try audioTrack!.insertTimeRange(CMTimeRangeMake(start: .zero, duration: self.asset.duration), of: audio, at: .zero)
             } catch {
-                delegate?.export(self, failed: VideoExporter.Error.error(error))
+                completionHandler(nil, error)
             }
         }
         
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
-        layerInstruction.trackID = videoTrack.trackID
-        
-        let instruction = CompositionInstruction(trackID: videoTrack.trackID, bufferCallback: filtering)
-        instruction.timeRange = CMTimeRangeMake(start: .zero, duration: self.asset.duration)
-        instruction.layerInstructions = [layerInstruction]
-        
         let videoComposition = AVMutableVideoComposition()
-        videoComposition.customVideoCompositorClass = Compositor.self
         videoComposition.frameDuration = CMTimeMake(value: 1, timescale: 30)
         videoComposition.renderSize = videoTrack.naturalSize
-        videoComposition.instructions = [instruction]
         
         guard let export = AVAssetExportSession(asset: composition, presetName: presetName) else {
-            delegate?.export(self, failed: VideoExporter.Error.exportSessionEmpty)
+            completionHandler(nil, nil)
             return
         }
+        
+        var water: WatermarkCommand?
+        for item in commands {
+            if let item = item as? WatermarkCommand {
+                water = item
+            } else {
+                item.execute(export: export, tracks: (videoTrack, audioTrack), videoComposition: videoComposition)
+            }
+        }
+        // Final treatment of watermarking
+        water?.execute(export: export, tracks: (videoTrack, audioTrack), videoComposition: videoComposition)
+        
         export.videoComposition = videoComposition
         export.outputURL = outputURL
         export.outputFileType = .mp4
-        export.shouldOptimizeForNetworkUse = optimizeForNetworkUse
+        export.shouldOptimizeForNetworkUse = true
         
         export.exportAsynchronously { [weak export] in
             guard let export = export else { return }
             DispatchQueue.main.async {
                 switch export.status {
                 case .failed:
-                    if let error = export.error {
-                        delegate?.export(self, failed: VideoExporter.Error.error(error))
-                    } else {
-                        delegate?.export(self, failed: VideoExporter.Error.unknown)
-                    }
+                    completionHandler(nil, export.error)
                 case .completed:
-                    delegate?.export(self, success: outputURL)
+                    completionHandler(outputURL, nil)
                 default:
-                    delegate?.export(self, failed: VideoExporter.Error.exportAsynchronously(export.status))
+                    completionHandler(nil, nil)
                     break
                 }
             }

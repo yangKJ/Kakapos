@@ -22,7 +22,8 @@ class ViewController: NSViewController {
         
         // Do any additional setup after loading the view.
         setupPlayer()
-        export(at: videoURL)
+        //export(at: videoURL)
+        boxer(at: videoURL)
     }
     
     override var representedObject: Any? {

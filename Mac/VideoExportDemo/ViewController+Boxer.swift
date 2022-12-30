@@ -1,17 +1,16 @@
 //
-//  PlayerViewController.swift
+//  ViewController+Boxer.swift
 //  VideoExportDemo
 //
-//  Created by Condy on 2022/12/29.
+//  Created by Condy on 2022/12/30.
 //
 
-import Cocoa
-import Harbeth
-import Exporter
+import Foundation
 import AVKit
+import VideoBox
 
 extension ViewController {
-    func export(at url: URL) {
+    func boxer(at url: URL) {
         // Creating temp path to save the converted video
         let outputURL: URL = {
             let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] as URL
@@ -28,23 +27,17 @@ extension ViewController {
             return outputURL
         }()
         
-        let gauss = MPSGaussianBlur(radius: 8)
-        let board = C7Storyboard(ranks: 2)
+        let commands: [Command] = [
+            RotateCommand.init(angle: 180),
+        ]
         
-        let exporter = VideoExporter.init(videoURL: url, delegate: self)
-        exporter.export(outputURL: outputURL) { $0 ->> gauss ->> board }
-    }
-}
-
-extension ViewController: ExporterDelegate {
-    func export(_ exporter: Exporter.VideoExporter, success videoURL: URL) {
-        let playerItem = AVPlayerItem(url: videoURL)
-        let player = AVPlayer(playerItem: playerItem)
-        playerView.player = player
-        player.play()
-    }
-    
-    func export(_ exporter: Exporter.VideoExporter, failed error: Exporter.VideoExporter.Error) {
-        
+        let boxer = Boxer(videoURL: videoURL, commands: commands)
+        boxer.outputVideo(outputURL) { [weak self] videoURL, error in
+            guard let videoURL = videoURL else { return }
+            let playerItem = AVPlayerItem(url: videoURL)
+            let player = AVPlayer(playerItem: playerItem)
+            self?.playerView.player = player
+            player.play()
+        }
     }
 }

@@ -1,0 +1,6 @@
+framework module VideoBox {
+  umbrella header "VideoBox-umbrella.h"
+
+  export *
+  module * { export * }
+}
