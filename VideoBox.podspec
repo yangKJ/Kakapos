@@ -9,7 +9,7 @@
 Pod::Spec.new do |s|
   s.name             = 'VideoBox'
   s.version          = '0.0.1'
-  s.summary          = 'It is a filter infused video tool that supports network and local urls, as well as album videos.'
+  s.summary          = 'Video processing tools.'
   
   # This description is used to generate tags and improve search results.
   #   * Think: What does it do? Why did you write it? What is the focus?

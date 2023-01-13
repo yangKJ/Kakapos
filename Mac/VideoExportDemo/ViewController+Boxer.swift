@@ -27,12 +27,17 @@ extension ViewController {
             return outputURL
         }()
         
+        let layer = CALayer()
+        layer.frame = CGRect(origin: .zero, size: CGSize(width: 100, height: 50))
+        layer.backgroundColor = NSColor.green.cgColor
+        
         let commands: [Command] = [
-            RotateCommand.init(angle: 180),
+            RotateCommand.init(angle: 200),
+            //WatermarkCommand(layer: layer),
         ]
         
         let boxer = Boxer(videoURL: videoURL, commands: commands)
-        boxer.outputVideo(outputURL) { [weak self] videoURL, error in
+        boxer.outputVideo(outputURL) { [weak self] (videoURL, _) in
             guard let videoURL = videoURL else { return }
             let playerItem = AVPlayerItem(url: videoURL)
             let player = AVPlayer(playerItem: playerItem)

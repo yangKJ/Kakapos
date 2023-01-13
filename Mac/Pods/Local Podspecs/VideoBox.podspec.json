@@ -1,7 +1,7 @@
 {
   "name": "VideoBox",
   "version": "0.0.1",
-  "summary": "It is a filter infused video tool that supports network and local urls, as well as album videos.",
+  "summary": "Video processing tools.",
   "homepage": "https://github.com/yangKJ/Exporter",
   "license": {
     "type": "MIT",

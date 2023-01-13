@@ -12,7 +12,8 @@ public struct RotateCommand {
     
     public let angle: Float
     public init(angle: Float) {
-        self.angle = angle
+        let value = angle.truncatingRemainder(dividingBy: 360.0)
+        self.angle = value >= 0 ? value : 360 + value
     }
 }
 
@@ -20,13 +21,28 @@ extension RotateCommand: Command {
     public func execute(export: AVAssetExportSession, tracks: Tracks, videoComposition: AVMutableVideoComposition) {
         let width  = videoComposition.renderSize.width
         let height = videoComposition.renderSize.height
-        let radians = CGFloat((angle / 180.0 * .pi))
-        let t1 = CGAffineTransform(translationX: height, y: 0.0)
-        let t2 = t1.rotated(by: radians)
+        let radians = CGFloat(angle * Float.pi / 180.0)
+        var transform: CGAffineTransform
+        switch angle {
+        case 0...90:
+            transform = CGAffineTransform(translationX: height, y: 0.0)
+        case 90..<180:
+            transform = CGAffineTransform(translationX: 0.0, y: height)
+        case 180:
+            transform = CGAffineTransform(translationX: width, y: height)
+        case 180..<270:
+            transform = CGAffineTransform(translationX: 0.0, y: width)
+        case 270:
+            transform = CGAffineTransform(translationX: 0.0, y: width)
+        case 270..<360:
+            transform = CGAffineTransform(translationX: height, y: width)
+        default:
+            transform = .identity
+        }
         
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: tracks.videoTrack)
         layerInstruction.trackID = tracks.videoTrack.trackID
-        layerInstruction.setTransform(t2, at: .zero)
+        layerInstruction.setTransform(transform.rotated(by: radians), at: .zero)
         
         if let instruction = videoComposition.instructions.last as? AVMutableVideoCompositionInstruction {
             instruction.layerInstructions.append(layerInstruction)
