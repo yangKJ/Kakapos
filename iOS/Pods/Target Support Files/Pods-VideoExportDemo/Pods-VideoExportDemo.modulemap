@@ -1,6 +1,0 @@
-framework module Pods_VideoExportDemo {
-  umbrella header "Pods-VideoExportDemo-umbrella.h"
-
-  export *
-  module * { export * }
-}
