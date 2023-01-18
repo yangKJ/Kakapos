@@ -102,13 +102,13 @@ exporter.export(outputURL: outputURL) { $0 ->> gauss ->> board }
 
 ### CocoaPods
 
-- If you want to import [**Video Exporter**](https://github.com/yangKJ/Kakapos) module, you need in your Podfile: 
+- If you want to import [**video exporter**](https://github.com/yangKJ/Kakapos) module, you need in your Podfile: 
 
 ```
 pod 'Kakapos'
 ```
 
-- If you want to import [**Filter**](https://github.com/yangKJ/Kakapos) image module, you need in your Podfile: 
+- If you want to import [**metal filter**](https://github.com/yangKJ/Harbeth) module, you need in your Podfile: 
 
 ```
 pod 'Harbeth'
