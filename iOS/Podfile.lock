@@ -11,7 +11,7 @@ PODS:
     - Harbeth/Basic
   - Harbeth/CoreImage (0.5.8):
     - Harbeth/Basic
-  - Kakapos (0.0.1)
+  - Kakapos (1.0.0)
   - Toast-Swift (5.0.1)
 
 DEPENDENCIES:
@@ -30,7 +30,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Harbeth: a329841b51b31a5448c3679e1dafd526cae23d2c
-  Kakapos: 643e3a296fcc30c68d07d521cf91ef362a6309c3
+  Kakapos: 2484f60984ff3b01b4aa2807df2df8895ede945a
   Toast-Swift: 9b6a70f28b3bf0b96c40d46c0c4b9d6639846711
 
 PODFILE CHECKSUM: e02115127314bab2878324a5bf9ec4b3dd16a701

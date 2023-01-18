@@ -1,6 +1,6 @@
 {
   "name": "Kakapos",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "summary": "It is a filter infused video tool that supports network and local urls, as well as album videos.",
   "homepage": "https://github.com/yangKJ/Kakapos",
   "license": {
@@ -12,7 +12,7 @@
   },
   "source": {
     "git": "https://github.com/yangKJ/Kakapos.git",
-    "tag": "0.0.1"
+    "tag": "1.0.0"
   },
   "swift_versions": "5.0",
   "requires_arc": true,
