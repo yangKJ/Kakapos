@@ -11,24 +11,24 @@ PODS:
     - Harbeth/Basic
   - Harbeth/CoreImage (0.5.8):
     - Harbeth/Basic
-  - Kakapo (0.0.1)
+  - Kakapos (0.0.1)
 
 DEPENDENCIES:
   - Harbeth
-  - Kakapo (from `../`)
+  - Kakapos (from `../`)
 
 SPEC REPOS:
   trunk:
     - Harbeth
 
 EXTERNAL SOURCES:
-  Kakapo:
+  Kakapos:
     :path: "../"
 
 SPEC CHECKSUMS:
   Harbeth: a329841b51b31a5448c3679e1dafd526cae23d2c
-  Kakapo: 3449c817ed2372f7b331c37d79184cefeee3cc8e
+  Kakapos: 643e3a296fcc30c68d07d521cf91ef362a6309c3
 
-PODFILE CHECKSUM: c1afde7be2df5d4ccb20a5377da1dda9a61df97a
+PODFILE CHECKSUM: 7e89e2b11c71b90e9a3d2598d8e83bc1cf78886c
 
 COCOAPODS: 1.11.3

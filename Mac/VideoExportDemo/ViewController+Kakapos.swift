@@ -7,7 +7,7 @@
 
 import Cocoa
 import Harbeth
-import Kakapo
+import Kakapos
 import AVKit
 
 extension ViewController {
@@ -38,14 +38,14 @@ extension ViewController {
 
 extension ViewController: ExporterDelegate {
     
-    func export(_ exporter: Kakapo.Exporter, success videoURL: URL) {
+    func export(_ exporter: Kakapos.Exporter, success videoURL: URL) {
         let playerItem = AVPlayerItem(url: videoURL)
         let player = AVPlayer(playerItem: playerItem)
         playerView.player = player
         player.play()
     }
     
-    func export(_ exporter: Kakapo.Exporter, failed error: Kakapo.Exporter.Error) {
+    func export(_ exporter: Kakapos.Exporter, failed error: Kakapos.Exporter.Error) {
         
     }
 }

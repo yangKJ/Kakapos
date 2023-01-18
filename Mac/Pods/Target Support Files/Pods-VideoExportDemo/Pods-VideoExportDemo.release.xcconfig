@@ -1,10 +1,10 @@
 ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES
 CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO
-FRAMEWORK_SEARCH_PATHS = $(inherited) "${PODS_CONFIGURATION_BUILD_DIR}/Harbeth" "${PODS_CONFIGURATION_BUILD_DIR}/Kakapo"
+FRAMEWORK_SEARCH_PATHS = $(inherited) "${PODS_CONFIGURATION_BUILD_DIR}/Harbeth" "${PODS_CONFIGURATION_BUILD_DIR}/Kakapos"
 GCC_PREPROCESSOR_DEFINITIONS = $(inherited) COCOAPODS=1
-HEADER_SEARCH_PATHS = $(inherited) "${PODS_CONFIGURATION_BUILD_DIR}/Harbeth/Harbeth.framework/Headers" "${PODS_CONFIGURATION_BUILD_DIR}/Kakapo/Kakapo.framework/Headers"
+HEADER_SEARCH_PATHS = $(inherited) "${PODS_CONFIGURATION_BUILD_DIR}/Harbeth/Harbeth.framework/Headers" "${PODS_CONFIGURATION_BUILD_DIR}/Kakapos/Kakapos.framework/Headers"
 LIBRARY_SEARCH_PATHS = $(inherited) "${DT_TOOLCHAIN_DIR}/usr/lib/swift/${PLATFORM_NAME}" /usr/lib/swift
-OTHER_LDFLAGS = $(inherited) -ObjC -framework "Harbeth" -framework "Kakapo" -weak_framework "AVFoundation" -weak_framework "CoreImage" -weak_framework "CoreVideo" -weak_framework "ImageIO" -weak_framework "MetalKit" -weak_framework "MetalPerformanceShaders"
+OTHER_LDFLAGS = $(inherited) -ObjC -framework "Harbeth" -framework "Kakapos" -weak_framework "AVFoundation" -weak_framework "CoreImage" -weak_framework "CoreVideo" -weak_framework "ImageIO" -weak_framework "MetalKit" -weak_framework "MetalPerformanceShaders"
 OTHER_SWIFT_FLAGS = $(inherited) -D COCOAPODS
 PODS_BUILD_DIR = ${BUILD_DIR}
 PODS_CONFIGURATION_BUILD_DIR = ${PODS_BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)

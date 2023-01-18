@@ -11,7 +11,7 @@ import AVKit
 import MobileCoreServices
 import Toast_Swift
 import Harbeth
-import Kakapo
+import Kakapos
 
 class ViewController: UIViewController {
     
@@ -163,7 +163,7 @@ extension ViewController {
 
 extension ViewController: ExporterDelegate {
     
-    func export(_ exporter: Kakapo.Exporter, success videoURL: URL) {
+    func export(_ exporter: Kakapos.Exporter, success videoURL: URL) {
         self.view.hideAllToasts()
         let player = AVPlayer(url: videoURL)
         let vc = AVPlayerViewController()
@@ -173,7 +173,7 @@ extension ViewController: ExporterDelegate {
         }
     }
     
-    func export(_ exporter: Kakapo.Exporter, failed error: Kakapo.Exporter.Error) {
+    func export(_ exporter: Kakapos.Exporter, failed error: Kakapos.Exporter.Error) {
         self.view.hideAllToasts()
         print(error.localizedDescription)
     }

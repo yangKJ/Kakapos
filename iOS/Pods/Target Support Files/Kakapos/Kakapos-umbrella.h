@@ -11,6 +11,6 @@
 #endif
 
 
-FOUNDATION_EXPORT double KakapoVersionNumber;
-FOUNDATION_EXPORT const unsigned char KakapoVersionString[];
+FOUNDATION_EXPORT double KakaposVersionNumber;
+FOUNDATION_EXPORT const unsigned char KakaposVersionString[];
 

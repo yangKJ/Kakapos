@@ -6,7 +6,7 @@ target 'VideoExportDemo' do
   use_frameworks!
   pod 'Toast-Swift'
   pod 'Harbeth'
-  pod 'Kakapo', :path => '../'
+  pod 'Kakapos', :path => '../'
   
   # Pods for VideoExportDemo
   

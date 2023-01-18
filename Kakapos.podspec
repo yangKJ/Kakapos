@@ -1,5 +1,5 @@
 #
-# Be sure to run 'pod lib lint Kakapo.podspec' to ensure this is a
+# Be sure to run 'pod lib lint Kakapos.podspec' to ensure this is a
 # valid spec before submitting.
 #
 # Any lines starting with a # are optional, but their use is encouraged
@@ -7,7 +7,7 @@
 #
 
 Pod::Spec.new do |s|
-  s.name             = 'Kakapo'
+  s.name             = 'Kakapos'
   s.version          = '0.0.1'
   s.summary          = 'It is a filter infused video tool that supports network and local urls, as well as album videos.'
   
@@ -17,10 +17,10 @@ Pod::Spec.new do |s|
   #   * Write the description between the DESC delimiters below.
   #   * Finally, don't worry about the indent, CocoaPods strips it!
   
-  s.homepage         = 'https://github.com/yangKJ/Kakapo'
+  s.homepage         = 'https://github.com/yangKJ/Kakapos'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
   s.author           = { 'Condy' => 'yangkj310@gmail.com' }
-  s.source           = { :git => 'https://github.com/yangKJ/Kakapo.git', :tag => s.version }
+  s.source           = { :git => 'https://github.com/yangKJ/Kakapos.git', :tag => s.version }
   
   s.swift_version    = '5.0'
   s.requires_arc     = true
