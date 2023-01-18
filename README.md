@@ -20,8 +20,8 @@ Support mac and ios.
 ```
 // Creating temp path to save the converted video
 let outputURL: URL = {
-    let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] as URL
-    let outputURL = documentsDirectory.appendingPathComponent("condy_exporter_video.mp4")
+    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    let outputURL = documents.appendingPathComponent("condy_exporter_video.mp4")
     
     // Check if the file already exists then remove the previous file
     if FileManager.default.fileExists(atPath: outputURL.path) {
@@ -88,7 +88,7 @@ func export(_ exporter: Kakapos.Exporter, failed error: Kakapos.Exporter.Error) 
 /// Export the video after injecting the filter.
 /// - Parameters:
 ///   - outputURL: Specifies the sandbox address of the exported video.
-///   - optimizeForNetworkUse: Indicates that the output file should be optimized for network use.
+///   - optimizeForNetworkUse: The output file should be optimized for network use.
 ///   - filtering: Filters work to filter pixel buffer.
 exporter.export(outputURL: outputURL) {
     let dest = BoxxIO(element: $0, filters: filters)

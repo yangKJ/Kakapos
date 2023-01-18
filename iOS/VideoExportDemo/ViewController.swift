@@ -19,8 +19,8 @@ class ViewController: UIViewController {
     
     // Creating temp path to save the converted video
     let outputURL: URL = {
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] as URL
-        let outputURL = documentsDirectory.appendingPathComponent("condy_exporter_video.mp4")
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let outputURL = documents.appendingPathComponent("condy_exporter_video.mp4")
         
         // Check if the file already exists then remove the previous file
         if FileManager.default.fileExists(atPath: outputURL.path) {
