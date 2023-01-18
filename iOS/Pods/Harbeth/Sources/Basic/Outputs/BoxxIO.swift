@@ -42,7 +42,6 @@ import CoreVideo
     }
     
     public func output() throws -> Dest {
-        if self.filters.isEmpty { return element }
         do {
             if let element = element as? C7Image {
                 return try filtering(image: element) as! Dest

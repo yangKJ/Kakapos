@@ -1,5 +1,5 @@
 //
-//  VideoExporter.swift
+//  Exporter.swift
 //  Exporter
 //
 //  Created by Condy on 2022/12/20.
@@ -11,7 +11,7 @@ import CoreVideo
 
 public typealias ExporterBuffer = CVPixelBuffer
 
-public struct VideoExporter {
+public struct Exporter {
     
     public typealias PixelBufferCallback = (_ buffer: ExporterBuffer) -> ExporterBuffer?
     
@@ -42,21 +42,21 @@ public struct VideoExporter {
     ///   - filtering: Filters work to filter pixel buffer.
     public func export(outputURL: URL, optimizeForNetworkUse: Bool = true, filtering: @escaping PixelBufferCallback) {
         guard let track = self.asset.tracks(withMediaType: .video).first else {
-            delegate?.export(self, failed: VideoExporter.Error.videoTrackEmpty)
+            delegate?.export(self, failed: Exporter.Error.videoTrackEmpty)
             return
         }
         
         let composition = AVMutableComposition()
         composition.naturalSize = track.naturalSize
         guard let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            delegate?.export(self, failed: VideoExporter.Error.addVideoTrack)
+            delegate?.export(self, failed: Exporter.Error.addVideoTrack)
             return
         }
         
         do {
             try videoTrack.insertTimeRange(CMTimeRangeMake(start: .zero, duration: self.asset.duration), of: track, at: .zero)
         } catch {
-            delegate?.export(self, failed: VideoExporter.Error.error(error))
+            delegate?.export(self, failed: Exporter.Error.error(error))
         }
         
         var audioTrack: AVMutableCompositionTrack? = nil
@@ -66,7 +66,7 @@ public struct VideoExporter {
             do {
                 try audioTrack!.insertTimeRange(CMTimeRangeMake(start: .zero, duration: self.asset.duration), of: audio, at: .zero)
             } catch {
-                delegate?.export(self, failed: VideoExporter.Error.error(error))
+                delegate?.export(self, failed: Exporter.Error.error(error))
             }
         }
         
@@ -84,7 +84,7 @@ public struct VideoExporter {
         videoComposition.instructions = [instruction]
         
         guard let export = AVAssetExportSession(asset: composition, presetName: presetName) else {
-            delegate?.export(self, failed: VideoExporter.Error.exportSessionEmpty)
+            delegate?.export(self, failed: Exporter.Error.exportSessionEmpty)
             return
         }
         export.videoComposition = videoComposition
@@ -98,14 +98,14 @@ public struct VideoExporter {
                 switch export.status {
                 case .failed:
                     if let error = export.error {
-                        delegate?.export(self, failed: VideoExporter.Error.error(error))
+                        delegate?.export(self, failed: Exporter.Error.error(error))
                     } else {
-                        delegate?.export(self, failed: VideoExporter.Error.unknown)
+                        delegate?.export(self, failed: Exporter.Error.unknown)
                     }
                 case .completed:
                     delegate?.export(self, success: outputURL)
                 default:
-                    delegate?.export(self, failed: VideoExporter.Error.exportAsynchronously(export.status))
+                    delegate?.export(self, failed: Exporter.Error.exportAsynchronously(export.status))
                     break
                 }
             }

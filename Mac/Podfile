@@ -6,7 +6,7 @@ target 'VideoExportDemo' do
   use_frameworks!
   
   pod 'Harbeth'
-  pod 'Exporter', :path => '../'
+  pod 'Kakapo', :path => '../'
   
   # Pods for VideoExportDemo
   

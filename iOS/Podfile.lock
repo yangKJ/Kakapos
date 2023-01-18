@@ -1,22 +1,22 @@
 PODS:
-  - Exporter (0.0.1)
-  - Harbeth (0.5.3):
-    - Harbeth/Basic (= 0.5.3)
-    - Harbeth/Collector (= 0.5.3)
-    - Harbeth/Compute (= 0.5.3)
-    - Harbeth/CoreImage (= 0.5.3)
-  - Harbeth/Basic (0.5.3)
-  - Harbeth/Collector (0.5.3):
+  - Harbeth (0.5.8):
+    - Harbeth/Basic (= 0.5.8)
+    - Harbeth/Collector (= 0.5.8)
+    - Harbeth/Compute (= 0.5.8)
+    - Harbeth/CoreImage (= 0.5.8)
+  - Harbeth/Basic (0.5.8)
+  - Harbeth/Collector (0.5.8):
     - Harbeth/Basic
-  - Harbeth/Compute (0.5.3):
+  - Harbeth/Compute (0.5.8):
     - Harbeth/Basic
-  - Harbeth/CoreImage (0.5.3):
+  - Harbeth/CoreImage (0.5.8):
     - Harbeth/Basic
+  - Kakapo (0.0.1)
   - Toast-Swift (5.0.1)
 
 DEPENDENCIES:
-  - Exporter (from `../`)
   - Harbeth
+  - Kakapo (from `../`)
   - Toast-Swift
 
 SPEC REPOS:
@@ -25,14 +25,14 @@ SPEC REPOS:
     - Toast-Swift
 
 EXTERNAL SOURCES:
-  Exporter:
+  Kakapo:
     :path: "../"
 
 SPEC CHECKSUMS:
-  Exporter: 26ec5ef303be9a5eab3799f263ce6753deb0e9ab
-  Harbeth: 9decb4f8083f71d3683384aa729ed66582739e22
+  Harbeth: a329841b51b31a5448c3679e1dafd526cae23d2c
+  Kakapo: 3449c817ed2372f7b331c37d79184cefeee3cc8e
   Toast-Swift: 9b6a70f28b3bf0b96c40d46c0c4b9d6639846711
 
-PODFILE CHECKSUM: 84a5fd61d5b29d894a62a1a6d931f3def56fa55c
+PODFILE CHECKSUM: b410ef64fc963ee613c5db3ce935a85e6e653edc
 
 COCOAPODS: 1.11.3

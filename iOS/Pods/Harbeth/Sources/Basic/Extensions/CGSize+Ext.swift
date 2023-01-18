@@ -8,12 +8,34 @@
 import Foundation
 import CoreGraphics
 
-extension CGSize: C7Compatible { }
+extension CGSize: C7Compatible {
+    
+    public static func * (lhs: Self, rhs: Double) -> Self {
+        .init(width: lhs.width * rhs, height: lhs.height * rhs)
+    }
+    
+    public static func + (lhs: Self, rhs: Double) -> Self {
+        .init(width: lhs.width + rhs, height: lhs.height + rhs)
+    }
+    
+    public static func - (lhs: Self, rhs: Double) -> Self {
+        .init(width: lhs.width - rhs, height: lhs.height - rhs)
+    }
+}
 
 extension Queen where Base == CGSize {
     
     public func toC7Size() -> C7Size {
         C7Size(width: Int(base.width), height: Int(base.height))
+    }
+    
+    public func aspectFit(to boundingSize: CGSize) -> CGSize {
+        let ratio = min(boundingSize.width / base.width, boundingSize.height / base.height)
+        return CGSize(width: base.width * ratio, height: base.height * ratio)
+    }
+
+    public func aspectFit(to widthHeight: Double) -> CGSize {
+        aspectFit(to: CGSize(width: widthHeight, height: widthHeight))
     }
     
     /// Returns a size by resizing the `base` size by making it aspect fitting the given `size`.
@@ -51,9 +73,11 @@ extension Queen where Base == CGSize {
     ///   - anchor: An anchor point in which the size constraint should happen.
     /// - Returns: The result `CGRect` for the constraint operation.
     public func constrainedRect(for size: CGSize, anchor: CGPoint) -> CGRect {
-        let unifiedAnchor = CGPoint(x: anchor.x.mt_clamped(to: 0.0...1.0), y: anchor.y.mt_clamped(to: 0.0...1.0))
-        let x = unifiedAnchor.x * base.width - unifiedAnchor.x * size.width
-        let y = unifiedAnchor.y * base.height - unifiedAnchor.y * size.height
+        let limits = 0.0...1.0
+        let x_ = min(max(anchor.x, limits.lowerBound), limits.upperBound)
+        let y_ = min(max(anchor.y, limits.lowerBound), limits.upperBound)
+        let x = x_ * base.width - x_ * size.width
+        let y = y_ * base.height - y_ * size.height
         let r = CGRect(x: x, y: y, width: size.width, height: size.height)
         let origin = CGRect(origin: .zero, size: base)
         return origin.intersection(r)

@@ -1,6 +1,0 @@
-framework module Exporter {
-  umbrella header "Exporter-umbrella.h"
-
-  export *
-  module * { export * }
-}

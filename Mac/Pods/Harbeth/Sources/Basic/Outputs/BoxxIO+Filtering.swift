@@ -12,7 +12,8 @@ import CoreImage
 extension BoxxIO {
     
     func filtering(pixelBuffer: CVPixelBuffer) throws -> CVPixelBuffer {
-        guard var texture = pixelBuffer.mt.convert2MTLTexture(textureCache: Device.sharedTextureCache()) else {
+        if self.filters.isEmpty { return pixelBuffer }
+        guard var texture = pixelBuffer.mt.toMTLTexture(textureCache: nil) else {
             throw C7CustomError.source2Texture
         }
         do {
@@ -31,18 +32,20 @@ extension BoxxIO {
     }
     
     func filtering(sampleBuffer: CMSampleBuffer) throws -> CMSampleBuffer {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+        if self.filters.isEmpty { return sampleBuffer }
+        guard var pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             throw C7CustomError.source2Texture
         }
         do {
-            let _ = try filtering(pixelBuffer: pixelBuffer)
+            pixelBuffer = try filtering(pixelBuffer: pixelBuffer)
+            return pixelBuffer.mt.toCMSampleBuffer() ?? sampleBuffer
         } catch {
             throw error
         }
-        return sampleBuffer
     }
     
     func filtering(ciImage: CIImage) throws -> CIImage {
+        if self.filters.isEmpty { return ciImage }
         guard let texture = ciImage.cgImage?.mt.newTexture() else {
             throw C7CustomError.source2Texture
         }
@@ -60,6 +63,7 @@ extension BoxxIO {
     }
     
     func filtering(cgImage: CGImage) throws -> CGImage {
+        if self.filters.isEmpty { return cgImage }
         guard var texture = cgImage.mt.toTexture() else {
             throw C7CustomError.source2Texture
         }
@@ -72,6 +76,7 @@ extension BoxxIO {
     }
     
     func filtering(image: C7Image) throws -> C7Image {
+        if self.filters.isEmpty { return image }
         guard var texture = image.mt.toTexture() else {
             throw C7CustomError.source2Texture
         }
@@ -84,6 +89,7 @@ extension BoxxIO {
     }
     
     func filtering(texture: MTLTexture) throws -> MTLTexture {
+        if self.filters.isEmpty { return texture }
         do {
             var outTexture: MTLTexture = texture
             for filter in filters {

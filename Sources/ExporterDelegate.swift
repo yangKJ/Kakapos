@@ -13,11 +13,11 @@ public protocol ExporterDelegate: NSObjectProtocol {
     /// - Parameters:
     ///   - exporter: VideoExporter
     ///   - videoURL: Export the successful video url, Be equivalent to outputURL.
-    func export(_ exporter: VideoExporter, success videoURL: URL)
+    func export(_ exporter: Exporter, success videoURL: URL)
     
     /// Video export failure.
     /// - Parameters:
     ///   - exporter: VideoExporter
     ///   - error: Failure error message.
-    func export(_ exporter: VideoExporter, failed error: VideoExporter.Error)
+    func export(_ exporter: Exporter, failed error: Exporter.Error)
 }

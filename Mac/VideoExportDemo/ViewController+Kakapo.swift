@@ -7,7 +7,7 @@
 
 import Cocoa
 import Harbeth
-import Exporter
+import Kakapo
 import AVKit
 
 extension ViewController {
@@ -31,20 +31,21 @@ extension ViewController {
         let gauss = MPSGaussianBlur(radius: 8)
         let board = C7Storyboard(ranks: 2)
         
-        let exporter = VideoExporter.init(videoURL: url, delegate: self)
-        exporter.export(outputURL: outputURL) { $0 ->> gauss ->> board }
+        let exporter = Exporter.init(videoURL: url, delegate: self)
+        exporter.export(outputURL: outputURL) { $0 ->> board ->> gauss }
     }
 }
 
 extension ViewController: ExporterDelegate {
-    func export(_ exporter: Exporter.VideoExporter, success videoURL: URL) {
+    
+    func export(_ exporter: Kakapo.Exporter, success videoURL: URL) {
         let playerItem = AVPlayerItem(url: videoURL)
         let player = AVPlayer(playerItem: playerItem)
         playerView.player = player
         player.play()
     }
     
-    func export(_ exporter: Exporter.VideoExporter, failed error: Exporter.VideoExporter.Error) {
+    func export(_ exporter: Kakapo.Exporter, failed error: Kakapo.Exporter.Error) {
         
     }
 }
