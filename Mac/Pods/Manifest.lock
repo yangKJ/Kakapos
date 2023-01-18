@@ -12,12 +12,10 @@ PODS:
     - Harbeth/Basic
   - Harbeth/CoreImage (0.5.3):
     - Harbeth/Basic
-  - VideoBox (0.0.1)
 
 DEPENDENCIES:
   - Exporter (from `../`)
   - Harbeth
-  - VideoBox (from `../`)
 
 SPEC REPOS:
   trunk:
@@ -26,14 +24,11 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   Exporter:
     :path: "../"
-  VideoBox:
-    :path: "../"
 
 SPEC CHECKSUMS:
   Exporter: 26ec5ef303be9a5eab3799f263ce6753deb0e9ab
   Harbeth: 9decb4f8083f71d3683384aa729ed66582739e22
-  VideoBox: a58e20a97b9b589ca7f939ce4467c5d82a136714
 
-PODFILE CHECKSUM: 6ea05b1de07adf220739eaf6a2a69923575ac04a
+PODFILE CHECKSUM: f18fb5bff000509a822f49589b7aaf708d49036e
 
 COCOAPODS: 1.11.3

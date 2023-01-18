@@ -7,7 +7,6 @@ target 'VideoExportDemo' do
   
   pod 'Harbeth'
   pod 'Exporter', :path => '../'
-  pod 'VideoBox', :path => '../'
   
   # Pods for VideoExportDemo
   
