@@ -1,15 +1,11 @@
 # Kakapos
 
-[![Carthage compatible](https://img.shields.io/badge/Carthage-compatible-brightgreen.svg?style=flat&colorA=28a745&&colorB=4E4E4E)](https://github.com/yangKJ/Kakapos)
-[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Harbeth.svg?style=flat&label=Harbeth&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Harbeth)
-[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Kakapos.svg?style=flat&label=Kakapos&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Kakapos)
+[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Kakapos.svg?style=flat&label=Kakapos&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Kakapos) 
 ![Platform](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20watchOS-4E4E4E.svg?colorA=28a745)
 
-<font color=red>**Video filter exporter tool.👒👒👒**</font>
+[**Kakapos**](https://github.com/yangKJ/Kakapos) is a video add filter tool that supports network and local urls, as well as album videos.
 
-It's a filter infused video tool that supports network and local urls, as well as album videos.
-
-Support mac and ios.
+Support macOS, iOS, tvOS and watchOS.
 
 -------
 
@@ -33,17 +29,6 @@ let outputURL: URL = {
     }
     return outputURL
 }()
-```
-
-- Set filters that need to be added.
-
-```
-let filters: [C7FilterProtocol] = [
-    C7Flip(horizontal: true, vertical: false),
-    C7SoulOut(soul: 0.3),
-    MPSGaussianBlur(radius: 5),
-    C7ColorConvert(with: .gray),
-]
 ```
 
 - Create the video exporter instance.
@@ -85,6 +70,13 @@ func export(_ exporter: Kakapos.Exporter, failed error: Kakapos.Exporter.Error) 
 - Convert video and add filters, convert buffer.
 
 ```
+let filters: [C7FilterProtocol] = [
+    C7Flip(horizontal: true, vertical: false),
+    C7ColorConvert(with: .gray),
+    C7SoulOut(soul: 0.3),
+    MPSGaussianBlur(radius: 5),
+]
+
 /// Export the video after injecting the filter.
 /// - Parameters:
 ///   - outputURL: Specifies the sandbox address of the exported video.
