@@ -1,11 +1,11 @@
-# Kakapo
+# Kakapos
 
-[![Carthage compatible](https://img.shields.io/badge/Carthage-compatible-brightgreen.svg?style=flat&colorA=28a745&&colorB=4E4E4E)](https://github.com/yangKJ/Kakapo)
+[![Carthage compatible](https://img.shields.io/badge/Carthage-compatible-brightgreen.svg?style=flat&colorA=28a745&&colorB=4E4E4E)](https://github.com/yangKJ/Kakapos)
 [![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Harbeth.svg?style=flat&label=Harbeth&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Harbeth)
-[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Kakapo.svg?style=flat&label=Kakapo&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Kakapo)
+[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Kakapos.svg?style=flat&label=Kakapos&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Kakapos)
 ![Platform](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20watchOS-4E4E4E.svg?colorA=28a745)
 
-<font color=red>**Video Filter Exporter.👒👒👒**</font>
+<font color=red>**Video filter exporter tool.👒👒👒**</font>
 
 It's a filter infused video tool that supports network and local urls, as well as album videos.
 
@@ -63,7 +63,7 @@ let exporter = Exporter.init(asset: ``AVAsset``, delegate: self)
 /// - Parameters:
 ///   - exporter: VideoExporter
 ///   - videoURL: Export the successful video url, Be equivalent to outputURL.
-func export(_ exporter: Kakapo.Exporter, success videoURL: URL) {
+func export(_ exporter: Kakapos.Exporter, success videoURL: URL) {
     self.view.hideAllToasts()
     let player = AVPlayer(url: videoURL)
     let vc = AVPlayerViewController()
@@ -77,7 +77,7 @@ func export(_ exporter: Kakapo.Exporter, success videoURL: URL) {
 /// - Parameters:
 ///   - exporter: VideoExporter
 ///   - error: Failure error message.
-func export(_ exporter: Kakapo.Exporter, failed error: Kakapo.Exporter.Error) {
+func export(_ exporter: Kakapos.Exporter, failed error: Kakapos.Exporter.Error) {
     // do someing..
 }
 ```
@@ -102,13 +102,13 @@ exporter.export(outputURL: outputURL) { $0 ->> gauss ->> board }
 
 ### CocoaPods
 
-- If you want to import [**Video Exporter**](https://github.com/yangKJ/Kakapo) module, you need in your Podfile: 
+- If you want to import [**Video Exporter**](https://github.com/yangKJ/Kakapos) module, you need in your Podfile: 
 
 ```
-pod 'Kakapo'
+pod 'Kakapos'
 ```
 
-- If you want to import [**Filter**](https://github.com/yangKJ/Kakapo) image module, you need in your Podfile: 
+- If you want to import [**Filter**](https://github.com/yangKJ/Kakapos) image module, you need in your Podfile: 
 
 ```
 pod 'Harbeth'
@@ -118,13 +118,13 @@ pod 'Harbeth'
 
 [Swift Package Manager](https://swift.org/package-manager/) is a tool for managing the distribution of Swift code. It’s integrated with the Swift build system to automate the process of downloading, compiling, and linking dependencies.
 
-> Xcode 11+ is required to build [Kakapo](https://github.com/yangKJ/Kakapo) using Swift Package Manager.
+> Xcode 11+ is required to build [Kakapos](https://github.com/yangKJ/Kakapos) using Swift Package Manager.
 
 To integrate Harbeth into your Xcode project using Swift Package Manager, add it to the dependencies value of your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/yangKJ/Kakapo.git", branch: "master"),
+    .package(url: "https://github.com/yangKJ/Kakapos.git", branch: "master"),
 ]
 ```
 
@@ -132,7 +132,7 @@ dependencies: [
 
 > The general process is almost like this, the Demo is also written in great detail, you can check it out for yourself.🎷
 >
-> [**KakapoDemo**](https://github.com/yangKJ/Kakapo/mac)
+> [**KakaposDemo**](https://github.com/yangKJ/Kakapos)
 >
 > Tip: If you find it helpful, please help me with a star. If you have any questions or needs, you can also issue.
 >
