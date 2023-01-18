@@ -28,6 +28,8 @@ extension ViewController {
             return outputURL
         }()
         
+        loader.startAnimation(nil)
+        
         let gauss = MPSGaussianBlur(radius: 8)
         let board = C7Storyboard(ranks: 2)
         
@@ -43,9 +45,12 @@ extension ViewController: ExporterDelegate {
         let player = AVPlayer(playerItem: playerItem)
         playerView.player = player
         player.play()
+        loader.stopAnimation(nil)
+        loader.isHidden = true
     }
     
     func export(_ exporter: Kakapos.Exporter, failed error: Kakapos.Exporter.Error) {
-        
+        loader.stopAnimation(nil)
+        loader.isHidden = true
     }
 }

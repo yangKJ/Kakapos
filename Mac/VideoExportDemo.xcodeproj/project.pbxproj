@@ -25,7 +25,7 @@
 		878220D5295D300C00530A2C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		878220D8295D300C00530A2C /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		878220DA295D300C00530A2C /* VideoExportDemo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VideoExportDemo.entitlements; sourceTree = "<group>"; };
-		87A75AE9295D373700F50415 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		87A75AE9295D373700F50415 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F41C0C808029951083363363 /* Pods_VideoExportDemo.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_VideoExportDemo.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -48,6 +48,17 @@
 				8337D7F11390D5A75B834C46 /* Pods-VideoExportDemo.release.xcconfig */,
 			);
 			path = Pods;
+			sourceTree = "<group>";
+		};
+		8762D4BE2977DB86009405E2 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				878220D5295D300C00530A2C /* Assets.xcassets */,
+				878220D7295D300C00530A2C /* Main.storyboard */,
+				87A75AE9295D373700F50415 /* Info.plist */,
+				878220DA295D300C00530A2C /* VideoExportDemo.entitlements */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		878220C5295D300A00530A2C = {
@@ -74,10 +85,7 @@
 				878220D1295D300A00530A2C /* AppDelegate.swift */,
 				878220D3295D300A00530A2C /* ViewController.swift */,
 				876CE8EE295D7286006C842F /* ViewController+Kakapos.swift */,
-				878220D5295D300C00530A2C /* Assets.xcassets */,
-				878220D7295D300C00530A2C /* Main.storyboard */,
-				87A75AE9295D373700F50415 /* Info.plist */,
-				878220DA295D300C00530A2C /* VideoExportDemo.entitlements */,
+				8762D4BE2977DB86009405E2 /* Resources */,
 			);
 			path = VideoExportDemo;
 			sourceTree = "<group>";
@@ -343,14 +351,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = VideoExportDemo/VideoExportDemo.entitlements;
+				CODE_SIGN_ENTITLEMENTS = VideoExportDemo/Resources/VideoExportDemo.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = AAHMKJNWLX;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = VideoExportDemo/Info.plist;
+				INFOPLIST_FILE = VideoExportDemo/Resources/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
@@ -372,14 +381,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = VideoExportDemo/VideoExportDemo.entitlements;
+				CODE_SIGN_ENTITLEMENTS = VideoExportDemo/Resources/VideoExportDemo.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = AAHMKJNWLX;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = VideoExportDemo/Info.plist;
+				INFOPLIST_FILE = VideoExportDemo/Resources/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;

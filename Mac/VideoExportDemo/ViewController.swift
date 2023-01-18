@@ -17,13 +17,19 @@ class ViewController: NSViewController {
     
     @IBOutlet weak var playerView: AVPlayerView!
     
+    lazy var loader: NSProgressIndicator = {
+        let indicator = NSProgressIndicator()
+        indicator.style = .spinning
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        return indicator
+    }()
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         
         // Do any additional setup after loading the view.
-        setupPlayer()
+        setupUI()
         export(at: videoURL)
-        //boxer(at: videoURL)
     }
     
     override var representedObject: Any? {
@@ -31,13 +37,14 @@ class ViewController: NSViewController {
             // Update the view, if already loaded.
         }
     }
-}
-
-extension ViewController {
-    func setupPlayer() {
-        let playerItem = AVPlayerItem(url: videoURL)
-        let player = AVPlayer(playerItem: playerItem)
-        playerView.player = player
-        player.play()
+    
+    func setupUI() {
+        view.addSubview(loader)
+        NSLayoutConstraint.activate([
+            loader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            loader.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            loader.widthAnchor.constraint(equalToConstant: 40),
+            loader.heightAnchor.constraint(equalToConstant: 40),
+        ])
     }
 }
