@@ -6,8 +6,9 @@
 //
 
 import Cocoa
-import Harbeth
 import AVKit
+import Harbeth
+import Kakapos
 
 class ViewController: NSViewController {
     
@@ -46,5 +47,48 @@ class ViewController: NSViewController {
             loader.widthAnchor.constraint(equalToConstant: 40),
             loader.heightAnchor.constraint(equalToConstant: 40),
         ])
+    }
+    
+    func export(at url: URL) {
+        // Creating temp path to save the converted video
+        let outputURL: URL = {
+            let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] as URL
+            let outputURL = documentsDirectory.appendingPathComponent("condy_exporter_video.mp4")
+            
+            // Check if the file already exists then remove the previous file
+            if FileManager.default.fileExists(atPath: outputURL.path) {
+                do {
+                    try FileManager.default.removeItem(at: outputURL)
+                } catch {
+                    //completionHandler(nil, error)
+                }
+            }
+            return outputURL
+        }()
+        
+        loader.startAnimation(nil)
+        
+        let blur = C7ZoomBlur(blurSize: 1.5)
+        let gray = C7ColorConvert(with: .gray)
+        
+        let exporter = Exporter.init(videoURL: url, delegate: self)
+        exporter.export(outputURL: outputURL) { $0 ->> blur ->> gray }
+    }
+}
+
+extension ViewController: ExporterDelegate {
+    
+    func export(_ exporter: Kakapos.Exporter, success videoURL: URL) {
+        let playerItem = AVPlayerItem(url: videoURL)
+        let player = AVPlayer(playerItem: playerItem)
+        playerView.player = player
+        player.play()
+        loader.stopAnimation(nil)
+        loader.isHidden = true
+    }
+    
+    func export(_ exporter: Kakapos.Exporter, failed error: Kakapos.Exporter.Error) {
+        loader.stopAnimation(nil)
+        loader.isHidden = true
     }
 }

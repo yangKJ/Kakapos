@@ -356,23 +356,9 @@
 		87844B842977E6CA00AF7DA3 /* C7Nostalgic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = C7Nostalgic.swift; sourceTree = "<group>"; };
 		87844B852977E6CA00AF7DA3 /* C7Sepia.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = C7Sepia.metal; sourceTree = "<group>"; };
 		87844B862977E6CA00AF7DA3 /* C7ColorMatrix4x4.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = C7ColorMatrix4x4.metal; sourceTree = "<group>"; };
-		87844B882977E6CA00AF7DA3 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
-		87844B8A2977E6CA00AF7DA3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		87844B8C2977E6CA00AF7DA3 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
-		87844B8E2977E6CA00AF7DA3 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
-		87844B8F2977E6CA00AF7DA3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		87844B902977E6CA00AF7DA3 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		87844B912977E6CA00AF7DA3 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		87844B922977E6CA00AF7DA3 /* Podfile */ = {isa = PBXFileReference; lastKnownFileType = text; path = Podfile; sourceTree = "<group>"; };
 		87844B932977E6CA00AF7DA3 /* Podfile.lock */ = {isa = PBXFileReference; lastKnownFileType = text; path = Podfile.lock; sourceTree = "<group>"; };
 		87844BA42977E6D400AF7DA3 /* KakaposMacDemo.xcworkspace */ = {isa = PBXFileReference; lastKnownFileType = wrapper.workspace; path = KakaposMacDemo.xcworkspace; sourceTree = "<group>"; };
-		87844BA62977E6D400AF7DA3 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
-		87844BA82977E6D400AF7DA3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		87844BAA2977E6D400AF7DA3 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
-		87844BAB2977E6D400AF7DA3 /* KakaposMacDemo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KakaposMacDemo.entitlements; sourceTree = "<group>"; };
-		87844BAC2977E6D400AF7DA3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		87844BAD2977E6D400AF7DA3 /* ViewController+Kakapos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ViewController+Kakapos.swift"; sourceTree = "<group>"; };
-		87844BAE2977E6D400AF7DA3 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		87844BB02977E6D400AF7DA3 /* Pods.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = Pods.xcodeproj; sourceTree = "<group>"; };
 		87844BB52977E6D400AF7DA3 /* ResourceBundle-Harbeth-Harbeth-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ResourceBundle-Harbeth-Harbeth-Info.plist"; sourceTree = "<group>"; };
 		87844BB62977E6D400AF7DA3 /* Harbeth-umbrella.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Harbeth-umbrella.h"; sourceTree = "<group>"; };
@@ -673,7 +659,6 @@
 		87844A592977E6CA00AF7DA3 /* iOS */ = {
 			isa = PBXGroup;
 			children = (
-				87844B872977E6CA00AF7DA3 /* KakaposDemo */,
 				87844A5B2977E6CA00AF7DA3 /* KakaposDemo.xcodeproj */,
 				87844A5A2977E6CA00AF7DA3 /* KakaposDemo.xcworkspace */,
 				87844B922977E6CA00AF7DA3 /* Podfile */,
@@ -1171,32 +1156,9 @@
 			path = Matrix;
 			sourceTree = "<group>";
 		};
-		87844B872977E6CA00AF7DA3 /* KakaposDemo */ = {
-			isa = PBXGroup;
-			children = (
-				87844B902977E6CA00AF7DA3 /* AppDelegate.swift */,
-				87844B912977E6CA00AF7DA3 /* SceneDelegate.swift */,
-				87844B882977E6CA00AF7DA3 /* ViewController.swift */,
-				87844B892977E6CA00AF7DA3 /* Resources */,
-			);
-			path = KakaposDemo;
-			sourceTree = "<group>";
-		};
-		87844B892977E6CA00AF7DA3 /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				87844B8A2977E6CA00AF7DA3 /* Assets.xcassets */,
-				87844B8F2977E6CA00AF7DA3 /* Info.plist */,
-				87844B8B2977E6CA00AF7DA3 /* LaunchScreen.storyboard */,
-				87844B8D2977E6CA00AF7DA3 /* Main.storyboard */,
-			);
-			path = Resources;
-			sourceTree = "<group>";
-		};
 		87844BA32977E6D400AF7DA3 /* Mac */ = {
 			isa = PBXGroup;
 			children = (
-				87844BA52977E6D400AF7DA3 /* KakaposMacDemo */,
 				87844CD92977E6D400AF7DA3 /* KakaposMacDemo.xcodeproj */,
 				87844BA42977E6D400AF7DA3 /* KakaposMacDemo.xcworkspace */,
 				87844CDC2977E6D400AF7DA3 /* Podfile */,
@@ -1204,28 +1166,6 @@
 				87844BAF2977E6D400AF7DA3 /* Pods */,
 			);
 			path = Mac;
-			sourceTree = "<group>";
-		};
-		87844BA52977E6D400AF7DA3 /* KakaposMacDemo */ = {
-			isa = PBXGroup;
-			children = (
-				87844BAE2977E6D400AF7DA3 /* AppDelegate.swift */,
-				87844BA62977E6D400AF7DA3 /* ViewController.swift */,
-				87844BAD2977E6D400AF7DA3 /* ViewController+Kakapos.swift */,
-				87844BA72977E6D400AF7DA3 /* Resources */,
-			);
-			path = KakaposMacDemo;
-			sourceTree = "<group>";
-		};
-		87844BA72977E6D400AF7DA3 /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				87844BA82977E6D400AF7DA3 /* Assets.xcassets */,
-				87844BAC2977E6D400AF7DA3 /* Info.plist */,
-				87844BAB2977E6D400AF7DA3 /* KakaposMacDemo.entitlements */,
-				87844BA92977E6D400AF7DA3 /* Main.storyboard */,
-			);
-			path = Resources;
 			sourceTree = "<group>";
 		};
 		87844BAF2977E6D400AF7DA3 /* Pods */ = {
@@ -1454,15 +1394,15 @@
 		87844C1C2977E6D400AF7DA3 /* Compute */ = {
 			isa = PBXGroup;
 			children = (
-				87844C1D2977E6D400AF7DA3 /* Shape */,
-				87844C282977E6D400AF7DA3 /* MPS */,
-				87844C2A2977E6D400AF7DA3 /* Effect */,
-				87844C5F2977E6D400AF7DA3 /* Lookup */,
-				87844C642977E6D400AF7DA3 /* ColorProcess */,
 				87844C9D2977E6D400AF7DA3 /* Blend */,
 				87844CB62977E6D400AF7DA3 /* Blur */,
-				87844CC32977E6D400AF7DA3 /* Visual */,
+				87844C642977E6D400AF7DA3 /* ColorProcess */,
+				87844C2A2977E6D400AF7DA3 /* Effect */,
+				87844C5F2977E6D400AF7DA3 /* Lookup */,
 				87844CCC2977E6D400AF7DA3 /* Matrix */,
+				87844C282977E6D400AF7DA3 /* MPS */,
+				87844C1D2977E6D400AF7DA3 /* Shape */,
+				87844CC32977E6D400AF7DA3 /* Visual */,
 			);
 			path = Compute;
 			sourceTree = "<group>";
@@ -1470,16 +1410,16 @@
 		87844C1D2977E6D400AF7DA3 /* Shape */ = {
 			isa = PBXGroup;
 			children = (
-				87844C1E2977E6D400AF7DA3 /* C7Rotate.swift */,
-				87844C1F2977E6D400AF7DA3 /* C7Resize.swift */,
-				87844C202977E6D400AF7DA3 /* C7Crop.swift */,
-				87844C212977E6D400AF7DA3 /* C7Transform.metal */,
-				87844C222977E6D400AF7DA3 /* C7Flip.metal */,
-				87844C232977E6D400AF7DA3 /* C7Resize.metal */,
-				87844C242977E6D400AF7DA3 /* C7Rotate.metal */,
-				87844C252977E6D400AF7DA3 /* C7Transform.swift */,
 				87844C262977E6D400AF7DA3 /* C7Crop.metal */,
+				87844C202977E6D400AF7DA3 /* C7Crop.swift */,
+				87844C222977E6D400AF7DA3 /* C7Flip.metal */,
 				87844C272977E6D400AF7DA3 /* C7Flip.swift */,
+				87844C232977E6D400AF7DA3 /* C7Resize.metal */,
+				87844C1F2977E6D400AF7DA3 /* C7Resize.swift */,
+				87844C242977E6D400AF7DA3 /* C7Rotate.metal */,
+				87844C1E2977E6D400AF7DA3 /* C7Rotate.swift */,
+				87844C212977E6D400AF7DA3 /* C7Transform.metal */,
+				87844C252977E6D400AF7DA3 /* C7Transform.swift */,
 			);
 			path = Shape;
 			sourceTree = "<group>";
@@ -1495,58 +1435,58 @@
 		87844C2A2977E6D400AF7DA3 /* Effect */ = {
 			isa = PBXGroup;
 			children = (
-				87844C2B2977E6D400AF7DA3 /* C7ChromaKey.metal */,
-				87844C2C2977E6D400AF7DA3 /* C7ReplaceRGBA.metal */,
-				87844C2D2977E6D400AF7DA3 /* C7GlassSphere.swift */,
-				87844C2E2977E6D400AF7DA3 /* C7Bulge.swift */,
-				87844C2F2977E6D400AF7DA3 /* C7SoulOut.metal */,
-				87844C302977E6D400AF7DA3 /* C7Halftone.metal */,
-				87844C312977E6D400AF7DA3 /* C7SphereRefraction.metal */,
-				87844C322977E6D400AF7DA3 /* C7SplitScreen.swift */,
-				87844C332977E6D400AF7DA3 /* C7RGBADilation.swift */,
-				87844C342977E6D400AF7DA3 /* C7Kuwahara.metal */,
-				87844C352977E6D400AF7DA3 /* C7Fluctuate.swift */,
-				87844C362977E6D400AF7DA3 /* C7PolkaDot.swift */,
-				87844C372977E6D400AF7DA3 /* C7Storyboard.metal */,
-				87844C382977E6D400AF7DA3 /* C7Pinch.swift */,
-				87844C392977E6D400AF7DA3 /* C7Crosshatch.metal */,
-				87844C3A2977E6D400AF7DA3 /* C7Vignette.swift */,
-				87844C3B2977E6D400AF7DA3 /* C7ThresholdSketch.swift */,
-				87844C3C2977E6D400AF7DA3 /* C7Sharpen.metal */,
-				87844C3D2977E6D400AF7DA3 /* C7Swirl.metal */,
-				87844C3E2977E6D400AF7DA3 /* C7DepthLuminance.metal */,
-				87844C3F2977E6D400AF7DA3 /* C7Toon.metal */,
-				87844C402977E6D400AF7DA3 /* C7PolarPixellate.metal */,
-				87844C412977E6D400AF7DA3 /* C7WaterRipple.swift */,
-				87844C422977E6D400AF7DA3 /* C7Pixellated.swift */,
-				87844C432977E6D400AF7DA3 /* C7Sobel.swift */,
-				87844C442977E6D400AF7DA3 /* C7Sketch.metal */,
 				87844C452977E6D400AF7DA3 /* C7Bulge.metal */,
-				87844C462977E6D400AF7DA3 /* C7SoulOut.swift */,
-				87844C472977E6D400AF7DA3 /* C7GlassSphere.metal */,
+				87844C2E2977E6D400AF7DA3 /* C7Bulge.swift */,
+				87844C2B2977E6D400AF7DA3 /* C7ChromaKey.metal */,
 				87844C482977E6D400AF7DA3 /* C7ChromaKey.swift */,
-				87844C492977E6D400AF7DA3 /* C7ReplaceRGBA.swift */,
-				87844C4A2977E6D400AF7DA3 /* C7Kuwahara.swift */,
+				87844C392977E6D400AF7DA3 /* C7Crosshatch.metal */,
+				87844C4F2977E6D400AF7DA3 /* C7Crosshatch.swift */,
+				87844C3E2977E6D400AF7DA3 /* C7DepthLuminance.metal */,
+				87844C5D2977E6D400AF7DA3 /* C7DepthLuminance.swift */,
+				87844C542977E6D400AF7DA3 /* C7Fluctuate.metal */,
+				87844C352977E6D400AF7DA3 /* C7Fluctuate.swift */,
+				87844C472977E6D400AF7DA3 /* C7GlassSphere.metal */,
+				87844C2D2977E6D400AF7DA3 /* C7GlassSphere.swift */,
+				87844C302977E6D400AF7DA3 /* C7Halftone.metal */,
 				87844C4B2977E6D400AF7DA3 /* C7Halftone.swift */,
+				87844C342977E6D400AF7DA3 /* C7Kuwahara.metal */,
+				87844C4A2977E6D400AF7DA3 /* C7Kuwahara.swift */,
+				87844C522977E6D400AF7DA3 /* C7Pinch.metal */,
+				87844C382977E6D400AF7DA3 /* C7Pinch.swift */,
+				87844C582977E6D400AF7DA3 /* C7Pixellated.metal */,
+				87844C422977E6D400AF7DA3 /* C7Pixellated.swift */,
+				87844C402977E6D400AF7DA3 /* C7PolarPixellate.metal */,
+				87844C5A2977E6D400AF7DA3 /* C7PolarPixellate.swift */,
+				87844C552977E6D400AF7DA3 /* C7PolkaDot.metal */,
+				87844C362977E6D400AF7DA3 /* C7PolkaDot.swift */,
+				87844C2C2977E6D400AF7DA3 /* C7ReplaceRGBA.metal */,
+				87844C492977E6D400AF7DA3 /* C7ReplaceRGBA.swift */,
+				87844C4E2977E6D400AF7DA3 /* C7RGBADilation.metal */,
+				87844C332977E6D400AF7DA3 /* C7RGBADilation.swift */,
+				87844C3C2977E6D400AF7DA3 /* C7Sharpen.metal */,
+				87844C5B2977E6D400AF7DA3 /* C7Sharpen.swift */,
+				87844C442977E6D400AF7DA3 /* C7Sketch.metal */,
+				87844C562977E6D400AF7DA3 /* C7Sketch.swift */,
+				87844C592977E6D400AF7DA3 /* C7Sobel.metal */,
+				87844C432977E6D400AF7DA3 /* C7Sobel.swift */,
+				87844C2F2977E6D400AF7DA3 /* C7SoulOut.metal */,
+				87844C462977E6D400AF7DA3 /* C7SoulOut.swift */,
+				87844C312977E6D400AF7DA3 /* C7SphereRefraction.metal */,
 				87844C4C2977E6D400AF7DA3 /* C7SphereRefraction.swift */,
 				87844C4D2977E6D400AF7DA3 /* C7SplitScreen.metal */,
-				87844C4E2977E6D400AF7DA3 /* C7RGBADilation.metal */,
-				87844C4F2977E6D400AF7DA3 /* C7Crosshatch.swift */,
-				87844C502977E6D400AF7DA3 /* C7Vignette.metal */,
-				87844C512977E6D400AF7DA3 /* C7ThresholdSketch.metal */,
-				87844C522977E6D400AF7DA3 /* C7Pinch.metal */,
+				87844C322977E6D400AF7DA3 /* C7SplitScreen.swift */,
+				87844C372977E6D400AF7DA3 /* C7Storyboard.metal */,
 				87844C532977E6D400AF7DA3 /* C7Storyboard.swift */,
-				87844C542977E6D400AF7DA3 /* C7Fluctuate.metal */,
-				87844C552977E6D400AF7DA3 /* C7PolkaDot.metal */,
-				87844C562977E6D400AF7DA3 /* C7Sketch.swift */,
-				87844C572977E6D400AF7DA3 /* C7WaterRipple.metal */,
-				87844C582977E6D400AF7DA3 /* C7Pixellated.metal */,
-				87844C592977E6D400AF7DA3 /* C7Sobel.metal */,
-				87844C5A2977E6D400AF7DA3 /* C7PolarPixellate.swift */,
-				87844C5B2977E6D400AF7DA3 /* C7Sharpen.swift */,
+				87844C3D2977E6D400AF7DA3 /* C7Swirl.metal */,
 				87844C5C2977E6D400AF7DA3 /* C7Swirl.swift */,
-				87844C5D2977E6D400AF7DA3 /* C7DepthLuminance.swift */,
+				87844C512977E6D400AF7DA3 /* C7ThresholdSketch.metal */,
+				87844C3B2977E6D400AF7DA3 /* C7ThresholdSketch.swift */,
+				87844C3F2977E6D400AF7DA3 /* C7Toon.metal */,
 				87844C5E2977E6D400AF7DA3 /* C7Toon.swift */,
+				87844C502977E6D400AF7DA3 /* C7Vignette.metal */,
+				87844C3A2977E6D400AF7DA3 /* C7Vignette.swift */,
+				87844C572977E6D400AF7DA3 /* C7WaterRipple.metal */,
+				87844C412977E6D400AF7DA3 /* C7WaterRipple.swift */,
 			);
 			path = Effect;
 			sourceTree = "<group>";
@@ -1554,10 +1494,10 @@
 		87844C5F2977E6D400AF7DA3 /* Lookup */ = {
 			isa = PBXGroup;
 			children = (
-				87844C602977E6D400AF7DA3 /* C7LookupTable.metal */,
 				87844C612977E6D400AF7DA3 /* C7LookupSplit.metal */,
-				87844C622977E6D400AF7DA3 /* C7LookupTable.swift */,
 				87844C632977E6D400AF7DA3 /* C7LookupSplit.swift */,
+				87844C602977E6D400AF7DA3 /* C7LookupTable.metal */,
+				87844C622977E6D400AF7DA3 /* C7LookupTable.swift */,
 			);
 			path = Lookup;
 			sourceTree = "<group>";
@@ -1565,62 +1505,62 @@
 		87844C642977E6D400AF7DA3 /* ColorProcess */ = {
 			isa = PBXGroup;
 			children = (
-				87844C652977E6D400AF7DA3 /* C7Hue.metal */,
-				87844C662977E6D400AF7DA3 /* C7Saturation.swift */,
-				87844C672977E6D400AF7DA3 /* C7Granularity.swift */,
-				87844C682977E6D400AF7DA3 /* C7ComicStrip.swift */,
-				87844C692977E6D400AF7DA3 /* C7CGAColorspace.metal */,
-				87844C6A2977E6D400AF7DA3 /* C7Vibrance.swift */,
-				87844C6B2977E6D400AF7DA3 /* C7Gamma.metal */,
-				87844C6C2977E6D400AF7DA3 /* C7LuminanceThreshold.metal */,
-				87844C6D2977E6D400AF7DA3 /* C7Levels.metal */,
-				87844C6E2977E6D400AF7DA3 /* C7LuminanceRangeReduction.metal */,
-				87844C6F2977E6D400AF7DA3 /* C7Posterize.metal */,
-				87844C702977E6D400AF7DA3 /* C7Monochrome.metal */,
-				87844C712977E6D400AF7DA3 /* C7Luminance.swift */,
-				87844C722977E6D400AF7DA3 /* C7SolidColor.metal */,
-				87844C732977E6D400AF7DA3 /* C7WhiteBalance.metal */,
-				87844C742977E6D400AF7DA3 /* C7Opacity.swift */,
-				87844C752977E6D400AF7DA3 /* C7Exposure.metal */,
-				87844C762977E6D400AF7DA3 /* C7FalseColor.metal */,
-				87844C772977E6D400AF7DA3 /* C7OilPainting.metal */,
-				87844C782977E6D400AF7DA3 /* C7HighlightShadow.metal */,
-				87844C792977E6D400AF7DA3 /* C7ColorPacking.swift */,
-				87844C7A2977E6D400AF7DA3 /* C7ColorConvert.swift */,
-				87844C7B2977E6D400AF7DA3 /* C7HighlightShadowTint.metal */,
-				87844C7C2977E6D400AF7DA3 /* C7Contrast.metal */,
-				87844C7D2977E6D400AF7DA3 /* C7ColorRGBA.swift */,
 				87844C7E2977E6D400AF7DA3 /* C7Brightness.metal */,
-				87844C7F2977E6D400AF7DA3 /* C7Haze.metal */,
-				87844C802977E6D400AF7DA3 /* C7ColorSpace.metal */,
-				87844C812977E6D400AF7DA3 /* C7Vibrance.metal */,
-				87844C822977E6D400AF7DA3 /* C7Gamma.swift */,
-				87844C832977E6D400AF7DA3 /* C7LuminanceThreshold.swift */,
-				87844C842977E6D400AF7DA3 /* C7ComicStrip.metal */,
-				87844C852977E6D400AF7DA3 /* C7CGAColorspace.swift */,
-				87844C862977E6D400AF7DA3 /* C7Saturation.metal */,
-				87844C872977E6D400AF7DA3 /* C7Granularity.metal */,
-				87844C882977E6D400AF7DA3 /* C7Hue.swift */,
-				87844C892977E6D400AF7DA3 /* C7Monochrome.swift */,
-				87844C8A2977E6D400AF7DA3 /* C7Luminance.metal */,
-				87844C8B2977E6D400AF7DA3 /* C7Levels.swift */,
-				87844C8C2977E6D400AF7DA3 /* C7LuminanceRangeReduction.swift */,
-				87844C8D2977E6D400AF7DA3 /* C7Posterize.swift */,
-				87844C8E2977E6D400AF7DA3 /* C7Exposure.swift */,
-				87844C8F2977E6D400AF7DA3 /* C7WhiteBalance.swift */,
-				87844C902977E6D400AF7DA3 /* C7Opacity.metal */,
-				87844C912977E6D400AF7DA3 /* C7SolidColor.swift */,
-				87844C922977E6D400AF7DA3 /* C7ColorRGBA.metal */,
 				87844C932977E6D400AF7DA3 /* C7Brightness.swift */,
-				87844C942977E6D400AF7DA3 /* C7Haze.swift */,
-				87844C952977E6D400AF7DA3 /* C7ColorSpace.swift */,
-				87844C962977E6D400AF7DA3 /* C7HighlightShadowTint.swift */,
-				87844C972977E6D400AF7DA3 /* C7Contrast.swift */,
-				87844C982977E6D400AF7DA3 /* C7HighlightShadow.swift */,
-				87844C992977E6D400AF7DA3 /* C7ColorPacking.metal */,
+				87844C692977E6D400AF7DA3 /* C7CGAColorspace.metal */,
+				87844C852977E6D400AF7DA3 /* C7CGAColorspace.swift */,
 				87844C9A2977E6D400AF7DA3 /* C7ColorConvert.metal */,
+				87844C7A2977E6D400AF7DA3 /* C7ColorConvert.swift */,
+				87844C992977E6D400AF7DA3 /* C7ColorPacking.metal */,
+				87844C792977E6D400AF7DA3 /* C7ColorPacking.swift */,
+				87844C922977E6D400AF7DA3 /* C7ColorRGBA.metal */,
+				87844C7D2977E6D400AF7DA3 /* C7ColorRGBA.swift */,
+				87844C802977E6D400AF7DA3 /* C7ColorSpace.metal */,
+				87844C952977E6D400AF7DA3 /* C7ColorSpace.swift */,
+				87844C842977E6D400AF7DA3 /* C7ComicStrip.metal */,
+				87844C682977E6D400AF7DA3 /* C7ComicStrip.swift */,
+				87844C7C2977E6D400AF7DA3 /* C7Contrast.metal */,
+				87844C972977E6D400AF7DA3 /* C7Contrast.swift */,
+				87844C752977E6D400AF7DA3 /* C7Exposure.metal */,
+				87844C8E2977E6D400AF7DA3 /* C7Exposure.swift */,
+				87844C762977E6D400AF7DA3 /* C7FalseColor.metal */,
 				87844C9B2977E6D400AF7DA3 /* C7FalseColor.swift */,
+				87844C6B2977E6D400AF7DA3 /* C7Gamma.metal */,
+				87844C822977E6D400AF7DA3 /* C7Gamma.swift */,
+				87844C872977E6D400AF7DA3 /* C7Granularity.metal */,
+				87844C672977E6D400AF7DA3 /* C7Granularity.swift */,
+				87844C7F2977E6D400AF7DA3 /* C7Haze.metal */,
+				87844C942977E6D400AF7DA3 /* C7Haze.swift */,
+				87844C782977E6D400AF7DA3 /* C7HighlightShadow.metal */,
+				87844C982977E6D400AF7DA3 /* C7HighlightShadow.swift */,
+				87844C7B2977E6D400AF7DA3 /* C7HighlightShadowTint.metal */,
+				87844C962977E6D400AF7DA3 /* C7HighlightShadowTint.swift */,
+				87844C652977E6D400AF7DA3 /* C7Hue.metal */,
+				87844C882977E6D400AF7DA3 /* C7Hue.swift */,
+				87844C6D2977E6D400AF7DA3 /* C7Levels.metal */,
+				87844C8B2977E6D400AF7DA3 /* C7Levels.swift */,
+				87844C8A2977E6D400AF7DA3 /* C7Luminance.metal */,
+				87844C712977E6D400AF7DA3 /* C7Luminance.swift */,
+				87844C6E2977E6D400AF7DA3 /* C7LuminanceRangeReduction.metal */,
+				87844C8C2977E6D400AF7DA3 /* C7LuminanceRangeReduction.swift */,
+				87844C6C2977E6D400AF7DA3 /* C7LuminanceThreshold.metal */,
+				87844C832977E6D400AF7DA3 /* C7LuminanceThreshold.swift */,
+				87844C702977E6D400AF7DA3 /* C7Monochrome.metal */,
+				87844C892977E6D400AF7DA3 /* C7Monochrome.swift */,
+				87844C772977E6D400AF7DA3 /* C7OilPainting.metal */,
 				87844C9C2977E6D400AF7DA3 /* C7OilPainting.swift */,
+				87844C902977E6D400AF7DA3 /* C7Opacity.metal */,
+				87844C742977E6D400AF7DA3 /* C7Opacity.swift */,
+				87844C6F2977E6D400AF7DA3 /* C7Posterize.metal */,
+				87844C8D2977E6D400AF7DA3 /* C7Posterize.swift */,
+				87844C862977E6D400AF7DA3 /* C7Saturation.metal */,
+				87844C662977E6D400AF7DA3 /* C7Saturation.swift */,
+				87844C722977E6D400AF7DA3 /* C7SolidColor.metal */,
+				87844C912977E6D400AF7DA3 /* C7SolidColor.swift */,
+				87844C812977E6D400AF7DA3 /* C7Vibrance.metal */,
+				87844C6A2977E6D400AF7DA3 /* C7Vibrance.swift */,
+				87844C732977E6D400AF7DA3 /* C7WhiteBalance.metal */,
+				87844C8F2977E6D400AF7DA3 /* C7WhiteBalance.swift */,
 			);
 			path = ColorProcess;
 			sourceTree = "<group>";
@@ -1628,30 +1568,30 @@
 		87844C9D2977E6D400AF7DA3 /* Blend */ = {
 			isa = PBXGroup;
 			children = (
+				87844CB42977E6D400AF7DA3 /* C7Blend.swift */,
 				87844C9E2977E6D400AF7DA3 /* C7ChromaKeyBlend.metal */,
-				87844C9F2977E6D400AF7DA3 /* C7SubtractBlend.metal */,
-				87844CA02977E6D400AF7DA3 /* C7SourceOverBlend.metal */,
-				87844CA12977E6D400AF7DA3 /* C7HardLightBlend.metal */,
 				87844CA22977E6D400AF7DA3 /* C7ColorAddBlend.metal */,
-				87844CA32977E6D400AF7DA3 /* C7DissolveBlend.metal */,
-				87844CA42977E6D400AF7DA3 /* C7MaskBlend.metal */,
-				87844CA52977E6D400AF7DA3 /* C7LightenBlend.metal */,
-				87844CA62977E6D400AF7DA3 /* C7DivideBlend.metal */,
-				87844CA72977E6D400AF7DA3 /* C7ColorDodgeBlend.metal */,
-				87844CA82977E6D400AF7DA3 /* C7ExclusionBlend.metal */,
-				87844CA92977E6D400AF7DA3 /* C7ColorBurnBlend.metal */,
-				87844CAA2977E6D400AF7DA3 /* C7HueBlend.metal */,
 				87844CAB2977E6D400AF7DA3 /* C7ColorAlphaBlend.metal */,
-				87844CAC2977E6D400AF7DA3 /* C7OverlayBlend.metal */,
-				87844CAD2977E6D400AF7DA3 /* C7NormalBlend.metal */,
-				87844CAE2977E6D400AF7DA3 /* C7LuminosityBlend.metal */,
-				87844CAF2977E6D400AF7DA3 /* C7MultiplyBlend.metal */,
-				87844CB02977E6D400AF7DA3 /* C7LinearBurnBlend.metal */,
-				87844CB12977E6D400AF7DA3 /* C7ScreenBlend.metal */,
+				87844CA92977E6D400AF7DA3 /* C7ColorBurnBlend.metal */,
+				87844CA72977E6D400AF7DA3 /* C7ColorDodgeBlend.metal */,
 				87844CB22977E6D400AF7DA3 /* C7DarkenBlend.metal */,
 				87844CB32977E6D400AF7DA3 /* C7DifferenceBlend.metal */,
-				87844CB42977E6D400AF7DA3 /* C7Blend.swift */,
+				87844CA32977E6D400AF7DA3 /* C7DissolveBlend.metal */,
+				87844CA62977E6D400AF7DA3 /* C7DivideBlend.metal */,
+				87844CA82977E6D400AF7DA3 /* C7ExclusionBlend.metal */,
+				87844CA12977E6D400AF7DA3 /* C7HardLightBlend.metal */,
+				87844CAA2977E6D400AF7DA3 /* C7HueBlend.metal */,
+				87844CA52977E6D400AF7DA3 /* C7LightenBlend.metal */,
+				87844CB02977E6D400AF7DA3 /* C7LinearBurnBlend.metal */,
+				87844CAE2977E6D400AF7DA3 /* C7LuminosityBlend.metal */,
+				87844CA42977E6D400AF7DA3 /* C7MaskBlend.metal */,
+				87844CAF2977E6D400AF7DA3 /* C7MultiplyBlend.metal */,
+				87844CAD2977E6D400AF7DA3 /* C7NormalBlend.metal */,
+				87844CAC2977E6D400AF7DA3 /* C7OverlayBlend.metal */,
+				87844CB12977E6D400AF7DA3 /* C7ScreenBlend.metal */,
 				87844CB52977E6D400AF7DA3 /* C7SoftLightBlend.metal */,
+				87844CA02977E6D400AF7DA3 /* C7SourceOverBlend.metal */,
+				87844C9F2977E6D400AF7DA3 /* C7SubtractBlend.metal */,
 			);
 			path = Blend;
 			sourceTree = "<group>";
@@ -1659,18 +1599,18 @@
 		87844CB62977E6D400AF7DA3 /* Blur */ = {
 			isa = PBXGroup;
 			children = (
-				87844CB72977E6D400AF7DA3 /* C7GaussianBlur.metal */,
-				87844CB82977E6D400AF7DA3 /* C7MeanBlur.metal */,
-				87844CB92977E6D400AF7DA3 /* C7BilateralBlur.swift */,
-				87844CBA2977E6D400AF7DA3 /* C7MotionBlur.metal */,
-				87844CBB2977E6D400AF7DA3 /* C7MonochromeDilation.swift */,
-				87844CBC2977E6D400AF7DA3 /* C7ZoomBlur.swift */,
-				87844CBD2977E6D400AF7DA3 /* C7GaussianBlur.swift */,
-				87844CBE2977E6D400AF7DA3 /* C7MeanBlur.swift */,
-				87844CBF2977E6D400AF7DA3 /* C7MotionBlur.swift */,
 				87844CC02977E6D400AF7DA3 /* C7BilateralBlur.metal */,
-				87844CC12977E6D400AF7DA3 /* C7ZoomBlur.metal */,
+				87844CB92977E6D400AF7DA3 /* C7BilateralBlur.swift */,
+				87844CB72977E6D400AF7DA3 /* C7GaussianBlur.metal */,
+				87844CBD2977E6D400AF7DA3 /* C7GaussianBlur.swift */,
+				87844CB82977E6D400AF7DA3 /* C7MeanBlur.metal */,
+				87844CBE2977E6D400AF7DA3 /* C7MeanBlur.swift */,
 				87844CC22977E6D400AF7DA3 /* C7MonochromeDilation.metal */,
+				87844CBB2977E6D400AF7DA3 /* C7MonochromeDilation.swift */,
+				87844CBA2977E6D400AF7DA3 /* C7MotionBlur.metal */,
+				87844CBF2977E6D400AF7DA3 /* C7MotionBlur.swift */,
+				87844CC12977E6D400AF7DA3 /* C7ZoomBlur.metal */,
+				87844CBC2977E6D400AF7DA3 /* C7ZoomBlur.swift */,
 			);
 			path = Blur;
 			sourceTree = "<group>";
@@ -1678,14 +1618,14 @@
 		87844CC32977E6D400AF7DA3 /* Visual */ = {
 			isa = PBXGroup;
 			children = (
-				87844CC42977E6D400AF7DA3 /* C7Glitch.metal */,
-				87844CC52977E6D400AF7DA3 /* C7VoronoiOverlay.swift */,
-				87844CC62977E6D400AF7DA3 /* C7ShiftGlitch.swift */,
 				87844CC72977E6D400AF7DA3 /* C7EdgeGlow.metal */,
-				87844CC82977E6D400AF7DA3 /* C7Glitch.swift */,
-				87844CC92977E6D400AF7DA3 /* C7VoronoiOverlay.metal */,
-				87844CCA2977E6D400AF7DA3 /* C7ShiftGlitch.metal */,
 				87844CCB2977E6D400AF7DA3 /* C7EdgeGlow.swift */,
+				87844CC42977E6D400AF7DA3 /* C7Glitch.metal */,
+				87844CC82977E6D400AF7DA3 /* C7Glitch.swift */,
+				87844CCA2977E6D400AF7DA3 /* C7ShiftGlitch.metal */,
+				87844CC62977E6D400AF7DA3 /* C7ShiftGlitch.swift */,
+				87844CC92977E6D400AF7DA3 /* C7VoronoiOverlay.metal */,
+				87844CC52977E6D400AF7DA3 /* C7VoronoiOverlay.swift */,
 			);
 			path = Visual;
 			sourceTree = "<group>";
@@ -1693,18 +1633,18 @@
 		87844CCC2977E6D400AF7DA3 /* Matrix */ = {
 			isa = PBXGroup;
 			children = (
-				87844CCD2977E6D400AF7DA3 /* C7ColorVector4.metal */,
+				87844CD82977E6D400AF7DA3 /* C7ColorMatrix4x4.metal */,
+				87844CD22977E6D400AF7DA3 /* C7ColorMatrix4x4.swift */,
+				87844CD42977E6D400AF7DA3 /* C7ColorMatrix4x5.metal */,
 				87844CCE2977E6D400AF7DA3 /* C7ColorMatrix4x5.swift */,
+				87844CCD2977E6D400AF7DA3 /* C7ColorVector4.metal */,
+				87844CD52977E6D400AF7DA3 /* C7ColorVector4.swift */,
+				87844CD32977E6D400AF7DA3 /* C7ConvolutionMatrix3x3.metal */,
 				87844CCF2977E6D400AF7DA3 /* C7ConvolutionMatrix3x3.swift */,
 				87844CD02977E6D400AF7DA3 /* C7Nostalgic.metal */,
-				87844CD12977E6D400AF7DA3 /* C7Sepia.swift */,
-				87844CD22977E6D400AF7DA3 /* C7ColorMatrix4x4.swift */,
-				87844CD32977E6D400AF7DA3 /* C7ConvolutionMatrix3x3.metal */,
-				87844CD42977E6D400AF7DA3 /* C7ColorMatrix4x5.metal */,
-				87844CD52977E6D400AF7DA3 /* C7ColorVector4.swift */,
 				87844CD62977E6D400AF7DA3 /* C7Nostalgic.swift */,
 				87844CD72977E6D400AF7DA3 /* C7Sepia.metal */,
-				87844CD82977E6D400AF7DA3 /* C7ColorMatrix4x4.metal */,
+				87844CD12977E6D400AF7DA3 /* C7Sepia.swift */,
 			);
 			path = Matrix;
 			sourceTree = "<group>";
@@ -1727,7 +1667,7 @@
 				LastSwiftUpdateCheck = 1410;
 				LastUpgradeCheck = 1410;
 			};
-			buildConfigurationList = 8762D44C2977C4D4009405E2 /* Build configuration list for PBXProject "KakaposDemo" */;
+			buildConfigurationList = 8762D44C2977C4D4009405E2 /* Build configuration list for PBXProject "Kakapos" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -1844,33 +1784,6 @@
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
 /* End PBXReferenceProxy section */
-
-/* Begin PBXVariantGroup section */
-		87844B8B2977E6CA00AF7DA3 /* LaunchScreen.storyboard */ = {
-			isa = PBXVariantGroup;
-			children = (
-				87844B8C2977E6CA00AF7DA3 /* Base */,
-			);
-			name = LaunchScreen.storyboard;
-			sourceTree = "<group>";
-		};
-		87844B8D2977E6CA00AF7DA3 /* Main.storyboard */ = {
-			isa = PBXVariantGroup;
-			children = (
-				87844B8E2977E6CA00AF7DA3 /* Base */,
-			);
-			name = Main.storyboard;
-			sourceTree = "<group>";
-		};
-		87844BA92977E6D400AF7DA3 /* Main.storyboard */ = {
-			isa = PBXVariantGroup;
-			children = (
-				87844BAA2977E6D400AF7DA3 /* Base */,
-			);
-			name = Main.storyboard;
-			sourceTree = "<group>";
-		};
-/* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
 		8762D4632977C4D6009405E2 /* Debug */ = {
@@ -1990,7 +1903,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		8762D44C2977C4D4009405E2 /* Build configuration list for PBXProject "KakaposDemo" */ = {
+		8762D44C2977C4D4009405E2 /* Build configuration list for PBXProject "Kakapos" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8762D4632977C4D6009405E2 /* Debug */,
