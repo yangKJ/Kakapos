@@ -28,6 +28,7 @@ public struct Exporter {
     let asset: AVAsset
     weak var delegate: ExporterDelegate?
     
+    /// These export options can be used to produce movie files with video size appropriate to the device.
     public var presetName: String = AVAssetExportPresetHighestQuality {
         didSet {
             if !AVAssetExportSession.allExportPresets().contains(presetName) {

@@ -1,15 +1,15 @@
 PODS:
-  - Harbeth (0.5.8):
-    - Harbeth/Basic (= 0.5.8)
-    - Harbeth/Collector (= 0.5.8)
-    - Harbeth/Compute (= 0.5.8)
-    - Harbeth/CoreImage (= 0.5.8)
-  - Harbeth/Basic (0.5.8)
-  - Harbeth/Collector (0.5.8):
+  - Harbeth (0.5.9):
+    - Harbeth/Basic (= 0.5.9)
+    - Harbeth/Collector (= 0.5.9)
+    - Harbeth/Compute (= 0.5.9)
+    - Harbeth/CoreImage (= 0.5.9)
+  - Harbeth/Basic (0.5.9)
+  - Harbeth/Collector (0.5.9):
     - Harbeth/Basic
-  - Harbeth/Compute (0.5.8):
+  - Harbeth/Compute (0.5.9):
     - Harbeth/Basic
-  - Harbeth/CoreImage (0.5.8):
+  - Harbeth/CoreImage (0.5.9):
     - Harbeth/Basic
   - Kakapos (1.0.0)
 
@@ -26,9 +26,9 @@ EXTERNAL SOURCES:
     :path: "../"
 
 SPEC CHECKSUMS:
-  Harbeth: a329841b51b31a5448c3679e1dafd526cae23d2c
+  Harbeth: cba742b960c5a0530711de4964808df619ebed6c
   Kakapos: 2484f60984ff3b01b4aa2807df2df8895ede945a
 
-PODFILE CHECKSUM: 44e7d098713ead3518e46522002e9db30fb3cac5
+PODFILE CHECKSUM: a3a6843ef9c2381ede1a9d1c95805d12875ce993
 
 COCOAPODS: 1.11.3

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <document type="com.apple.InterfaceBuilder3.Cocoa.Storyboard.XIB" version="3.0" toolsVersion="21507" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES" initialViewController="B8D-0N-5wS">
     <dependencies>
+        <deployment identifier="macosx"/>
         <plugIn identifier="com.apple.AVKitIBPlugin" version="21507"/>
         <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="21507"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
@@ -675,7 +676,7 @@
                         <outlet property="delegate" destination="Voe-Tx-rLC" id="PrD-fu-P6m"/>
                     </connections>
                 </application>
-                <customObject id="Voe-Tx-rLC" customClass="AppDelegate" customModule="VideoExportDemo" customModuleProvider="target"/>
+                <customObject id="Voe-Tx-rLC" customClass="AppDelegate" customModule="KakaposMacDemo" customModuleProvider="target"/>
                 <customObject id="YLy-65-1bz" customClass="NSFontManager"/>
                 <customObject id="Ady-hI-5gd" userLabel="First Responder" customClass="NSResponder" sceneMemberID="firstResponder"/>
             </objects>
@@ -705,15 +706,15 @@
         <!--View Controller-->
         <scene sceneID="hIz-AP-VOD">
             <objects>
-                <viewController id="XfG-lQ-9wD" customClass="ViewController" customModule="VideoExportDemo" customModuleProvider="target" sceneMemberID="viewController">
+                <viewController id="XfG-lQ-9wD" customClass="ViewController" customModule="KakaposMacDemo" customModuleProvider="target" sceneMemberID="viewController">
                     <view key="view" id="m2S-Jp-Qdl">
-                        <rect key="frame" x="0.0" y="0.0" width="619" height="366"/>
+                        <rect key="frame" x="0.0" y="0.0" width="619" height="477"/>
                         <autoresizingMask key="autoresizingMask"/>
                         <subviews>
                             <avPlayerView controlsStyle="inline" translatesAutoresizingMaskIntoConstraints="NO" id="bHt-nz-gdH">
-                                <rect key="frame" x="15" y="20" width="589" height="331"/>
+                                <rect key="frame" x="15" y="20" width="589" height="442"/>
                                 <constraints>
-                                    <constraint firstAttribute="width" secondItem="bHt-nz-gdH" secondAttribute="height" multiplier="16:9" id="XWo-Ni-OQc"/>
+                                    <constraint firstAttribute="width" secondItem="bHt-nz-gdH" secondAttribute="height" multiplier="4:3" id="XWo-Ni-OQc"/>
                                 </constraints>
                             </avPlayerView>
                         </subviews>
@@ -729,7 +730,7 @@
                 </viewController>
                 <customObject id="rPt-NT-nkU" userLabel="First Responder" customClass="NSResponder" sceneMemberID="firstResponder"/>
             </objects>
-            <point key="canvasLocation" x="75.5" y="725"/>
+            <point key="canvasLocation" x="75.5" y="780.5"/>
         </scene>
     </scenes>
 </document>

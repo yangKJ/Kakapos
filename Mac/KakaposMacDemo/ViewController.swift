@@ -13,6 +13,7 @@ import Kakapos
 class ViewController: NSViewController {
     
     let videoURL = URL(string: "https://mp4.vjshi.com/2017-11-21/7c2b143eeb27d9f2bf98c4ab03360cfe.mp4")!
+    //let videoURL = URL(string: "https://mp4.vjshi.com/2020-12-27/a86e0cb5d0ea55cd4864a6fc7609dce8.mp4")!
     //let videoURL = URL(string: "https://mp4.vjshi.com/2018-03-30/1f36dd9819eeef0bc508414494d34ad9.mp4")!
     //let videoURL = URL(string: "https://mp4.vjshi.com/2020-12-01/bc8b1a8d9166d2040bd8946ad6447235.mp4")!
     
@@ -43,7 +44,7 @@ class ViewController: NSViewController {
         view.addSubview(loader)
         NSLayoutConstraint.activate([
             loader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            loader.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            loader.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -20),
             loader.widthAnchor.constraint(equalToConstant: 40),
             loader.heightAnchor.constraint(equalToConstant: 40),
         ])
@@ -68,11 +69,11 @@ class ViewController: NSViewController {
         
         loader.startAnimation(nil)
         
-        let blur = C7ZoomBlur(blurSize: 1.5)
-        let gray = C7ColorConvert(with: .gray)
+        let martix = C7ColorMatrix4x4(matrix: Matrix4x4.Color.gray)
+        let screen = C7SplitScreen(type: .two)
         
         let exporter = Exporter.init(videoURL: url, delegate: self)
-        exporter.export(outputURL: outputURL) { $0 ->> blur ->> gray }
+        exporter.export(outputURL: outputURL) { $0 ->> martix ->> screen }
     }
 }
 
