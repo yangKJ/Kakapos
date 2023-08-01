@@ -31,40 +31,14 @@ let outputURL: URL = {
 }()
 ```
 
-- Create the video exporter instance.
+- Create the video exporter provider.
 
 ```
-let exporter = Exporter.init(videoURL: ``URL Link``, delegate: self)
+let provider = ExporterProvider.init(with: ``URL Link``)
 
 Or
 
-let exporter = Exporter.init(asset: ``AVAsset``, delegate: self)
-```
-
-- Implement the agreement `ExporterDelegate`.
-
-```
-/// Video export successed.
-/// - Parameters:
-///   - exporter: VideoExporter
-///   - videoURL: Export the successful video url, Be equivalent to outputURL.
-func export(_ exporter: Kakapos.Exporter, success videoURL: URL) {
-    self.view.hideAllToasts()
-    let player = AVPlayer(url: videoURL)
-    let vc = AVPlayerViewController()
-    vc.player = player
-    self.present(vc, animated: true) {
-        vc.player?.play()
-    }
-}
-
-/// Video export failure.
-/// - Parameters:
-///   - exporter: VideoExporter
-///   - error: Failure error message.
-func export(_ exporter: Kakapos.Exporter, failed error: Kakapos.Exporter.Error) {
-    // do someing..
-}
+let provider = ExporterProvider.init(with: ``AVAsset``)
 ```
 
 - Convert video and add filters, convert buffer.
@@ -77,19 +51,17 @@ let filters: [C7FilterProtocol] = [
     MPSGaussianBlur(radius: 5),
 ]
 
-/// Export the video after injecting the filter.
+/// Export the video after add the filter.
 /// - Parameters:
-///   - outputURL: Specifies the sandbox address of the exported video.
-///   - optimizeForNetworkUse: The output file should be optimized for network use.
+///   - provider: Configure export information.
 ///   - filtering: Filters work to filter pixel buffer.
-exporter.export(outputURL: outputURL) {
-    let dest = BoxxIO(element: $0, filters: filters)
+///   - complete: The conversion is complete, including success or failure.
+Exporter.export(provider: provider, filtering: { buffer in
+    let dest = BoxxIO(element: buffer, filters: filters)
     return try? dest.output()
-}
-
-Or
-
-exporter.export(outputURL: outputURL) { $0 ->> gauss ->> board }
+}, complete: { res _ in
+    // do somthing..
+})
 ```
 
 ### CocoaPods

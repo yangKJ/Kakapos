@@ -1,6 +1,0 @@
-framework module Kakapos {
-  umbrella header "Kakapos-umbrella.h"
-
-  export *
-  module * { export * }
-}
