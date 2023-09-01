@@ -1,12 +1,21 @@
 {
   "pins" : [
     {
+      "identity" : "activityindicatorview",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/exyte/ActivityIndicatorView.git",
+      "state" : {
+        "revision" : "9970fd0bb7a05dad0b6566ae1f56937716686b24",
+        "version" : "1.1.1"
+      }
+    },
+    {
       "identity" : "harbeth",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/yangKJ/Harbeth.git",
       "state" : {
-        "revision" : "1bc14c81be2c1139cde2c27e48cb9827fcab4410",
-        "version" : "0.8.0"
+        "revision" : "d5c1165206e0b047da4d190212499db235a1b873",
+        "version" : "0.9.0"
       }
     }
   ],

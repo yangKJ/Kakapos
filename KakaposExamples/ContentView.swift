@@ -9,9 +9,11 @@ import SwiftUI
 import AVFoundation
 import AVKit
 import Harbeth
+import ActivityIndicatorView
 
 struct ContentView: View {
     
+    @State var showLoadingIndicator: Bool = false
     @State var isShowAlert: Bool = false
     @State var showAlertText: String = ""
     @State var player: AVPlayer?
@@ -47,25 +49,20 @@ struct ContentView: View {
             } icon: {
                 
             }.onTapGesture {
-                export { res in
-                    switch res {
-                    case .success(let outputURL):
-                        let asset = AVURLAsset(url: outputURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
-                        let playerItem = AVPlayerItem(asset: asset)
-                        self.player = AVPlayer(playerItem: playerItem)
-                        self.player?.play()
-                    case .failure(let error):
-                        self.showAlertText = error.localizedDescription
-                        self.isShowAlert = true
-                    }
-                }
+                videoExport(success: { playerItem in
+                    self.player = AVPlayer(playerItem: playerItem)
+                    self.player?.play()
+                })
             }
-            .padding(.bottom, 20)
         }
         .alert(isPresented: self.$isShowAlert) {
             Alert(title: Text(showAlertText))
         }
         .padding()
+        
+        ActivityIndicatorView(isVisible: $showLoadingIndicator, type: .default())
+            .frame(width: 50, height: 50, alignment: .center)
+            .foregroundColor(.black)
     }
     
     /// 循环播放
@@ -82,18 +79,41 @@ struct ContentView: View {
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: nil)
     }
     
-    func export(completion: @escaping (Result<URL, Exporter.Error>) -> Void) {
+    func videoExport(success: @escaping (AVPlayerItem) -> Void) {
+        self.showLoadingIndicator = true
+        self.player?.pause()
+        
         let filters: [C7FilterProtocol] = [
-            C7Flip(horizontal: true, vertical: true),
-            C7SoulOut(soul: 0.3),
-            MPSGaussianBlur(radius: 5),
+            //C7Flip(horizontal: true, vertical: true),
+            //C7SoulOut(soul: 0.3),
+            //MPSGaussianBlur(radius: 5),
+            C7LookupTable(name: "lut_abao"),
+            C7SplitScreen(type: .two),
         ]
-        let videoURL = URL(string: "https://mp4.vjshi.com/2017-11-21/7c2b143eeb27d9f2bf98c4ab03360cfe.mp4")!
-        let provider = ExporterProvider(with: videoURL)
-        Exporter.export(provider: provider, filtering: { buffer in
+        //let videoURL = URL(string: "https://mp4.vjshi.com/2017-11-21/7c2b143eeb27d9f2bf98c4ab03360cfe.mp4")!
+        //let path = Bundle.main.path(forResource: "condy_exporter_video", ofType: "mov")!
+        let path = Bundle.main.path(forResource: "Skateboarding", ofType: "mp4")!
+        let videoURL = NSURL.init(fileURLWithPath: path) as URL
+        let exporter = Exporter.init(provider: .init(with: videoURL))
+        exporter.export(options: [
+            .OptimizeForNetworkUse: true,
+        ], filtering: { buffer in
             let dest = BoxxIO(element: buffer, filters: filters)
             return try? dest.output()
-        }, complete: completion)
+        }, complete: { res in
+            self.showLoadingIndicator = false
+            switch res {
+            case .success(let outputURL):
+                let asset = AVURLAsset(url: outputURL, options: [
+                    AVURLAssetPreferPreciseDurationAndTimingKey: true
+                ])
+                let playerItem = AVPlayerItem(asset: asset)
+                success(playerItem)
+            case .failure(let err):
+                self.showAlertText = err.localizedDescription
+                self.isShowAlert = true
+            }
+        })
     }
 }
 

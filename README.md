@@ -34,14 +34,14 @@ let outputURL: URL = {
 - Create the video exporter provider.
 
 ```
-let provider = ExporterProvider.init(with: ``URL Link``)
+let provider = Exporter.Provider.init(with: ``URL Link``)
 
 Or
 
-let provider = ExporterProvider.init(with: ``AVAsset``)
+let provider = Exporter.Provider.init(with: ``AVAsset``)
 ```
 
-- Convert video and add filters, convert buffer.
+- Convert video and then add filters, convert buffer.
 
 ```
 let filters: [C7FilterProtocol] = [
@@ -51,12 +51,14 @@ let filters: [C7FilterProtocol] = [
     MPSGaussianBlur(radius: 5),
 ]
 
+let exporter = Exporter.init(provider: provider)
+
 /// Export the video after add the filter.
 /// - Parameters:
-///   - provider: Configure export information.
+///   - options: Setup other parameters about export video.
 ///   - filtering: Filters work to filter pixel buffer.
 ///   - complete: The conversion is complete, including success or failure.
-Exporter.export(provider: provider, filtering: { buffer in
+exporter.export(options: ``Exporter Options``, filtering: { buffer in
     let dest = BoxxIO(element: buffer, filters: filters)
     return try? dest.output()
 }, complete: { res _ in
