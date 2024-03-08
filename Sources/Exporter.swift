@@ -119,7 +119,9 @@ extension Exporter {
         videoComposition.frameDuration = videoFrameDuration
         videoComposition.renderSize = naturalSize
         videoComposition.instructions = [instruction]
-        videoComposition.renderScale = Exporter.Option.setupRenderScale(options: options)
+        if #available(macOS 10.14, iOS 10, *) {
+            videoComposition.renderScale = Exporter.Option.setupRenderScale(options: options)
+        }
         
         return (composition, videoComposition)
     }
