@@ -7,7 +7,6 @@
 
 import Foundation
 import AVFoundation
-import UIKit
 
 extension AVAssetTrack {
     

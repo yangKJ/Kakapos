@@ -58,11 +58,16 @@ let exporter = Exporter.init(provider: provider)
 ///   - options: Setup other parameters about export video.
 ///   - filtering: Filters work to filter pixel buffer.
 ///   - complete: The conversion is complete, including success or failure.
-exporter.export(options: ``Exporter Options``, filtering: { buffer in
+exporter.export(options: [
+    .OptimizeForNetworkUse: true,
+    .ExportSessionTimeRange: TimeRangeType.range(10...28.0),
+], filtering: { buffer, callback in
     let dest = BoxxIO(element: buffer, filters: filters)
-    return try? dest.output()
-}, complete: { res _ in
+    dest.transmitOutput(success: callback)
+}, complete: { res in
     // do somthing..
+}, progress: { pro in
+    // progressing..
 })
 ```
 
