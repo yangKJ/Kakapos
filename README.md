@@ -11,26 +11,6 @@ Support macOS, iOS, tvOS and watchOS.
 
 ### Used
 
-- Set the conversion video storage sandbox link.
-
-```
-// Creating temp path to save the converted video
-let outputURL: URL = {
-    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let outputURL = documents.appendingPathComponent("condy_exporter_video.mp4")
-    
-    // Check if the file already exists then remove the previous file
-    if FileManager.default.fileExists(atPath: outputURL.path) {
-        do {
-            try FileManager.default.removeItem(at: outputURL)
-        } catch {
-            //completionHandler(nil, error)
-        }
-    }
-    return outputURL
-}()
-```
-
 - Create the video exporter provider.
 
 ```
