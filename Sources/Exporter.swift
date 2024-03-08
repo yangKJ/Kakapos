@@ -10,11 +10,10 @@ import AVFoundation
 import CoreVideo
 
 public typealias ExporterBuffer = CVPixelBuffer
+public typealias PixelBufferCallback = (_ buffer: ExporterBuffer, _ block: @escaping (ExporterBuffer) -> Void) -> Void?
+public typealias ExportComplete = (Result<URL, Exporter.Error>) -> Void
 
 public struct Exporter {
-    
-    public typealias PixelBufferCallback = (_ buffer: ExporterBuffer) -> ExporterBuffer?
-    public typealias ExportComplete = (Result<URL, Exporter.Error>) -> Void
     
     let provider: Exporter.Provider
     
@@ -29,35 +28,36 @@ public struct Exporter {
     ///   - options: Setup other parameters about export video.
     ///   - filtering: Filters work to filter pixel buffer.
     ///   - complete: The conversion is complete, including success or failure.
-    public func export(options: [Exporter.Option: Any] = [:], filtering: @escaping PixelBufferCallback, complete: @escaping ExportComplete) {
+    ///   - progress: Specifies the progress of the export on a scale from 0 to 1.0.
+    public func export(options: [Exporter.Option: Any] = [:],
+                       filtering: @escaping PixelBufferCallback,
+                       complete: @escaping ExportComplete,
+                       progress: ((Float) -> Void)? = nil) {
         do {
             let (composition, videoComposition) = try setupComposition(options: options, filtering: filtering)
-            let export = try setupExportSession(composition: composition, options: options)
-            export.videoComposition = videoComposition
-            export.exportAsynchronously { [weak export] in
-                guard let export = export else { return }
-                DispatchQueue.main.async {
-                    switch export.status {
-                    case .failed:
-                        if let error = export.error {
-                            complete(.failure(Exporter.Error.error(error)))
-                        } else {
-                            complete(.failure(Exporter.Error.unknown))
-                        }
-                    case .completed:
-                        complete(.success(provider.outputURL))
-                    default:
-                        complete(.failure(Exporter.Error.exportAsynchronously(export.status)))
-                        break
-                    }
+            let exportSession = try setupExportSession(composition: composition, options: options)
+            exportSession.videoComposition = videoComposition
+            exportSession.exportAsynchronously(completionHandler: {
+                progress?(exportSession.progress)
+                switch exportSession.status {
+                case .completed:
+                    progress?(1.0)
+                    complete(.success(provider.outputURL))
+                case .cancelled:
+                    progress?(exportSession.progress)
+                    complete(.failure(Exporter.Error.exportCancelled))
+                case .failed:
+                    progress?(exportSession.progress)
+                    complete(.failure(Exporter.Error.toError(exportSession.error)))
+                default:
+                    progress?(exportSession.progress)
+                    complete(.failure(Exporter.Error.exportAsynchronously(exportSession.status)))
+                    break
                 }
-            }
+            })
         } catch {
-            if let error = error as? Exporter.Error {
-                complete(.failure(error))
-            } else {
-                complete(.failure(Exporter.Error.error(error)))
-            }
+            progress?(0.0)
+            complete(.failure(Exporter.Error.toError(error)))
         }
     }
 }
@@ -65,14 +65,20 @@ public struct Exporter {
 extension Exporter {
     
     private func setupExportSession(composition: AVComposition, options: [Exporter.Option: Any]) throws -> AVAssetExportSession {
-        let presetName = setupPresetName(options: options)
-        guard let export = AVAssetExportSession(asset: composition, presetName: presetName) else {
-            throw(Exporter.Error.exportSessionEmpty)
+        guard let avFileType = provider.fileType?.avFileType else {
+            throw Exporter.Error.unsupportedFileType
         }
-        export.outputURL = provider.outputURL
-        export.outputFileType = provider.fileType.avFileType
-        export.shouldOptimizeForNetworkUse = setupOptimizeForNetworkUse(options: options)
-        return export
+        let presetName = Exporter.Option.setupPresetName(options: options)
+        guard let exportSession = AVAssetExportSession(asset: composition, presetName: presetName) else {
+            throw Exporter.Error.exportSessionEmpty
+        }
+        exportSession.outputURL = provider.outputURL
+        exportSession.outputFileType = avFileType
+        exportSession.shouldOptimizeForNetworkUse = Exporter.Option.setupOptimizeForNetworkUse(options: options)
+        if let range = Exporter.Option.setupExportSessionTimeRange(duration: provider.asset.duration, options: options) {
+            exportSession.timeRange = range
+        }
+        return exportSession
     }
     
     private func setupComposition(options: [Exporter.Option: Any], filtering: @escaping PixelBufferCallback) throws -> (AVComposition, AVVideoComposition) {
@@ -89,29 +95,31 @@ extension Exporter {
         let asset = self.provider.asset
         let videoTracks = asset.tracks(withMediaType: .video)
         guard let track = videoTracks.first else {
-            throw(Exporter.Error.videoTrackEmpty)
+            throw Exporter.Error.videoTrackEmpty
         }
-        let naturalSize = setupVideoRenderSize(videoTracks, asset: asset, options: options)
+        let naturalSize = Exporter.Option.setupVideoRenderSize(videoTracks, asset: asset, options: options)
         let composition = AVMutableComposition()
         composition.naturalSize = naturalSize
         guard let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw(Exporter.Error.addVideoTrack)
+            throw Exporter.Error.addVideoTrack
         }
-        try videoTrack.insertTimeRange(CMTimeRangeMake(start: .zero, duration: asset.duration), of: track, at: .zero)
+        let timeRange = CMTimeRangeMake(start: .zero, duration: asset.duration)
+        try videoTrack.insertTimeRange(timeRange, of: track, at: .zero)
         
         if let audio = asset.tracks(withMediaType: .audio).first,
            let audioCompositionTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-            try audioCompositionTrack.insertTimeRange(CMTimeRangeMake(start: .zero, duration: asset.duration), of: audio, at: .zero)
+            try audioCompositionTrack.insertTimeRange(timeRange, of: audio, at: .zero)
         }
         
         let instruction = CompositionInstruction(videoTrack: videoTrack, bufferCallback: filtering, options: options)
-        instruction.timeRange = CMTimeRangeMake(start: .zero, duration: asset.duration)
+        instruction.timeRange = timeRange
         
         let videoComposition = AVMutableVideoComposition(propertiesOf: asset)
         videoComposition.customVideoCompositorClass = Compositor.self
         videoComposition.frameDuration = videoFrameDuration
         videoComposition.renderSize = naturalSize
         videoComposition.instructions = [instruction]
+        videoComposition.renderScale = Exporter.Option.setupRenderScale(options: options)
         
         return (composition, videoComposition)
     }

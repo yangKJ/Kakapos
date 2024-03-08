@@ -10,6 +10,7 @@ import AVFoundation
 import AVKit
 import Harbeth
 import ActivityIndicatorView
+import AssetsLibrary
 
 struct ContentView: View {
     
@@ -17,6 +18,7 @@ struct ContentView: View {
     @State var isShowAlert: Bool = false
     @State var showAlertText: String = ""
     @State var player: AVPlayer?
+    @State var outputURL: URL?
     
     var body: some View {
         VStack {
@@ -54,14 +56,25 @@ struct ContentView: View {
                     self.player?.play()
                 })
             }
+            .padding()
+            
+//            Button(action: {
+//                if let outputURL = outputURL {
+//                    ALAssetsLibrary().writeVideoAtPath(toSavedPhotosAlbum: outputURL, completionBlock: { _,_ in
+//                        
+//                    })
+//                }
+//            }, label: {
+//                Text("Save To Library")
+//            })
         }
         .alert(isPresented: self.$isShowAlert) {
             Alert(title: Text(showAlertText))
         }
         .padding()
         
-        ActivityIndicatorView(isVisible: $showLoadingIndicator, type: .default())
-            .frame(width: 50, height: 50, alignment: .center)
+        ActivityIndicatorView(isVisible: $showLoadingIndicator, type: .growingCircle)
+            .frame(width: 80, height: 80, alignment: .center)
             .foregroundColor(.black)
     }
     
@@ -97,13 +110,15 @@ struct ContentView: View {
         let exporter = Exporter.init(provider: .init(with: videoURL))
         exporter.export(options: [
             .OptimizeForNetworkUse: true,
-        ], filtering: { buffer in
+            .ExportSessionTimeRange: TimeRangeType.range(10...28.0),
+        ], filtering: { buffer, callback in
             let dest = BoxxIO(element: buffer, filters: filters)
-            return try? dest.output()
+            dest.transmitOutput(success: callback)
         }, complete: { res in
             self.showLoadingIndicator = false
             switch res {
             case .success(let outputURL):
+                self.outputURL = outputURL
                 let asset = AVURLAsset(url: outputURL, options: [
                     AVURLAssetPreferPreciseDurationAndTimingKey: true
                 ])
@@ -113,6 +128,8 @@ struct ContentView: View {
                 self.showAlertText = err.localizedDescription
                 self.isShowAlert = true
             }
+        }, progress: { pro in
+            print("Progress \(pro)")
         })
     }
 }

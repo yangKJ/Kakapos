@@ -30,8 +30,12 @@ class Compositor: NSObject, AVVideoCompositing {
                   let pixels = request.sourceFrame(byTrackID: instruction.trackID) else {
                 return
             }
-            let buffer = instruction.bufferCallback(pixels) ?? pixels
-            request.finish(withComposedVideoFrame: buffer)
+            let callback = { buffer in
+                request.finish(withComposedVideoFrame: buffer)
+            }
+            instruction.bufferCallback(pixels, callback)
+            //let buffer = instruction.bufferCallback(pixels) ?? pixels
+            //request.finish(withComposedVideoFrame: buffer)
         }
     }
     

@@ -22,6 +22,9 @@
 		87A71DB82A8B1F4E007AE2FD /* Options.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87A71DB72A8B1F4E007AE2FD /* Options.swift */; };
 		87A71DBA2A8B2921007AE2FD /* condy_exporter_video.mov in Resources */ = {isa = PBXBuildFile; fileRef = 87A71DB92A8B2921007AE2FD /* condy_exporter_video.mov */; };
 		87A71DC02A8B4DE2007AE2FD /* Skateboarding.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 87A71DBF2A8B4DE2007AE2FD /* Skateboarding.mp4 */; };
+		87C89D5E2B90211900F5EB48 /* MovieMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C89D5D2B90211900F5EB48 /* MovieMerger.swift */; };
+		87C89D602B9030FE00F5EB48 /* AVAssetTrack+Ext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C89D5F2B9030FE00F5EB48 /* AVAssetTrack+Ext.swift */; };
+		87DA16272B8DB966000EA832 /* TimeRangeType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87DA16262B8DB966000EA832 /* TimeRangeType.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +46,9 @@
 		87A71DB72A8B1F4E007AE2FD /* Options.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Options.swift; sourceTree = "<group>"; };
 		87A71DB92A8B2921007AE2FD /* condy_exporter_video.mov */ = {isa = PBXFileReference; lastKnownFileType = video.quicktime; path = condy_exporter_video.mov; sourceTree = "<group>"; };
 		87A71DBF2A8B4DE2007AE2FD /* Skateboarding.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = Skateboarding.mp4; sourceTree = "<group>"; };
+		87C89D5D2B90211900F5EB48 /* MovieMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovieMerger.swift; sourceTree = "<group>"; };
+		87C89D5F2B9030FE00F5EB48 /* AVAssetTrack+Ext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AVAssetTrack+Ext.swift"; sourceTree = "<group>"; };
+		87DA16262B8DB966000EA832 /* TimeRangeType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeRangeType.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,13 +90,16 @@
 		87244EF22A77841700875A27 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				87C89D5F2B9030FE00F5EB48 /* AVAssetTrack+Ext.swift */,
 				87244EF52A77841700875A27 /* CompositionInstruction.swift */,
 				87244EF42A77841700875A27 /* Compositor.swift */,
 				87244EF62A77841700875A27 /* Error.swift */,
 				87244EF72A77841700875A27 /* Exporter.swift */,
 				87244F002A778C1C00875A27 /* MovieFileType.swift */,
+				87C89D5D2B90211900F5EB48 /* MovieMerger.swift */,
 				87A71DB72A8B1F4E007AE2FD /* Options.swift */,
 				87244EFE2A778A0100875A27 /* Provider.swift */,
+				87DA16262B8DB966000EA832 /* TimeRangeType.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -195,13 +204,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				87244F012A778C1C00875A27 /* MovieFileType.swift in Sources */,
+				87C89D602B9030FE00F5EB48 /* AVAssetTrack+Ext.swift in Sources */,
 				87244EE52A77802000875A27 /* ContentView.swift in Sources */,
 				87244EFA2A77841700875A27 /* CompositionInstruction.swift in Sources */,
 				87244EF92A77841700875A27 /* Compositor.swift in Sources */,
 				87A71DB82A8B1F4E007AE2FD /* Options.swift in Sources */,
+				87C89D5E2B90211900F5EB48 /* MovieMerger.swift in Sources */,
 				87244EFB2A77841700875A27 /* Error.swift in Sources */,
 				87244EE32A77802000875A27 /* KakaposExamplesApp.swift in Sources */,
 				87244EFC2A77841700875A27 /* Exporter.swift in Sources */,
+				87DA16272B8DB966000EA832 /* TimeRangeType.swift in Sources */,
 				87244EFF2A778A0100875A27 /* Provider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -438,7 +450,7 @@
 			repositoryURL = "https://github.com/yangKJ/Harbeth.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.8.0;
+				minimumVersion = 1.0.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

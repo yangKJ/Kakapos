@@ -12,12 +12,12 @@ class CompositionInstruction: AVMutableVideoCompositionInstruction {
     
     let trackID: CMPersistentTrackID
     let videoTrack: AVCompositionTrack
-    let bufferCallback: Exporter.PixelBufferCallback
+    let bufferCallback: PixelBufferCallback
     let options: [Exporter.Option: Any]
     
     override var requiredSourceTrackIDs: [NSValue] {
         get {
-            return [NSNumber(value: Int(self.trackID))]
+            [NSNumber(value: Int(self.trackID))]
         }
     }
     
@@ -31,7 +31,7 @@ class CompositionInstruction: AVMutableVideoCompositionInstruction {
         }
     }
     
-    init(videoTrack: AVCompositionTrack, bufferCallback: @escaping Exporter.PixelBufferCallback, options: [Exporter.Option: Any]) {
+    init(videoTrack: AVCompositionTrack, bufferCallback: @escaping PixelBufferCallback, options: [Exporter.Option: Any]) {
         self.trackID = videoTrack.trackID
         self.videoTrack = videoTrack
         self.bufferCallback = bufferCallback

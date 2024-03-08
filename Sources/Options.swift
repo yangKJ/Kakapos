@@ -49,11 +49,19 @@ extension Exporter.Option {
     /// the track with trackID of the first instruction in the array will be layered on top, with the track with the trackID of the second instruction immediately underneath, etc.
     /// If this key is nil, the output will be a fill of the background color.
     public static let VideoCompositionInstructionLayerInstructions: Exporter.Option = .init(rawValue: 1 << 6)
+    
+    /// Specifies a time range to be exported from the source.  meaning that the full duration of the asset will be exported.
+    /// Use the `TimeRangeType`, The default timeRange of an export session is kCMTimeZero..kCMTimePositiveInfinity.
+    /// See: https://github.com/yangKJ/Kakapos/blob/master/Sources/TimeRangeType.swift
+    public static let ExportSessionTimeRange: Exporter.Option = .init(rawValue: 1 << 7)
+    
+    /// Set speed the scale at which the video composition should render.
+    public static let VideoCompositionRenderScale: Exporter.Option = .init(rawValue: 1 << 8)
 }
 
-extension Exporter {
+extension Exporter.Option {
     
-    func setupPresetName(options: [Exporter.Option: Any]) -> String {
+    static func setupPresetName(options: [Exporter.Option: Any]) -> String {
         guard options.keys.contains(where: { $0 == .ExportSessionPresetName }),
               let presetName = options[.ExportSessionPresetName] as? String else {
             return AVAssetExportPresetHighestQuality
@@ -64,7 +72,7 @@ extension Exporter {
         return presetName
     }
     
-    func setupVideoRenderSize(_ videoTracks: [AVAssetTrack], asset: AVAsset, options: [Exporter.Option: Any]) -> CGSize {
+    static func setupVideoRenderSize(_ videoTracks: [AVAssetTrack], asset: AVAsset, options: [Exporter.Option: Any]) -> CGSize {
         guard options.keys.contains(where: { $0 == .VideoCompositionRenderSize }),
               let size = options[.VideoCompositionRenderSize] as? CGSize else {
             /// AVMutableVideoComposition's renderSize property is buggy with some assets.
@@ -84,11 +92,28 @@ extension Exporter {
         return size
     }
     
-    func setupOptimizeForNetworkUse(options: [Exporter.Option: Any]) -> Bool {
+    static func setupOptimizeForNetworkUse(options: [Exporter.Option: Any]) -> Bool {
         guard options.keys.contains(where: { $0 == .OptimizeForNetworkUse }),
               let value = options[.OptimizeForNetworkUse] as? Bool else {
             return true
         }
         return value
+    }
+    
+    static func setupExportSessionTimeRange(duration: CMTime, options: [Exporter.Option: Any]) -> CMTimeRange? {
+        guard options.keys.contains(where: { $0 == .ExportSessionTimeRange }),
+              let value = options[.ExportSessionTimeRange] as? TimeRangeType else {
+            return nil
+        }
+        //duration = try await asset.load(.duration)
+        return value.timeRange(duration: duration)
+    }
+    
+    static func setupRenderScale(options: [Exporter.Option: Any]) -> Float {
+        guard options.keys.contains(where: { $0 == .VideoCompositionRenderScale }),
+              let scale = options[.VideoCompositionRenderScale] as? Float else {
+            return 1.0
+        }
+        return scale
     }
 }
