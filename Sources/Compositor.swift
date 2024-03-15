@@ -21,7 +21,11 @@ class Compositor: NSObject, AVVideoCompositing {
     ]
     
     var sourcePixelBufferAttributes: [String : Any]? = [
-        kCVPixelBufferPixelFormatTypeKey as String : kCVPixelFormatType_32BGRA,
+        kCVPixelBufferPixelFormatTypeKey as String : [
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            kCVPixelFormatType_32BGRA,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        ],
     ]
     
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
@@ -33,7 +37,7 @@ class Compositor: NSObject, AVVideoCompositing {
             let callback = { buffer in
                 request.finish(withComposedVideoFrame: buffer)
             }
-            instruction.bufferCallback(pixels, callback)
+            instruction.pixelBufferCallback(pixels, callback)
             //let buffer = instruction.bufferCallback(pixels) ?? pixels
             //request.finish(withComposedVideoFrame: buffer)
         }

@@ -12,7 +12,7 @@ class CompositionInstruction: AVMutableVideoCompositionInstruction {
     
     let trackID: CMPersistentTrackID
     let videoTrack: AVCompositionTrack
-    let bufferCallback: PixelBufferCallback
+    let pixelBufferCallback: PixelBufferCallback
     let options: [Exporter.Option: Any]
     
     override var requiredSourceTrackIDs: [NSValue] {
@@ -23,18 +23,17 @@ class CompositionInstruction: AVMutableVideoCompositionInstruction {
     
     override var containsTweening: Bool {
         get {
-            guard options.keys.contains(where: { $0 == .VideoCompositionInstructionContainsTweening }),
-                  let value = options[.VideoCompositionInstructionContainsTweening] as? Bool else {
+            guard let value = Exporter.Option.VideoCompositionInstructionContainsTweening.has(with: options) as? Bool else {
                 return false
             }
             return value
         }
     }
     
-    init(videoTrack: AVCompositionTrack, bufferCallback: @escaping PixelBufferCallback, options: [Exporter.Option: Any]) {
+    init(videoTrack: AVCompositionTrack, filtering: @escaping PixelBufferCallback, options: [Exporter.Option: Any]) {
         self.trackID = videoTrack.trackID
         self.videoTrack = videoTrack
-        self.bufferCallback = bufferCallback
+        self.pixelBufferCallback = filtering
         self.options = options
         super.init()
         self.setupOptions(options)
@@ -45,26 +44,23 @@ class CompositionInstruction: AVMutableVideoCompositionInstruction {
     }
     
     private func setupOptions(_ options: [Exporter.Option: Any]) {
-        var enablePostProcessing = true
-        for (key, value) in options {
-            switch (key, value) {
-            case (.VideoCompositionInstructionEnablePostProcessing, let value as Bool):
-                enablePostProcessing = value
-            default:
-                break
-            }
-        }
-        self.enablePostProcessing = enablePostProcessing
+        self.enablePostProcessing = setupEnablePostProcessing(options: options)
         self.layerInstructions = setupLayerInstructions(options: options)
     }
     
-    private func setupLayerInstructions(options: [Exporter.Option: Any]) -> [AVVideoCompositionLayerInstruction] {
-        guard options.keys.contains(where: { $0 == .VideoCompositionInstructionLayerInstructions }),
-              let value = options[.VideoCompositionInstructionLayerInstructions] as? [AVVideoCompositionLayerInstruction] else {
-            let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
-            layerInstruction.trackID = videoTrack.trackID
-            return [layerInstruction]
+    private func setupEnablePostProcessing(options: [Exporter.Option: Any]) -> Bool {
+        if let value = Exporter.Option.VideoCompositionInstructionEnablePostProcessing.has(with: options) as? Bool {
+            return value
         }
-        return value
+        return true
+    }
+    
+    private func setupLayerInstructions(options: [Exporter.Option: Any]) -> [AVVideoCompositionLayerInstruction] {
+        if let value = Exporter.Option.VideoCompositionInstructionLayerInstructions.has(with: options) as? [AVVideoCompositionLayerInstruction] {
+            return value
+        }
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        layerInstruction.trackID = videoTrack.trackID
+        return [layerInstruction]
     }
 }

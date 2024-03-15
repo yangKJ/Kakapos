@@ -82,16 +82,6 @@ extension Exporter {
     }
     
     private func setupComposition(options: [Exporter.Option: Any], filtering: @escaping PixelBufferCallback) throws -> (AVComposition, AVVideoComposition) {
-        var videoFrameDuration = CMTimeMake(value: 1, timescale: 30)
-        for (key, value) in options {
-            switch (key, value) {
-            case (.VideoCompositionFrameDuration, let value as CMTime):
-                videoFrameDuration = value
-            default:
-                break
-            }
-        }
-        
         let asset = self.provider.asset
         let videoTracks = asset.tracks(withMediaType: .video)
         guard let track = videoTracks.first else {
@@ -111,15 +101,16 @@ extension Exporter {
             try audioCompositionTrack.insertTimeRange(timeRange, of: audio, at: .zero)
         }
         
-        let instruction = CompositionInstruction(videoTrack: videoTrack, bufferCallback: filtering, options: options)
+        let instruction = CompositionInstruction(videoTrack: videoTrack, filtering: filtering, options: options)
         instruction.timeRange = timeRange
         
         let videoComposition = AVMutableVideoComposition(propertiesOf: asset)
         videoComposition.customVideoCompositorClass = Compositor.self
-        videoComposition.frameDuration = videoFrameDuration
+        videoComposition.frameDuration = Exporter.Option.setupVideoFrameDuration(options: options)
         videoComposition.renderSize = naturalSize
         videoComposition.instructions = [instruction]
-        if #available(macOS 10.14, iOS 10, *) {
+        videoComposition.animationTool = Exporter.Option.setupAnimationTool(options: options)
+        if #available(macOS 10.14, iOS 10, tvOS 9.0, *) {
             videoComposition.renderScale = Exporter.Option.setupRenderScale(options: options)
         }
         

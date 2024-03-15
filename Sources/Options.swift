@@ -17,6 +17,13 @@ extension Exporter {
         public init(rawValue: UInt16) {
             self.rawValue = rawValue
         }
+        
+        public func has(with options: [Exporter.Option: Any]) -> Any? {
+            guard options.keys.contains(where: { $0 == self }) else {
+                return nil
+            }
+            return options[self]
+        }
     }
 }
 
@@ -28,7 +35,7 @@ extension Exporter.Option {
     /// These export options can be used to produce movie files with video size appropriate to the device.
     public static let ExportSessionPresetName: Exporter.Option = .init(rawValue: 1 << 1)
     
-    /// Indicates the interval which the video composition, when enabled, should render composed video frames.
+    /// Indicates the interval which the video composition, when enabled, should render composed video frames. Default 30 frame.
     public static let VideoCompositionFrameDuration: Exporter.Option = .init(rawValue: 1 << 2)
     
     /// Indicates the size at which the video composition, when enabled, should render.
@@ -57,52 +64,54 @@ extension Exporter.Option {
     
     /// Set speed the scale at which the video composition should render.
     public static let VideoCompositionRenderScale: Exporter.Option = .init(rawValue: 1 << 8)
+    
+    /// Indicates a special video composition tool for use of Core Animation.
+    /// You can set `AVVideoCompositionCoreAnimationTool` for export video.
+    public static let VideoCompositionCoreAnimationTool: Exporter.Option = .init(rawValue: 1 << 9)
+    
+    //public static let audioMix: AVAudioMix
 }
 
 extension Exporter.Option {
     
     static func setupPresetName(options: [Exporter.Option: Any]) -> String {
-        guard options.keys.contains(where: { $0 == .ExportSessionPresetName }),
-              let presetName = options[.ExportSessionPresetName] as? String else {
+        guard let value = Exporter.Option.ExportSessionPresetName.has(with: options) as? String else {
             return AVAssetExportPresetHighestQuality
         }
-        if !AVAssetExportSession.allExportPresets().contains(presetName) {
+        if !AVAssetExportSession.allExportPresets().contains(value) {
             return AVAssetExportPresetMediumQuality
-        }
-        return presetName
-    }
-    
-    static func setupVideoRenderSize(_ videoTracks: [AVAssetTrack], asset: AVAsset, options: [Exporter.Option: Any]) -> CGSize {
-        guard options.keys.contains(where: { $0 == .VideoCompositionRenderSize }),
-              let size = options[.VideoCompositionRenderSize] as? CGSize else {
-            /// AVMutableVideoComposition's renderSize property is buggy with some assets.
-            /// Calculate the renderSize here based on the documentation of `AVMutableVideoComposition(propertiesOf:)`
-            if let composition = asset as? AVComposition {
-                return composition.naturalSize
-            } else {
-                var renderSize: CGSize = .zero
-                for videoTrack in videoTracks {
-                    let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
-                    renderSize.width  = max(renderSize.width, abs(size.width))
-                    renderSize.height = max(renderSize.height, abs(size.height))
-                }
-                return renderSize
-            }
-        }
-        return size
-    }
-    
-    static func setupOptimizeForNetworkUse(options: [Exporter.Option: Any]) -> Bool {
-        guard options.keys.contains(where: { $0 == .OptimizeForNetworkUse }),
-              let value = options[.OptimizeForNetworkUse] as? Bool else {
-            return true
         }
         return value
     }
     
+    static func setupVideoRenderSize(_ videoTracks: [AVAssetTrack], asset: AVAsset, options: [Exporter.Option: Any]) -> CGSize {
+        if let value = Exporter.Option.VideoCompositionRenderSize.has(with: options) as? CGSize {
+            return value
+        }
+        /// AVMutableVideoComposition's renderSize property is buggy with some assets.
+        /// Calculate the renderSize here based on the documentation of `AVMutableVideoComposition(propertiesOf:)`
+        if let composition = asset as? AVComposition {
+            return composition.naturalSize
+        } else {
+            var renderSize: CGSize = .zero
+            for videoTrack in videoTracks {
+                let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
+                renderSize.width  = max(renderSize.width, abs(size.width))
+                renderSize.height = max(renderSize.height, abs(size.height))
+            }
+            return renderSize
+        }
+    }
+    
+    static func setupOptimizeForNetworkUse(options: [Exporter.Option: Any]) -> Bool {
+        if let value = Exporter.Option.OptimizeForNetworkUse.has(with: options) as? Bool {
+            return value
+        }
+        return true
+    }
+    
     static func setupExportSessionTimeRange(duration: CMTime, options: [Exporter.Option: Any]) -> CMTimeRange? {
-        guard options.keys.contains(where: { $0 == .ExportSessionTimeRange }),
-              let value = options[.ExportSessionTimeRange] as? TimeRangeType else {
+        guard let value = Exporter.Option.ExportSessionTimeRange.has(with: options) as? TimeRangeType else {
             return nil
         }
         //duration = try await asset.load(.duration)
@@ -110,10 +119,23 @@ extension Exporter.Option {
     }
     
     static func setupRenderScale(options: [Exporter.Option: Any]) -> Float {
-        guard options.keys.contains(where: { $0 == .VideoCompositionRenderScale }),
-              let scale = options[.VideoCompositionRenderScale] as? Float else {
+        guard let value = Exporter.Option.VideoCompositionRenderScale.has(with: options) as? Float else {
             return 1.0
         }
-        return scale
+        return value
+    }
+    
+    static func setupVideoFrameDuration(options: [Exporter.Option: Any]) -> CMTime {
+        guard let value = Exporter.Option.VideoCompositionFrameDuration.has(with: options) as? CMTime else {
+            return CMTimeMake(value: 1, timescale: 30)
+        }
+        return value
+    }
+    
+    static func setupAnimationTool(options: [Exporter.Option: Any]) -> AVVideoCompositionCoreAnimationTool? {
+        guard let value = Exporter.Option.VideoCompositionCoreAnimationTool.has(with: options) as? AVVideoCompositionCoreAnimationTool else {
+            return nil
+        }
+        return value
     }
 }
