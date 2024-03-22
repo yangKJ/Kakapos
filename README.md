@@ -5,7 +5,9 @@
 
 [**Kakapos**](https://github.com/yangKJ/Kakapos) is a video add filter tool that supports network and local urls, as well as album videos.
 
-Support macOS, iOS, tvOS and watchOS.
+High-performance and flexible video editing and exporting framework.
+
+Add filter with [CoreImage](https://developer.apple.com/documentation/coreimage)/[Harbeth](https://github.com/yangKJ/Harbth)/[GPUImage](https://github.com/BradLarson/GPUImage)/[MetalPetal](https://github.com/MetalPetal/MetalPetal)/[BBMetalImage](https://github.com/Silence-GitHub/BBMetalImage) and so on.
 
 -------
 
@@ -42,6 +44,7 @@ exporter.export(options: [
     .OptimizeForNetworkUse: true,
     .ExportSessionTimeRange: TimeRangeType.range(10...28.0),
 ], filtering: { buffer, callback in
+    // Add filter to buffer..
     let dest = BoxxIO(element: buffer, filters: filters)
     dest.transmitOutput(success: callback)
 }, complete: { res in

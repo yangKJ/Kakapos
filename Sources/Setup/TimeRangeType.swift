@@ -21,6 +21,19 @@ public enum TimeRangeType {
 
 extension TimeRangeType {
     
+    func minTime() -> CGFloat {
+        switch self {
+        case .start(let seconds):
+            return max(0, seconds)
+        case .end:
+            return 0
+        case .range(let range):
+            return max(0, range.lowerBound)
+        case .startAndEnd(let seconds, _):
+            return max(0, seconds)
+        }
+    }
+    
     func timeRange(duration: CMTime) -> CMTimeRange? {
         let seconds = duration.seconds
         switch self {

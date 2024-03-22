@@ -19,6 +19,7 @@ extension Exporter {
         case exportAsynchronously(AVAssetExportSession.Status)
         case exportCancelled
         case unsupportedFileType
+        case exportOutputURL
     }
 }
 
@@ -52,6 +53,8 @@ extension Exporter.Error: CustomStringConvertible, CustomNSError {
             return "Cancelled export video."
         case .unsupportedFileType:
             return "The output video format unsupported file type."
+        case .exportOutputURL:
+            return "Export output url is nil."
         }
     }
     
@@ -73,6 +76,8 @@ extension Exporter.Error: CustomStringConvertible, CustomNSError {
         case .exportCancelled:
             return nil
         case .unsupportedFileType:
+            return nil
+        case .exportOutputURL:
             return nil
         }
     }

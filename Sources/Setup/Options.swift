@@ -68,8 +68,6 @@ extension Exporter.Option {
     /// Indicates a special video composition tool for use of Core Animation.
     /// You can set `AVVideoCompositionCoreAnimationTool` for export video.
     public static let VideoCompositionCoreAnimationTool: Exporter.Option = .init(rawValue: 1 << 9)
-    
-    //public static let audioMix: AVAudioMix
 }
 
 extension Exporter.Option {
@@ -116,6 +114,13 @@ extension Exporter.Option {
         }
         //duration = try await asset.load(.duration)
         return value.timeRange(duration: duration)
+    }
+    
+    static func setupExportSessionMinTime(options: [Exporter.Option: Any]) -> CGFloat {
+        guard let value = Exporter.Option.ExportSessionTimeRange.has(with: options) as? TimeRangeType else {
+            return 0.0
+        }
+        return value.minTime()
     }
     
     static func setupRenderScale(options: [Exporter.Option: Any]) -> Float {

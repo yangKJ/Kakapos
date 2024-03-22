@@ -31,16 +31,7 @@ public struct MovieMerger {
             self.fileType = MovieFileType.from(url: outputURL)
         } else {
             self.fileType = .mp4
-            self.outputURL = {
-                let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                let random = Int(Date().timeIntervalSince1970/2)
-                let outputURL = documents.appendingPathComponent("condy_merger_video_\(random).mp4")
-                // Check if the file already exists then remove the previous file
-                if FileManager.default.fileExists(atPath: outputURL.path) {
-                    try? FileManager.default.removeItem(at: outputURL)
-                }
-                return outputURL
-            }()
+            self.outputURL = try! FileManager.default.kaka.createURL(prefix: "condy_merger_video")
         }
         for asset in assets {
             if !isFirstSegmentTransformSet, let videoTrack = asset.tracks(withMediaType: .video).first {

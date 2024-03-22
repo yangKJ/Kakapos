@@ -35,6 +35,19 @@ extension MovieFileType {
         }
     }
     
+    var pathExtension: String {
+        switch self {
+        case .mov:
+            return "mov"
+        case .mp4:
+            return "mp4"
+        case .m4a:
+            return "m4a"
+        case .mobile3gp:
+            return "3gp"
+        }
+    }
+    
     static func from(url: URL) -> MovieFileType? {
         switch url.pathExtension.lowercased() {
         case "mp4":

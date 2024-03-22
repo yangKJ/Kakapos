@@ -11,8 +11,12 @@ import AVFoundation
 extension Exporter {
     /// Setup input source and output link URL.
     public struct Provider {
-        let asset: AVAsset
-        let outputURL: URL
+        public let asset: AVAsset
+        public let outputURL: URL
+        public let duration: CMTime
+        public let videoTracks: [AVAssetTrack]
+        public let audioTracks: [AVAssetTrack]
+        
         let fileType: MovieFileType?
     }
 }
@@ -26,21 +30,21 @@ extension Exporter.Provider {
     
     public init(with asset: AVAsset, to outputURL: URL? = nil) {
         self.asset = asset
+        self.videoTracks = asset.tracks(withMediaType: .video)
+        self.audioTracks = asset.tracks(withMediaType: .audio)
+        if let videoTrack = self.videoTracks.first {
+            // Make sure source's duration not beyond video track's duration
+            self.duration = videoTrack.timeRange.duration
+        } else {
+            self.duration = asset.duration
+        }
+        
         if let outputURL = outputURL {
             self.outputURL = outputURL
             self.fileType = MovieFileType.from(url: outputURL)
         } else {
             self.fileType = .mp4
-            self.outputURL = {
-                let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                let random = Int(Date().timeIntervalSince1970/2)
-                let outputURL = documents.appendingPathComponent("condy_export_video_\(random).mp4")
-                // Check if the file already exists then remove the previous file
-                if FileManager.default.fileExists(atPath: outputURL.path) {
-                    try? FileManager.default.removeItem(at: outputURL)
-                }
-                return outputURL
-            }()
+            self.outputURL = try! FileManager.default.kaka.createURL(prefix: "condy_export_video")
         }
     }
 }

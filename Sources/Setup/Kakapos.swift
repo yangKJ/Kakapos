@@ -23,7 +23,7 @@ public protocol KakaposCompatible { }
 extension KakaposCompatible {
     
     public var kaka: KakaposWrapper<Self> {
-        get { return KakaposWrapper(base: self) }
+        get { KakaposWrapper(base: self) }
         set { }
     }
     
@@ -33,3 +33,4 @@ extension KakaposCompatible {
 }
 
 extension AVAssetTrack: KakaposCompatible { }
+extension FileManager: KakaposCompatible { }

@@ -10,7 +10,7 @@ import AVFoundation
 import AVKit
 import Harbeth
 import ActivityIndicatorView
-import AssetsLibrary
+import Photos
 
 struct ContentView: View {
     
@@ -58,15 +58,20 @@ struct ContentView: View {
             }
             .padding()
             
-//            Button(action: {
-//                if let outputURL = outputURL {
-//                    ALAssetsLibrary().writeVideoAtPath(toSavedPhotosAlbum: outputURL, completionBlock: { _,_ in
-//                        
-//                    })
-//                }
-//            }, label: {
-//                Text("Save To Library")
-//            })
+            Button(action: {
+                guard let outputURL = outputURL else {
+                    return
+                }
+                requestLibraryAuthorization { _ in
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: outputURL)
+                    }, completionHandler: { _, _ in
+                        
+                    })
+                }
+            }, label: {
+                Text("Save To Library")
+            })
         }
         .alert(isPresented: self.$isShowAlert) {
             Alert(title: Text(showAlertText))
@@ -80,9 +85,7 @@ struct ContentView: View {
     
     /// 循环播放
     func addObserver() {
-        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
-                                               object: player?.currentItem,
-                                               queue: nil) { notif in
+        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player?.currentItem, queue: nil) { _ in
             player?.seek(to: .zero)
             player?.play()
         }
@@ -97,24 +100,31 @@ struct ContentView: View {
         self.player?.pause()
         
         let filters: [C7FilterProtocol] = [
-            //C7Flip(horizontal: true, vertical: true),
-            //C7SoulOut(soul: 0.3),
-            //MPSGaussianBlur(radius: 5),
             C7LookupTable(name: "lut_abao"),
             C7SplitScreen(type: .two),
+        ]
+        let filters2: [C7FilterProtocol] = [
+            C7Flip(horizontal: true, vertical: true),
+            C7SoulOut(soul: 0.3),
         ]
         //let videoURL = URL(string: "https://mp4.vjshi.com/2017-11-21/7c2b143eeb27d9f2bf98c4ab03360cfe.mp4")!
         //let path = Bundle.main.path(forResource: "condy_exporter_video", ofType: "mov")!
         let path = Bundle.main.path(forResource: "Skateboarding", ofType: "mp4")!
         let videoURL = NSURL.init(fileURLWithPath: path) as URL
+        let filtering = FilterInstruction { buffer, time, callback in
+            if time >= 0, time < 10 {
+                let dest = BoxxIO(element: buffer, filters: filters)
+                dest.transmitOutput(success: callback)
+            } else {
+                let dest = BoxxIO(element: buffer, filters: filters2)
+                dest.transmitOutput(success: callback)
+            }
+        }
         let exporter = Exporter.init(provider: .init(with: videoURL))
-        exporter.export(options: [
+        let _ = exporter.export(options: [
             .OptimizeForNetworkUse: true,
-            .ExportSessionTimeRange: TimeRangeType.range(10...28.0),
-        ], filtering: { buffer, callback in
-            let dest = BoxxIO(element: buffer, filters: filters)
-            dest.transmitOutput(success: callback)
-        }, complete: { res in
+            .ExportSessionTimeRange: TimeRangeType.range(5...28.0),
+        ], instructions: [filtering], complete: { res in
             self.showLoadingIndicator = false
             switch res {
             case .success(let outputURL):
@@ -131,6 +141,19 @@ struct ContentView: View {
         }, progress: { pro in
             print("Progress \(pro)")
         })
+    }
+    
+    func requestLibraryAuthorization(_ handler: @escaping (PHAuthorizationStatus) -> Void) {
+        let status = PHPhotoLibrary.authorizationStatus()
+        if status == .authorized {
+            handler(status)
+        } else {
+            PHPhotoLibrary.requestAuthorization { (status) in
+                DispatchQueue.main.async {
+                    handler(status)
+                }
+            }
+        }
     }
 }
 
