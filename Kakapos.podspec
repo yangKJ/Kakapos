@@ -29,7 +29,7 @@ Pod::Spec.new do |s|
   s.macos.deployment_target = '10.13'
   s.pod_target_xcconfig = { 'SWIFT_VERSION' => '5.0' }
   
-  s.source_files = 'Sources/*.swift'
+  s.source_files = 'Sources/**/*.swift'
   s.weak_frameworks = 'CoreVideo', 'AVFoundation'
   
 end
