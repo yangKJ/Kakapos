@@ -23,31 +23,43 @@ Or
 let provider = Exporter.Provider.init(with: ``AVAsset``)
 ```
 
-- Convert video and then add filters, convert buffer.
+- Create filter instruction and add filters.
 
 ```
 let filters: [C7FilterProtocol] = [
-    C7Flip(horizontal: true, vertical: false),
-    C7ColorConvert(with: .gray),
+    C7LookupTable(name: "lut_abao"),
+    C7SplitScreen(type: .two),
+]
+let filters2: [C7FilterProtocol] = [
+    C7Flip(horizontal: true, vertical: true),
     C7SoulOut(soul: 0.3),
-    MPSGaussianBlur(radius: 5),
 ]
 
+let filtering = FilterInstruction { buffer, time, callback in
+    if time >= 0, time < 10 {
+        let dest = BoxxIO(element: buffer, filters: filters)
+        dest.transmitOutput(success: callback)
+    } else {
+        let dest = BoxxIO(element: buffer, filters: filters2)
+        dest.transmitOutput(success: callback)
+    }
+}
+```
+
+- Convert video and then convert buffer.
+
+```
 let exporter = Exporter.init(provider: provider)
 
-/// Export the video after add the filter.
+/// Export the video.
 /// - Parameters:
 ///   - options: Setup other parameters about export video.
-///   - filtering: Filters work to filter pixel buffer.
+///   - instructions: Operation procedure.
 ///   - complete: The conversion is complete, including success or failure.
 exporter.export(options: [
     .OptimizeForNetworkUse: true,
-    .ExportSessionTimeRange: TimeRangeType.range(10...28.0),
-], filtering: { buffer, callback in
-    // Add filter to buffer..
-    let dest = BoxxIO(element: buffer, filters: filters)
-    dest.transmitOutput(success: callback)
-}, complete: { res in
+    .ExportSessionTimeRange: TimeRangeType.range(5...28.0),
+], instructions: [filtering], complete: { res in
     // do somthing..
 }, progress: { pro in
     // progressing..
