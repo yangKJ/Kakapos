@@ -1,6 +1,6 @@
 //
-//  Compositor.swift
-//  Exporter
+//  VideoCompositor.swift
+//  KakaposExamples
 //
 //  Created by Condy on 2022/12/20.
 //
@@ -9,21 +9,29 @@ import Foundation
 import AVFoundation
 import CoreVideo
 
-class Compositor: NSObject, AVVideoCompositing {
+final class VideoCompositor: NSObject, AVVideoCompositing {
     
     let renderQueue = DispatchQueue(label: "com.condy.exporter.rendering.queue")
-    let renderContextQueue = DispatchQueue(label: "com.condy.exporter.rendercontext.queue")
     
     var renderContext: AVVideoCompositionRenderContext?
     var shouldCancelAllRequests = false
-    
-    var requiredPixelBufferAttributesForRenderContext: [String : Any] = [
-        kCVPixelBufferPixelFormatTypeKey as String : kCVPixelFormatType_32BGRA,
-    ]
-    
+    #if os(macOS)
     var sourcePixelBufferAttributes: [String : Any]? = [
-        kCVPixelBufferPixelFormatTypeKey as String : kCVPixelFormatType_32BGRA,
+        String(kCVPixelBufferPixelFormatTypeKey): [kCVPixelFormatType_32BGRA]
     ]
+    var requiredPixelBufferAttributesForRenderContext: [String : Any] = [
+        String(kCVPixelBufferPixelFormatTypeKey): kCVPixelFormatType_32BGRA
+    ]
+    #else
+    var sourcePixelBufferAttributes: [String : Any]? = [
+        String(kCVPixelBufferPixelFormatTypeKey): [kCVPixelFormatType_32BGRA],
+        String(kCVPixelBufferOpenGLESCompatibilityKey): true
+    ]
+    var requiredPixelBufferAttributesForRenderContext: [String : Any] = [
+        String(kCVPixelBufferPixelFormatTypeKey): kCVPixelFormatType_32BGRA,
+        String(kCVPixelBufferOpenGLESCompatibilityKey): true
+    ]
+    #endif
     
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         autoreleasepool {
@@ -33,20 +41,22 @@ class Compositor: NSObject, AVVideoCompositing {
                 } else {
                     guard let instruction = request.videoCompositionInstruction as? CompositionInstruction,
                           let trackID = instruction.trackID,
-                          let pixels = request.sourceFrame(byTrackID: trackID) else {
+                          let pixelBuffer = request.sourceFrame(byTrackID: trackID) else {
+                        //let pixelBuffer = self.renderContext?.newPixelBuffer() else {
+                        request.finish(with: VideoX.Error.newRenderedPixelBufferForRequestFailure)
                         return
                     }
                     let callback = { buffer in
                         request.finish(withComposedVideoFrame: buffer)
                     }
-                    instruction.handyPixelBuffer(pixels, block: callback, compositionTime: request.compositionTime)
+                    instruction.operationPixelBuffer(pixelBuffer, block: callback, for: request)
                 }
             }
         }
     }
     
     func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {
-        self.renderContextQueue.sync {
+        self.renderQueue.sync {
             self.renderContext = newRenderContext
         }
     }

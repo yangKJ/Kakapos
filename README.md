@@ -16,11 +16,11 @@ Add filter with [CoreImage](https://developer.apple.com/documentation/coreimage)
 - Create the video exporter provider.
 
 ```
-let provider = Exporter.Provider.init(with: ``URL Link``)
+let provider = VideoX.Provider.init(with: ``URL Link``)
 
 Or
 
-let provider = Exporter.Provider.init(with: ``AVAsset``)
+let provider = VideoX.Provider.init(with: ``AVAsset``)
 ```
 
 - Create filter instruction and add filters.
@@ -49,7 +49,7 @@ let filtering = FilterInstruction { buffer, time, callback in
 - Convert video and then convert buffer.
 
 ```
-let exporter = Exporter.init(provider: provider)
+let exporter = VideoX.init(provider: provider)
 
 /// Export the video.
 /// - Parameters:

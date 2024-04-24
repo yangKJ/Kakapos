@@ -7,6 +7,7 @@
 
 import Foundation
 import AVFoundation
+import CoreVideo
 
 public final class FilterInstruction: CompositionInstruction {
     
@@ -14,13 +15,11 @@ public final class FilterInstruction: CompositionInstruction {
     /// - buffer: Current pixel buffer.
     /// - time: Current frame, Start with the minimum time of `ExportSessionTimeRange`.
     /// - block: Asynchronous processing pixel buffer.
-    public typealias BufferCallback = (_ buffer: ExporterBuffer, _ time: Int64, _ block: @escaping (ExporterBuffer) -> Void) -> Void
+    public typealias BufferCallback = (_ buffer: CVPixelBuffer, _ time: Int64, _ block: @escaping BufferBlock) -> Void
     
-    public typealias PixelBufferCallback = (_ buffer: ExporterBuffer, _ block: @escaping (ExporterBuffer) -> Void) -> Void?
+    private let callback: BufferCallback
     
-    let callback: BufferCallback
-    
-    public convenience init(filtering: @escaping PixelBufferCallback) {
+    public convenience init(filtering: @escaping (CVPixelBuffer, @escaping BufferBlock) -> Void) {
         let callback = { (buffer, _: Int64, block) -> Void in
             filtering(buffer, block)
         }
@@ -36,8 +35,8 @@ public final class FilterInstruction: CompositionInstruction {
         fatalError("init(coder:) has not been implemented")
     }
     
-    public override func handyPixelBuffer(_ buffer: ExporterBuffer, block: @escaping (ExporterBuffer) -> Void, compositionTime: CMTime) {
-        let minTime = Exporter.Option.setupExportSessionMinTime(options: options)
+    public func operationPixelBuffer(_ buffer: CVPixelBuffer, block: @escaping BufferBlock, for request: AVAsynchronousVideoCompositionRequest) {
+        let compositionTime = request.compositionTime
         let time = compositionTime.value/Int64(compositionTime.timescale) - Int64(minTime)
         self.callback(buffer, time, block)
     }

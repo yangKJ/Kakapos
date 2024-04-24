@@ -8,8 +8,8 @@
 import Foundation
 import AVFoundation
 
-extension Exporter {
-    /// Exporter error definition.
+extension VideoX {
+    /// VideoX error definition.
     public enum Error: Swift.Error {
         case unknown
         case error(Swift.Error)
@@ -20,10 +20,11 @@ extension Exporter {
         case exportCancelled
         case unsupportedFileType
         case exportOutputURL
+        case newRenderedPixelBufferForRequestFailure
     }
 }
 
-extension Exporter.Error: CustomStringConvertible, CustomNSError {
+extension VideoX.Error: CustomStringConvertible, CustomNSError {
     
     /// For each error type return the appropriate description.
     public var description: String {
@@ -55,6 +56,8 @@ extension Exporter.Error: CustomStringConvertible, CustomNSError {
             return "The output video format unsupported file type."
         case .exportOutputURL:
             return "Export output url is nil."
+        case .newRenderedPixelBufferForRequestFailure:
+            return "Read the video composition render context pixel buffer is nil."
         }
     }
     
@@ -79,6 +82,8 @@ extension Exporter.Error: CustomStringConvertible, CustomNSError {
             return nil
         case .exportOutputURL:
             return nil
+        case .newRenderedPixelBufferForRequestFailure:
+            return nil
         }
     }
     
@@ -89,11 +94,11 @@ extension Exporter.Error: CustomStringConvertible, CustomNSError {
         return userInfo
     }
     
-    static func toError(_ error: Error?) -> Exporter.Error {
+    static func toError(_ error: Error?) -> VideoX.Error {
         guard let error = error else {
             return .unknown
         }
-        if let error = error as? Exporter.Error {
+        if let error = error as? VideoX.Error {
             return error
         } else {
             return .error(error)

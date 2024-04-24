@@ -8,7 +8,7 @@
 import Foundation
 import AVFoundation
 
-extension Exporter {
+extension VideoX {
     /// Setup input source and output link URL.
     public struct Provider {
         public let asset: AVAsset
@@ -21,7 +21,7 @@ extension Exporter {
     }
 }
 
-extension Exporter.Provider {
+extension VideoX.Provider {
     
     public init(with videoURL: URL, to outputURL: URL? = nil) {
         let urlAsset = AVURLAsset(url: videoURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
@@ -44,7 +44,7 @@ extension Exporter.Provider {
             self.fileType = MovieFileType.from(url: outputURL)
         } else {
             self.fileType = .mp4
-            self.outputURL = try! FileManager.default.kaka.createURL(prefix: "condy_export_video")
+            self.outputURL = try! FileManager().kaka.createURL(prefix: "condy_export_video")
         }
     }
 }

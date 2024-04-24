@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'Kakapos'
-  s.version          = '1.0.6'
+  s.version          = '1.0.8'
   s.summary          = 'It is a filter infused video tool that supports network and local urls, as well as album videos.'
   
   # This description is used to generate tags and improve search results.

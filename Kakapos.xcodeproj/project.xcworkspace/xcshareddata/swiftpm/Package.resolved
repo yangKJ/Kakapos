@@ -14,8 +14,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/yangKJ/Harbeth.git",
       "state" : {
-        "revision" : "faa8ed3d0ad7038fd05d106d9b0b157898b2f743",
-        "version" : "1.1.2"
+        "revision" : "0fa511e2ca8bb5a4b0ec55ef30e6aaa104d0b346",
+        "version" : "1.1.9"
       }
     }
   ],
