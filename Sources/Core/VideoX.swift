@@ -90,17 +90,23 @@ public struct VideoX {
 }
 
 extension VideoX {
+    
     private func create<R>(_ type: R.Type, options: [VideoX.Option: Any], instructions: [CompositionInstruction]) throws -> R? {
+        guard let videoTrack = self.provider.videoTracks.first else {
+            throw VideoX.Error.videoTrackEmpty
+        }
         let composition = try setupComposition(options: options)
-        let videoCompositionTrack = try setupVideoTrack(composition: composition)
+        let track = try setupVideoTrack(videoTrack: videoTrack, composition: composition)
         let timeRange = CMTimeRangeMake(start: .zero, duration: provider.duration)
+        let layerInstructions = VideoX.Option.setupLayerInstructions(videoTrack: videoTrack, orientation: provider.orientation, options: options)
         let instructions = instructions.map {
-            $0.initCompositionTrack(videoCompositionTrack, provider: provider, options: options)
             $0.timeRange = timeRange
+            $0.layerInstructions = layerInstructions
+            $0.initCompositionTrack(track, provider: provider, options: options)
             return $0
         }
-        let videoComposition = try setupVideoComposition(options: options, composition: composition)
-        videoComposition.instructions = instructions
+        
+        let videoComposition = setupVideoComposition(options: options, composition: composition, instructions: instructions)
         
         if type == AVAssetExportSession.self {
             guard let avFileType = self.provider.fileType?.avFileType else {
@@ -143,25 +149,23 @@ extension VideoX {
         return composition
     }
     
-    private func setupVideoTrack(composition: AVMutableComposition) throws -> AVCompositionTrack {
-        guard let track = self.provider.videoTracks.first else {
-            throw VideoX.Error.videoTrackEmpty
-        }
+    private func setupVideoTrack(videoTrack: AVAssetTrack, composition: AVMutableComposition) throws -> AVCompositionTrack {
         guard let videoCompositionTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw VideoX.Error.addVideoTrack
         }
+        videoCompositionTrack.preferredTransform = CGAffineTransform(rotationAngle: .pi / 3)
         let timeRange = CMTimeRangeMake(start: .zero, duration: provider.duration)
-        try videoCompositionTrack.insertTimeRange(timeRange, of: track, at: .zero)
+        try videoCompositionTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
         
-        if let audio = self.provider.audioTracks.first,
-           let audioCompositionTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-            try audioCompositionTrack.insertTimeRange(timeRange, of: audio, at: .zero)
+        if let audio = self.provider.audioTracks.first {
+            let audioCompositionTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            try audioCompositionTrack?.insertTimeRange(timeRange, of: audio, at: .zero)
         }
         
         return videoCompositionTrack
     }
     
-    private func setupVideoComposition(options: [VideoX.Option: Any], composition: AVComposition) throws -> AVMutableVideoComposition {
+    private func setupVideoComposition(options: [VideoX.Option: Any], composition: AVComposition, instructions: [CompositionInstruction]) -> AVVideoComposition {
         let videoComposition = AVMutableVideoComposition(propertiesOf: provider.asset)
         videoComposition.customVideoCompositorClass = VideoCompositor.self
         videoComposition.frameDuration = VideoX.Option.setupVideoFrameDuration(options: options)
@@ -170,6 +174,7 @@ extension VideoX {
         if #available(macOS 10.14, iOS 10, tvOS 9.0, *) {
             videoComposition.renderScale = VideoX.Option.setupRenderScale(options: options)
         }
+        videoComposition.instructions = instructions
         return videoComposition
     }
     

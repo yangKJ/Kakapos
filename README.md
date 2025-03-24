@@ -108,6 +108,19 @@ dependencies: [
 - 🎷 **E-mail address: [yangkj310@gmail.com](yangkj310@gmail.com) 🎷**
 - 🎸 **GitHub address: [yangKJ](https://github.com/yangKJ) 🎸**
 
+Buy me a coffee or support me on [GitHub](https://github.com/sponsors/yangKJ?frequency=one-time&sponsor=yangKJ).
+
+<a href="https://www.buymeacoffee.com/yangkj3102">
+<img width=25% alt="yellow-button" src="https://user-images.githubusercontent.com/1888355/146226808-eb2e9ee0-c6bd-44a2-a330-3bbc8a6244cf.png">
+</a>
+
+Alipay or WeChat. Thanks.
+
+<p align="left">
+<img src="https://raw.githubusercontent.com/yangKJ/Harbeth/master/Screenshot/WechatIMG1.jpg" width=30% hspace="1px">
+<img src="https://raw.githubusercontent.com/yangKJ/Harbeth/master/Screenshot/WechatIMG2.jpg" width=30% hspace="15px">
+</p>
+
 -----
 
 ### License

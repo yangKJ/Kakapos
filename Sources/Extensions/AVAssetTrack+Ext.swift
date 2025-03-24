@@ -11,6 +11,6 @@ import AVFoundation
 extension KakaposWrapper where Base: AVAssetTrack {
     
     public var videoOrientation: VideoOrientation {
-        VideoOrientation.getVideoOrientation(with: base)
+        VideoOrientation.init(videoTrack: base)
     }
 }

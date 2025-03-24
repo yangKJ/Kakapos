@@ -109,21 +109,23 @@ struct ContentView: View {
         ]
         //let videoURL = URL(string: "https://mp4.vjshi.com/2017-11-21/7c2b143eeb27d9f2bf98c4ab03360cfe.mp4")!
         //let path = Bundle.main.path(forResource: "condy_exporter_video", ofType: "mov")!
-        let path = Bundle.main.path(forResource: "Skateboarding", ofType: "mp4")!
+        //let path = Bundle.main.path(forResource: "Skateboarding", ofType: "mp4")!
+        let path = Bundle.main.path(forResource: "IMG_3156", ofType: "MOV")!
         let videoURL = NSURL.init(fileURLWithPath: path) as URL
         let filtering = FilterInstruction { buffer, time, callback in
-            if time >= 0, time < 10 {
-                let dest = HarbethIO(element: buffer, filters: filters)
-                dest.transmitOutput(success: callback)
-            } else {
-                let dest = HarbethIO(element: buffer, filters: filters2)
-                dest.transmitOutput(success: callback)
-            }
+//            if time >= 0, time < 5 {
+//                let dest = HarbethIO(element: buffer, filters: filters)
+//                dest.transmitOutput(success: callback)
+//            } else {
+//                let dest = HarbethIO(element: buffer, filters: filters2)
+//                dest.transmitOutput(success: callback)
+//            }
+            callback(buffer)
         }
         let exporter = VideoX.init(provider: .init(with: videoURL))
         let _ = exporter.export(options: [
             .OptimizeForNetworkUse: true,
-            .ExportSessionTimeRange: TimeRangeType.range(5...28.0),
+            .ExportSessionTimeRange: TimeRangeType.range(1...8.0),
         ], instructions: [filtering], complete: { res in
             self.showLoadingIndicator = false
             switch res {

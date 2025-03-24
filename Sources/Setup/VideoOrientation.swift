@@ -17,17 +17,69 @@ public enum VideoOrientation: Int {
 
 extension VideoOrientation {
     
-    static func getVideoOrientation(with track: AVAssetTrack) -> VideoOrientation {
-        let size = track.naturalSize
-        let txf = track.preferredTransform
-        if size.width == txf.tx && size.height == txf.ty {
-            return VideoOrientation.up
-        } else if txf.tx == 0 && txf.ty == 0 {
-            return VideoOrientation.right
-        } else if txf.tx == 0 && txf.ty == size.width {
-            return VideoOrientation.down
+    init(videoTrack: AVAssetTrack) {
+        let txf: CGAffineTransform = videoTrack.preferredTransform
+        if txf.a == 0 && txf.b == 1.0 && txf.c == -1.0 && txf.d == 0 {
+            self = .right
+        } else if txf.a == 0 && txf.b == -1.0 && txf.c == 1.0 && txf.d == 0 {
+            self = .left
+        } else if txf.a == 1.0 && txf.b == 0 && txf.c == 0 && txf.d == 1.0 {
+            self = .up
+        } else if txf.a == -1.0 && txf.b == 0 && txf.c == 0 && txf.d == -1.0 {
+            self = .down
         } else {
-            return VideoOrientation.left
+            self = .up
+        }
+    }
+    
+    var isPortrait: Bool {
+        switch self {
+        case .up, .down:
+            return false
+        case .right, .left:
+            return true
+        }
+    }
+    
+    func translateAndScaleBy(width: Int, height: Int) -> (CGPoint, CGPoint) {
+        var translate: CGPoint
+        var scale: CGPoint
+        switch self {
+        case .up:
+            translate = .zero
+            scale = .zero
+        case .right:
+            translate = .init(x: -CGFloat(height)*7/8, y: 0)
+            scale = .init(x: CGFloat(height)/CGFloat(width), y: CGFloat(width)/CGFloat(height))
+        case .down:
+            translate = .init(x: CGFloat(width), y: CGFloat(height))
+            scale = .init(x: -CGFloat(width), y: -CGFloat(height))
+        case .left:
+            translate = .init(x: 0, y: -CGFloat(width)*9/8)
+            scale = .init(x: CGFloat(height)/CGFloat(width), y: CGFloat(width)/CGFloat(height))
+        }
+        return (translate, scale)
+    }
+    
+    func translateRect(width: Int, height: Int) -> CGRect {
+        switch self {
+        case .up, .down:
+            return .init(x: 0, y: 0, width: width, height: height)
+        case .right, .left:
+            return .init(x: 0, y: 0, width: height, height: width)
+        }
+    }
+    
+    var rotate: Double {
+        switch self {
+        case .up:
+            return 0
+        case .right:
+            return Double.pi / 2
+        case .down:
+            return Double.pi
+        case .left:
+            return Double.pi / 2 * 3
         }
     }
 }

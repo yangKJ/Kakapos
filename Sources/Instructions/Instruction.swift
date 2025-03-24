@@ -16,6 +16,7 @@ open class Instruction: AVMutableVideoCompositionInstruction {
     public var options: [VideoX.Option: Any] = [:]
     
     public private(set) var minTime: CGFloat = 0.0
+    public private(set) var orientation: VideoOrientation = .up
     
     open override var requiredSourceTrackIDs: [NSValue] {
         get {
@@ -40,24 +41,11 @@ open class Instruction: AVMutableVideoCompositionInstruction {
         self.compositionTrack = track
         self.trackID = track.trackID
         self.options = options
-        self.enablePostProcessing = setupEnablePostProcessing(options: options)
-        self.layerInstructions = setupLayerInstructions(options: options, track: track)
+        self.orientation = provider.orientation
+        self.enablePostProcessing = VideoX.Option.setupEnablePostProcessing(options: options)
         self.minTime = VideoX.Option.setupExportSessionMinTime(options: options)
+        self.setup()
     }
     
-    private func setupEnablePostProcessing(options: [VideoX.Option: Any]) -> Bool {
-        if let value = VideoX.Option.VideoCompositionInstructionEnablePostProcessing.has(with: options) as? Bool {
-            return value
-        }
-        return true
-    }
-    
-    private func setupLayerInstructions(options: [VideoX.Option: Any], track: AVCompositionTrack) -> [AVVideoCompositionLayerInstruction] {
-        if let value = VideoX.Option.VideoCompositionInstructionLayerInstructions.has(with: options) as? [AVVideoCompositionLayerInstruction] {
-            return value
-        }
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-        layerInstruction.trackID = track.trackID
-        return [layerInstruction]
-    }
+    open func setup() { }
 }
