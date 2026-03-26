@@ -31,6 +31,3 @@ extension KakaposCompatible {
         KakaposWrapper<Self>.self
     }
 }
-
-extension AVAssetTrack: KakaposCompatible { }
-extension FileManager: KakaposCompatible { }

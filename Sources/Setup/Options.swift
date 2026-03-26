@@ -51,15 +51,9 @@ extension VideoX.Option {
     /// The media pipeline may be able to avoid some duplicate processing when containsTweening is NO
     public static let VideoCompositionInstructionContainsTweening: VideoX.Option = .init(rawValue: 1 << 5)
     
-    /// Provides an array of instances of AVVideoCompositionLayerInstruction that specify how video frames from source tracks should be layered and composed.
-    /// Tracks are layered in the composition according to the top-to-bottom order of the layerInstructions array;
-    /// the track with trackID of the first instruction in the array will be layered on top, with the track with the trackID of the second instruction immediately underneath, etc.
-    /// If this key is nil, the output will be a fill of the background color.
-    public static let VideoCompositionInstructionLayerInstructions: VideoX.Option = .init(rawValue: 1 << 6)
-    
     /// Specifies a time range to be exported from the source.  meaning that the full duration of the asset will be exported.
     /// Use the `TimeRangeType`, The default timeRange of an export session is kCMTimeZero..kCMTimePositiveInfinity.
-    /// See: https://github.com/yangKJ/Kakapos/blob/master/Sources/TimeRangeType.swift
+    /// See: https://github.com/yangKJ/Kakapos/blob/master/Sources/Setup/TimeRangeType.swift
     public static let ExportSessionTimeRange: VideoX.Option = .init(rawValue: 1 << 7)
     
     /// Set speed the scale at which the video composition should render.
@@ -89,6 +83,7 @@ extension VideoX.Option {
         } else {
             var renderSize: CGSize = .zero
             for videoTrack in videoTracks {
+                // 使用视频轨道的变换后的尺寸，这样可以确保 renderSize 与视频的实际显示尺寸一致
                 let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
                 renderSize.width  = max(renderSize.width, abs(size.width))
                 renderSize.height = max(renderSize.height, abs(size.height))
@@ -104,12 +99,12 @@ extension VideoX.Option {
         return true
     }
     
-    static func setupExportSessionTimeRange(duration: CMTime, options: [VideoX.Option: Any]) -> CMTimeRange? {
+    static func setupExportSessionTimeRange(duration: CMTime, options: [VideoX.Option: Any]) -> CMTimeRange {
         guard let value = VideoX.Option.ExportSessionTimeRange.has(with: options) as? TimeRangeType else {
-            return nil
+            return CMTimeRangeMake(start: .zero, duration: duration)
         }
         //duration = try await asset.load(.duration)
-        return value.timeRange(duration: duration)
+        return value.timeRange(duration: duration) ?? CMTimeRangeMake(start: .zero, duration: duration)
     }
     
     static func setupExportSessionMinTime(options: [VideoX.Option: Any]) -> CGFloat {
@@ -131,5 +126,12 @@ extension VideoX.Option {
             return CMTimeMake(value: 1, timescale: 30)
         }
         return value
+    }
+    
+    static func setupEnablePostProcessing(options: [VideoX.Option: Any]) -> Bool {
+        if let value = VideoX.Option.VideoCompositionInstructionEnablePostProcessing.has(with: options) as? Bool {
+            return value
+        }
+        return true
     }
 }

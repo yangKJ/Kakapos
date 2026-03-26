@@ -9,7 +9,7 @@ import Foundation
 import AVFoundation
 import CoreVideo
 
-public final class FilterInstruction: CompositionInstruction {
+public final class FilterInstruction: CompositionInstruction, @unchecked Sendable {
     
     /// Get the current pixel buffer in real time and give it to the outside world for processing.
     /// - buffer: Current pixel buffer.
