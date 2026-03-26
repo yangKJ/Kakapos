@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'Kakapos'
-  s.version          = '1.0.9'
+  s.version          = '1.1.0'
   s.summary          = 'It is a filter infused video tool that supports network and local urls, as well as album videos.'
   
   # This description is used to generate tags and improve search results.
@@ -26,7 +26,7 @@ Pod::Spec.new do |s|
   s.requires_arc     = true
   s.static_framework = true
   s.ios.deployment_target = '10.0'
-  s.macos.deployment_target = '10.13'
+  s.macos.deployment_target = '12'
   s.pod_target_xcconfig = { 'SWIFT_VERSION' => '5.0' }
   
   s.source_files = 'Sources/**/*.swift'

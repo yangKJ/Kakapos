@@ -44,10 +44,10 @@ extension TimeRangeType {
         case .startAndEnd(let time1, let time2):
             return TimeRangeType.range(time1...(seconds-time2)).timeRange(duration: duration)
         case .range(let range):
-            if range.lowerBound >= seconds || (range.upperBound - range.lowerBound) >= seconds {
+            let time = max(0, range.lowerBound)
+            if time >= seconds {
                 return nil
             }
-            let time = max(0, range.lowerBound)
             let max = min(seconds, range.upperBound)
             let s = CMTimeMakeWithSeconds(time, preferredTimescale: duration.timescale)
             let d = CMTimeMakeWithSeconds(max - time, preferredTimescale: duration.timescale)

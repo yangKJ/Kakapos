@@ -44,28 +44,60 @@ public struct VideoX {
     ) -> AVAssetExportSession? {
         do {
             let exportSession = try makeAssetExportSession(options: options, instructions: instructions)
-            exportSession.exportAsynchronously(completionHandler: { [weak exportSession] in
-                guard let session = exportSession else {
-                    complete(.failure(VideoX.Error.exportSessionEmpty))
-                    return
+            if let progress = progress {
+                let estimatedDuration: TimeInterval = 5.0
+                let startTime = Date()
+                let progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                    let elapsedTime = Date().timeIntervalSince(startTime)
+                    let currentProgress = Float(elapsedTime / estimatedDuration)
+                    progress(min(currentProgress, 0.99))
                 }
-                progress?(session.progress)
-                switch session.status {
-                case .completed:
-                    if let outputURL = session.outputURL {
-                        complete(.success(outputURL))
-                    } else {
-                        complete(.failure(VideoX.Error.exportOutputURL))
+                exportSession.exportAsynchronously(completionHandler: { [weak exportSession] in
+                    progressTimer.invalidate()
+                    guard let session = exportSession else {
+                        complete(.failure(VideoX.Error.exportSessionEmpty))
+                        return
                     }
-                case .cancelled:
-                    complete(.failure(VideoX.Error.exportCancelled))
-                case .failed:
-                    complete(.failure(VideoX.Error.toError(session.error)))
-                default:
-                    complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
-                    break
-                }
-            })
+                    progress(1.0)
+                    switch session.status {
+                    case .completed:
+                        if let outputURL = session.outputURL {
+                            complete(.success(outputURL))
+                        } else {
+                            complete(.failure(VideoX.Error.exportOutputURL))
+                        }
+                    case .cancelled:
+                        complete(.failure(VideoX.Error.exportCancelled))
+                    case .failed:
+                        complete(.failure(VideoX.Error.toError(session.error)))
+                    default:
+                        complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
+                        break
+                    }
+                })
+            } else {
+                exportSession.exportAsynchronously(completionHandler: { [weak exportSession] in
+                    guard let session = exportSession else {
+                        complete(.failure(VideoX.Error.exportSessionEmpty))
+                        return
+                    }
+                    switch session.status {
+                    case .completed:
+                        if let outputURL = session.outputURL {
+                            complete(.success(outputURL))
+                        } else {
+                            complete(.failure(VideoX.Error.exportOutputURL))
+                        }
+                    case .cancelled:
+                        complete(.failure(VideoX.Error.exportCancelled))
+                    case .failed:
+                        complete(.failure(VideoX.Error.toError(session.error)))
+                    default:
+                        complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
+                        break
+                    }
+                })
+            }
             return exportSession
         } catch {
             progress?(0.0)
@@ -90,17 +122,21 @@ public struct VideoX {
 }
 
 extension VideoX {
+    
     private func create<R>(_ type: R.Type, options: [VideoX.Option: Any], instructions: [CompositionInstruction]) throws -> R? {
+        guard let videoTrack = self.provider.videoTracks.first else {
+            throw VideoX.Error.videoTrackEmpty
+        }
         let composition = try setupComposition(options: options)
-        let videoCompositionTrack = try setupVideoTrack(composition: composition)
-        let timeRange = CMTimeRangeMake(start: .zero, duration: provider.duration)
+        let track = try setupVideoTrack(videoTrack: videoTrack, composition: composition)
+        let exportTimeRange = VideoX.Option.setupExportSessionTimeRange(duration: provider.duration, options: options)
         let instructions = instructions.map {
-            $0.initCompositionTrack(videoCompositionTrack, provider: provider, options: options)
-            $0.timeRange = timeRange
+            $0.timeRange = exportTimeRange
+            $0.initCompositionTrack(track, provider: provider, options: options)
             return $0
         }
-        let videoComposition = try setupVideoComposition(options: options, composition: composition)
-        videoComposition.instructions = instructions
+        
+        let videoComposition = setupVideoComposition(options: options, composition: composition, instructions: instructions)
         
         if type == AVAssetExportSession.self {
             guard let avFileType = self.provider.fileType?.avFileType else {
@@ -113,9 +149,7 @@ extension VideoX {
             exportSession.outputURL = self.provider.outputURL
             exportSession.outputFileType = avFileType
             exportSession.shouldOptimizeForNetworkUse = VideoX.Option.setupOptimizeForNetworkUse(options: options)
-            if let range = VideoX.Option.setupExportSessionTimeRange(duration: self.provider.duration, options: options) {
-                exportSession.timeRange = range
-            }
+            exportSession.timeRange = VideoX.Option.setupExportSessionTimeRange(duration: provider.duration, options: options)
             if let audioMix = setupAudioMix() {
                 exportSession.audioMix = audioMix
             }
@@ -143,51 +177,34 @@ extension VideoX {
         return composition
     }
     
-    private func setupVideoTrack(composition: AVMutableComposition) throws -> AVCompositionTrack {
-        guard let track = self.provider.videoTracks.first else {
-            throw VideoX.Error.videoTrackEmpty
-        }
+    private func setupVideoTrack(videoTrack: AVAssetTrack, composition: AVMutableComposition) throws -> AVCompositionTrack {
         guard let videoCompositionTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw VideoX.Error.addVideoTrack
         }
+        videoCompositionTrack.preferredTransform = CGAffineTransform.identity
         let timeRange = CMTimeRangeMake(start: .zero, duration: provider.duration)
-        try videoCompositionTrack.insertTimeRange(timeRange, of: track, at: .zero)
+        try videoCompositionTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
         
-        if let audio = self.provider.audioTracks.first,
-           let audioCompositionTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-            try audioCompositionTrack.insertTimeRange(timeRange, of: audio, at: .zero)
+        if let audio = self.provider.audioTracks.first {
+            let audioCompositionTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            try audioCompositionTrack?.insertTimeRange(timeRange, of: audio, at: .zero)
         }
         
         return videoCompositionTrack
     }
     
-    private func setupVideoComposition(options: [VideoX.Option: Any], composition: AVComposition) throws -> AVMutableVideoComposition {
-        let videoComposition = AVMutableVideoComposition(propertiesOf: provider.asset)
+    private func setupVideoComposition(options: [VideoX.Option: Any], composition: AVComposition, instructions: [CompositionInstruction]) -> AVVideoComposition {
+        let videoComposition = AVMutableVideoComposition()
         videoComposition.customVideoCompositorClass = VideoCompositor.self
         videoComposition.frameDuration = VideoX.Option.setupVideoFrameDuration(options: options)
         videoComposition.renderSize = composition.naturalSize
-        //videoComposition.animationTool = setupAnimationTool(renderSize: composition.naturalSize)
-        if #available(macOS 10.14, iOS 10, tvOS 9.0, *) {
-            videoComposition.renderScale = VideoX.Option.setupRenderScale(options: options)
-        }
+        videoComposition.renderScale = VideoX.Option.setupRenderScale(options: options)
+        videoComposition.instructions = instructions
         return videoComposition
     }
     
-    private func setupAnimationTool(renderSize: CGSize) -> AVVideoCompositionCoreAnimationTool? {
-        let parentLayer = CALayer()
-        parentLayer.isGeometryFlipped = true
-        let videoLayer = CALayer()
-        parentLayer.frame = CGRect(origin: CGPoint.zero, size: renderSize)
-        videoLayer.frame = CGRect(origin: CGPoint.zero, size: renderSize)
-        parentLayer.addSublayer(videoLayer)
-        //parentLayer.addSublayer(animationLayer)
-        return AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
-    }
-    
-    private func  setupAudioMix() -> AVAudioMix? {
+    private func setupAudioMix() -> AVAudioMix? {
         let inputParameters: [AVMutableAudioMixInputParameters] = []
-        
-        // Create audioMix. Specify inputParameters.
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = inputParameters
         return audioMix

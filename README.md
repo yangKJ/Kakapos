@@ -7,7 +7,7 @@
 
 High-performance and flexible video editing and exporting framework.
 
-Add filter with [CoreImage](https://developer.apple.com/documentation/coreimage)/[Harbeth](https://github.com/yangKJ/Harbth)/[GPUImage](https://github.com/BradLarson/GPUImage)/[MetalPetal](https://github.com/MetalPetal/MetalPetal)/[BBMetalImage](https://github.com/Silence-GitHub/BBMetalImage) and so on.
+Add filter with [CoreImage](https://developer.apple.com/documentation/coreimage) / [Harbeth](https://github.com/yangKJ/Harbth) / [GPUImage](https://github.com/BradLarson/GPUImage) / [MetalPetal](https://github.com/MetalPetal/MetalPetal) / [BBMetalImage](https://github.com/Silence-GitHub/BBMetalImage) and so on.
 
 -------
 
@@ -16,19 +16,22 @@ Add filter with [CoreImage](https://developer.apple.com/documentation/coreimage)
 - Create the video exporter provider.
 
 ```
-let provider = VideoX.Provider.init(with: ``URL Link``)
+let exporter = VideoX.init(provider: .init(with: ``URL Link``))
 
 Or
 
-let provider = VideoX.Provider.init(with: ``AVAsset``)
+let exporter = VideoX.init(provider: .init(with: ``AVAsset``))
 ```
 
 - Create filter instruction and add filters.
 
 ```
-let filters: [C7FilterProtocol] = [
+let filters1: [C7FilterProtocol] = [
     C7LookupTable(name: "lut_abao"),
     C7SplitScreen(type: .two),
+    C7Mirror(),
+    C7Contrast(contrast: 0.9),
+    C7SoulOut(soul: 0.3),
 ]
 let filters2: [C7FilterProtocol] = [
     C7Flip(horizontal: true, vertical: true),
@@ -36,11 +39,10 @@ let filters2: [C7FilterProtocol] = [
 ]
 
 let filtering = FilterInstruction { buffer, time, callback in
-    if time >= 0, time < 10 {
-        let dest = BoxxIO(element: buffer, filters: filters)
-        dest.transmitOutput(success: callback)
+    if time >= 0, time < 3 {
+        buffer.kaka.filtering(with: filters1, callback: callback)
     } else {
-        let dest = BoxxIO(element: buffer, filters: filters2)
+        let dest = HarbethIO(element: buffer, filters: filters2)
         dest.transmitOutput(success: callback)
     }
 }
@@ -107,6 +109,19 @@ dependencies: [
 ### About the author
 - 🎷 **E-mail address: [yangkj310@gmail.com](yangkj310@gmail.com) 🎷**
 - 🎸 **GitHub address: [yangKJ](https://github.com/yangKJ) 🎸**
+
+Buy me a coffee or support me on [GitHub](https://github.com/sponsors/yangKJ?frequency=one-time&sponsor=yangKJ).
+
+<a href="https://www.buymeacoffee.com/yangkj3102">
+<img width=25% alt="yellow-button" src="https://user-images.githubusercontent.com/1888355/146226808-eb2e9ee0-c6bd-44a2-a330-3bbc8a6244cf.png">
+</a>
+
+Alipay or WeChat. Thanks.
+
+<p align="left">
+<img src="https://raw.githubusercontent.com/yangKJ/Harbeth/master/Screenshot/WechatIMG1.jpg" width=30% hspace="1px">
+<img src="https://raw.githubusercontent.com/yangKJ/Harbeth/master/Screenshot/WechatIMG2.jpg" width=30% hspace="15px">
+</p>
 
 -----
 
