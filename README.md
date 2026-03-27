@@ -2,16 +2,49 @@
 
 <img width=230px src="https://raw.githubusercontent.com/yangKJ/Kakapos/master/Screenshot/1.png" />
 
-[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Kakapos.svg?style=flat&label=Kakapos&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Kakapos) 
+[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Kakapos.svg?style=flat&label=Kakapos&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Kakapos)
+[![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Harbeth.svg?style=flat&label=Harbeth&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Harbeth) 
 ![Platform](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20watchOS%20%7C%20tvOS-4E4E4E.svg?colorA=28a745)
 
-[**Kakapos**](https://github.com/yangKJ/Kakapos) is a video add filter tool that supports network and local urls, as well as album videos.
+---
 
-High-performance and flexible video editing and exporting framework.
+## 📖 Overview
 
-Add filter with [CoreImage](https://developer.apple.com/documentation/coreimage) / [Harbeth](https://github.com/yangKJ/Harbth) / [GPUImage](https://github.com/BradLarson/GPUImage) / [MetalPetal](https://github.com/MetalPetal/MetalPetal) / [BBMetalImage](https://github.com/Silence-GitHub/BBMetalImage) and so on.
+**Kakapos** is a high-performance, flexible video editing and exporting framework designed for iOS, macOS, watchOS, and tvOS. It provides a powerful set of tools for adding filters, watermarks, rotations, and other effects to videos from various sources including network URLs, local files, and album videos.
 
--------
+### ✨ Key Features
+
+- **Multi-source Support**: Process videos from network URLs, local files, and album assets
+- **Filter Integration**: Compatible with multiple filter frameworks:
+  - [CoreImage](https://developer.apple.com/documentation/coreimage)
+  - [Harbeth](https://github.com/yangKJ/Harbeth) (Metal-based filter framework)
+  - [GPUImage](https://github.com/BradLarson/GPUImage)
+  - [MetalPetal](https://github.com/MetalPetal/MetalPetal)
+  - [BBMetalImage](https://github.com/Silence-GitHub/BBMetalImage)
+  - Any custom filter framework that converts CVPixelBuffer
+- **Comprehensive Instructions**: Built-in support for:
+  - Filter application with time-based control
+  - Text and image watermarks with customizable positioning
+  - Video rotation (90°, 180°, 270°)
+  - Custom instruction creation for extended functionality
+- **High Performance**: Optimized for speed and efficiency using Metal where available
+- **Flexible Export Options**: Customizable export settings including time range, quality, and network optimization
+
+### 🎯 Why Choose Kakapos?
+
+- **Easy to Use**: Simple API with clear instruction-based architecture
+- **Extensible**: Create custom instructions for your specific video processing needs
+- **Performance Focused**: Leverages hardware acceleration for fast processing
+- **Versatile**: Supports a wide range of video sources and filter frameworks
+- **Well Documented**: Comprehensive documentation and example code
+
+### 🔧 How It Works
+
+Kakapos uses an instruction-based architecture where you define a series of processing steps (instructions) that are applied to each video frame. These instructions are processed in sequence, allowing for complex video transformations with minimal code.
+
+The framework handles the heavy lifting of video frame processing, leaving you free to focus on creating the desired visual effects.
+
+---
 
 ### Used
 
@@ -61,6 +94,12 @@ let textWatermark = WatermarkInstruction(
 )
 ```
 
+- Create a rotate instruction.
+
+```
+let rotateInstruction = RotateInstruction(rotationAngle: selectedRotation)
+```
+
 - Convert video and then convert buffer.
 
 ```
@@ -74,12 +113,59 @@ let exporter = VideoX.init(provider: provider)
 exporter.export(options: [
     .OptimizeForNetworkUse: true,
     .ExportSessionTimeRange: TimeRangeType.range(5...28.0),
-], instructions: [filtering, textWatermark], complete: { res in
+], instructions: [filtering, textWatermark, rotateInstruction], complete: { res in
     // do somthing..
 }, progress: { pro in
     // progressing..
 })
 ```
+
+### Custom Instruction
+
+You can create your own custom instructions by following these steps:
+
+1. **Create a calss that conforms to the `InstructionProtocol` & `Instruction`**
+2. **Use your custom instruction**
+
+
+### Example: Create a Brightness Adjustment Instruction
+
+```swift
+public class BrightnessInstruction: CompositionInstruction {
+    public let timeRange: CMTimeRange
+    public let brightness: Float
+    
+    public init(brightness: Float, timeRange: CMTimeRange = .init(start: .zero, duration: .positiveInfinity)) {
+        self.brightness = brightness
+        self.timeRange = timeRange
+    }
+    
+    public required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    public func operationPixelBuffer(_ buffer: CVPixelBuffer, block: @escaping BufferBlock, for request: AVAsynchronousVideoCompositionRequest) {
+        if let brightnessBuffer = processBrightness(buffer) {
+            block(brightnessBuffer) 
+        }
+    }
+    
+    func processBrightness(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
+        // Implement brightness adjustment logic
+        // This could use CoreImage, Harbeth, or other frameworks
+        return pixelBuffer
+    }
+}
+```
+
+By following this pattern, you can create any custom video processing instructions you need.
+ 
+Such as:
+- Color adjustment instructions
+- Special effects instructions
+- Text overlay instructions
+- Audio processing instructions
+- And more!
 
 ### CocoaPods
 
