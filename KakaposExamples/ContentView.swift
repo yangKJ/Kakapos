@@ -23,8 +23,15 @@ struct ContentView: View {
     @State var isPlaying: Bool = false
     @State var processingTime: String = ""
     @State var startTime: Date? = nil
+    @State var selectedRotation: RotationAngle = .angle0
     
     let videoOptions = ["mov", "mp4"]
+    let rotationOptions: [(String, RotationAngle)] = [
+        ("0°", .angle0),
+        ("90°", .angle90),
+        ("180°", .angle180),
+        ("270°", .angle270)
+    ]
     
     var body: some View {
         NavigationView {
@@ -76,6 +83,21 @@ struct ContentView: View {
                     .pickerStyle(.segmented)
                     .padding(.vertical, 4)
                 }
+                .padding(.horizontal, 16)
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Rotation:")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    Picker("Rotation", selection: $selectedRotation) {
+                        ForEach(rotationOptions, id: \.1) { option in
+                            Text(option.0).tag(option.1)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.vertical, 4)
+                }
+                .padding(.top, -16)
                 .padding(.horizontal, 16)
                 
                 HStack(spacing: 12) {
@@ -232,13 +254,21 @@ struct ContentView: View {
             margin: 20,
             opacity: 0.8,
         )
+        
+        // 创建指令数组
+        var instructions: [CompositionInstruction] = [filtering, textWatermark]
+        
+        // 如果选择了非0度旋转，添加旋转指令
+        if selectedRotation != .angle0 {
+            let rotateInstruction = RotateInstruction(rotationAngle: selectedRotation)
+            instructions.insert(rotateInstruction, at: 0)
+        }
+        
         let exporter = VideoX.init(provider: .init(with: videoURL))
         let _ = exporter.export(options: [
             .OptimizeForNetworkUse: true,
             .ExportSessionTimeRange: TimeRangeType.range(2...20.0),
-        ], instructions: [
-            filtering, textWatermark
-        ], complete: { res in
+        ], instructions: instructions, complete: { res in
             self.showLoadingIndicator = false
             if let startTime = self.startTime {
                 let elapsedTime = Date().timeIntervalSince(startTime)

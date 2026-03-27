@@ -12,7 +12,7 @@ import CoreVideo
 /// Composite instructions are used to process multiple instructions sequentially.
 public final class CompositeInstruction: Instruction, InstructionProtocol, @unchecked Sendable {
     
-    private let instructions: [CompositionInstruction]
+    let instructions: [CompositionInstruction]
     
     public init(instructions: [CompositionInstruction]) {
         self.instructions = instructions
