@@ -17,8 +17,7 @@ extension VideoX {
         public let videoTracks: [AVAssetTrack]
         public let audioTracks: [AVAssetTrack]
         public let orientation: VideoOrientation
-        
-        let fileType: MovieFileType?
+        public let fileType: MovieFileType?
     }
 }
 
@@ -52,7 +51,7 @@ extension VideoX.Provider {
         } else {
             let fileType_: MovieFileType = .mp4
             self.fileType = fileType_
-            self.outputURL = try! FileManager.default.kaka.createURL(prefix: "condy_export_video", pathExtension: fileType_.pathExtension)
+            self.outputURL = try! FileManager.default.kaka.createURL(pathExtension: fileType_.pathExtension)
         }
     }
     

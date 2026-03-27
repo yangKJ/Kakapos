@@ -83,7 +83,6 @@ extension VideoX.Option {
         } else {
             var renderSize: CGSize = .zero
             for videoTrack in videoTracks {
-                // 使用视频轨道的变换后的尺寸，这样可以确保 renderSize 与视频的实际显示尺寸一致
                 let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
                 renderSize.width  = max(renderSize.width, abs(size.width))
                 renderSize.height = max(renderSize.height, abs(size.height))

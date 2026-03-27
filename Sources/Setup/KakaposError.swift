@@ -21,6 +21,7 @@ extension VideoX {
         case unsupportedFileType
         case exportOutputURL
         case newRenderedPixelBufferForRequestFailure
+        case instructionsEmpty
     }
 }
 
@@ -58,6 +59,8 @@ extension VideoX.Error: CustomStringConvertible, CustomNSError {
             return "Export output url is nil."
         case .newRenderedPixelBufferForRequestFailure:
             return "Read the video composition render context pixel buffer is nil."
+        case .instructionsEmpty:
+            return "Instructions array is empty."
         }
     }
     
@@ -83,6 +86,8 @@ extension VideoX.Error: CustomStringConvertible, CustomNSError {
         case .exportOutputURL:
             return nil
         case .newRenderedPixelBufferForRequestFailure:
+            return nil
+        case .instructionsEmpty:
             return nil
         }
     }

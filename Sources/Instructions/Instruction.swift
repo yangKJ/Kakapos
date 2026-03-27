@@ -7,6 +7,15 @@
 
 import Foundation
 import AVFoundation
+import CoreVideo
+
+public protocol InstructionProtocol {
+    
+    func operationPixelBuffer(_ buffer: CVPixelBuffer, block: @escaping BufferBlock, for request: AVAsynchronousVideoCompositionRequest)
+}
+
+public typealias CompositionInstruction = Instruction & InstructionProtocol
+public typealias BufferBlock = (CVPixelBuffer) -> Void
 
 open class Instruction: AVMutableVideoCompositionInstruction, @unchecked Sendable {
     

@@ -41,24 +41,26 @@ final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     request.finishCancelledRequest()
                 } else {
                     guard let instruction = request.videoCompositionInstruction as? CompositionInstruction,
-                          let trackID = instruction.trackID,
-                          let pixelBuffer = request.sourceFrame(byTrackID: trackID),
                           let renderContext = self.renderContext else {
                         request.finish(with: VideoX.Error.newRenderedPixelBufferForRequestFailure)
                         return
                     }
                     let renderSize = renderContext.size
                     
-                    let transformedBuffer = self.applyTransform(to: pixelBuffer, renderSize: renderSize)
-                    
                     let callback = { buffer in
                         request.finish(withComposedVideoFrame: buffer)
                     }
                     
-                    if let transformedBuffer = transformedBuffer {
-                        instruction.operationPixelBuffer(transformedBuffer, block: callback, for: request)
+                    // 只处理单轨道
+                    if let trackID = instruction.trackID, let pixelBuffer = request.sourceFrame(byTrackID: trackID) {
+                        let transformedBuffer = self.applyTransform(to: pixelBuffer, renderSize: renderSize)
+                        if let transformedBuffer = transformedBuffer {
+                            instruction.operationPixelBuffer(transformedBuffer, block: callback, for: request)
+                        } else {
+                            instruction.operationPixelBuffer(pixelBuffer, block: callback, for: request)
+                        }
                     } else {
-                        instruction.operationPixelBuffer(pixelBuffer, block: callback, for: request)
+                        request.finish(with: VideoX.Error.newRenderedPixelBufferForRequestFailure)
                     }
                 }
             }
@@ -101,9 +103,6 @@ extension VideoCompositor {
     private func applyTransform(to pixelBuffer: CVPixelBuffer, renderSize: CGSize) -> CVPixelBuffer? {
         let pixelBufferWidth  = CVPixelBufferGetWidth(pixelBuffer)
         let pixelBufferHeight = CVPixelBufferGetHeight(pixelBuffer)
-        
-        // 如果像素缓冲区的尺寸与 renderSize 一致，说明不需要变换
-        // 如果像素缓冲区的尺寸与 renderSize 不一致（宽高互换），说明需要旋转
         if (pixelBufferWidth == Int(renderSize.width)) && (pixelBufferHeight == Int(renderSize.height)) {
             return nil
         }

@@ -45,7 +45,7 @@ public struct VideoX {
         do {
             let exportSession = try makeAssetExportSession(options: options, instructions: instructions)
             if let progress = progress {
-                let estimatedDuration: TimeInterval = 5.0
+                let estimatedDuration: TimeInterval = 8.0
                 let startTime = Date()
                 let progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
                     let elapsedTime = Date().timeIntervalSince(startTime)
@@ -130,13 +130,12 @@ extension VideoX {
         let composition = try setupComposition(options: options)
         let track = try setupVideoTrack(videoTrack: videoTrack, composition: composition)
         let exportTimeRange = VideoX.Option.setupExportSessionTimeRange(duration: provider.duration, options: options)
-        let instructions = instructions.map {
-            $0.timeRange = exportTimeRange
-            $0.initCompositionTrack(track, provider: provider, options: options)
-            return $0
-        }
         
-        let videoComposition = setupVideoComposition(options: options, composition: composition, instructions: instructions)
+        let compositeInstruction = CompositeInstruction(instructions: instructions)
+        compositeInstruction.timeRange = exportTimeRange
+        compositeInstruction.initCompositionTrack(track, provider: provider, options: options)
+        
+        let videoComposition = setupVideoComposition(options: options, composition: composition, instructions: [compositeInstruction])
         
         if type == AVAssetExportSession.self {
             guard let avFileType = self.provider.fileType?.avFileType else {
@@ -181,7 +180,7 @@ extension VideoX {
         guard let videoCompositionTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw VideoX.Error.addVideoTrack
         }
-        videoCompositionTrack.preferredTransform = CGAffineTransform.identity
+        videoCompositionTrack.preferredTransform = videoTrack.preferredTransform
         let timeRange = CMTimeRangeMake(start: .zero, duration: provider.duration)
         try videoCompositionTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
         

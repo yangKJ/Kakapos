@@ -21,6 +21,8 @@ struct ContentView: View {
     @State var selectedVideo: String = "mp4"
     @State var processingProgress: Float = 0.0
     @State var isPlaying: Bool = false
+    @State var processingTime: String = ""
+    @State var startTime: Date? = nil
     
     let videoOptions = ["mov", "mp4"]
     
@@ -76,7 +78,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 16)
                 
-                VStack(spacing: 16) {
+                HStack(spacing: 12) {
                     Button(action: {
                         videoExport(success: { playerItem in
                             self.player = AVPlayer(playerItem: playerItem)
@@ -93,9 +95,7 @@ struct ContentView: View {
                             .background(LinearGradient(gradient: Gradient(colors: [.blue, .blue.opacity(0.8)]), startPoint: .leading, endPoint: .trailing))
                             .cornerRadius(8)
                             .shadow(radius: 4)
-                            .scaleEffect(0.98)
                     }
-                    .padding(.horizontal, 16)
                     .buttonStyle(ScaleButtonStyle())
                     
                     Button(action: {
@@ -133,21 +133,30 @@ struct ContentView: View {
                             .cornerRadius(8)
                             .shadow(radius: 4)
                     }
-                    .padding(.horizontal, 20)
                     .buttonStyle(ScaleButtonStyle())
                 }
+                .padding(.horizontal, 16)
                 
                 if let outputURL = outputURL {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Video Info:")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
-                        Text("Output: \(outputURL.lastPathComponent)")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                        Text("Status: Processed")
-                            .font(.subheadline)
-                            .foregroundColor(.green)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Video Info:")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                            Text("Output: \(outputURL.lastPathComponent)")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                            Text("Status: Processed")
+                                .font(.subheadline)
+                                .foregroundColor(.green)
+                            if !processingTime.isEmpty {
+                                Text("Processing Time: \(processingTime)")
+                                    .font(.subheadline)
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Spacer()
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -183,6 +192,8 @@ struct ContentView: View {
         if showLoadingIndicator { return }
         self.showLoadingIndicator = true
         self.player?.pause()
+        self.startTime = Date()
+        self.processingTime = ""
         
         var filters1: [C7FilterProtocol] = [
             C7LookupTable(name: "lut_abao"),
@@ -215,12 +226,24 @@ struct ContentView: View {
                 dest.transmitOutput(success: callback)
             }
         }
+        let textWatermark = WatermarkInstruction(
+            type: .text("Kakapos", font: .boldSystemFont(ofSize: 120), color: .red),
+            position: .bottomRight,
+            margin: 20,
+            opacity: 0.8,
+        )
         let exporter = VideoX.init(provider: .init(with: videoURL))
         let _ = exporter.export(options: [
             .OptimizeForNetworkUse: true,
             .ExportSessionTimeRange: TimeRangeType.range(2...20.0),
-        ], instructions: [filtering], complete: { res in
+        ], instructions: [
+            filtering, textWatermark
+        ], complete: { res in
             self.showLoadingIndicator = false
+            if let startTime = self.startTime {
+                let elapsedTime = Date().timeIntervalSince(startTime)
+                self.processingTime = String(format: "%.2f seconds", elapsedTime)
+            }
             switch res {
             case .success(let outputURL):
                 self.outputURL = outputURL
