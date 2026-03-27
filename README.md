@@ -1,5 +1,7 @@
 # Kakapos
 
+<img width=230px src="https://raw.githubusercontent.com/yangKJ/Kakapos/master/Screenshot/1.png" />
+
 [![CocoaPods Compatible](https://img.shields.io/cocoapods/v/Kakapos.svg?style=flat&label=Kakapos&colorA=28a745&&colorB=4E4E4E)](https://cocoapods.org/pods/Kakapos) 
 ![Platform](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20watchOS%20%7C%20tvOS-4E4E4E.svg?colorA=28a745)
 
@@ -48,6 +50,17 @@ let filtering = FilterInstruction { buffer, time, callback in
 }
 ```
 
+- Create a watermark instruction.
+
+```
+let textWatermark = WatermarkInstruction(
+    type: .text("Kakapos", font: .boldSystemFont(ofSize: 120), color: .red),
+    position: .bottomRight,
+    margin: 20,
+    opacity: 0.8,
+)
+```
+
 - Convert video and then convert buffer.
 
 ```
@@ -61,7 +74,7 @@ let exporter = VideoX.init(provider: provider)
 exporter.export(options: [
     .OptimizeForNetworkUse: true,
     .ExportSessionTimeRange: TimeRangeType.range(5...28.0),
-], instructions: [filtering], complete: { res in
+], instructions: [filtering, textWatermark], complete: { res in
     // do somthing..
 }, progress: { pro in
     // progressing..

@@ -8,7 +8,7 @@
 import Foundation
 import AVFoundation
 
-enum MovieFileType {
+public enum MovieFileType {
     /// MOV是苹果设计的一种流行的视频文件格式。 它旨在支持QuickTime播放器。 MOV文件包含视频，音频，字幕，时间码和其他媒体类型。
     /// 由于它是一种非常高质量的视频格式，因此MOV文件在计算机上会占用更多的存储空间。
     case mov
