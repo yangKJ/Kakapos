@@ -53,7 +53,7 @@ final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     
                     // 只处理单轨道
                     if let trackID = instruction.trackID, let pixelBuffer = request.sourceFrame(byTrackID: trackID) {
-                        let transformedBuffer = self.applyTransform(to: pixelBuffer, renderSize: renderSize)
+                        let transformedBuffer = self.applyTransform(to: pixelBuffer, renderSize: renderSize, instruction: instruction)
                         if let transformedBuffer = transformedBuffer {
                             instruction.operationPixelBuffer(transformedBuffer, block: callback, for: request)
                         } else {
@@ -100,17 +100,42 @@ extension VideoCompositor {
         return pixelBuffer
     }
     
-    private func applyTransform(to pixelBuffer: CVPixelBuffer, renderSize: CGSize) -> CVPixelBuffer? {
-        let pixelBufferWidth  = CVPixelBufferGetWidth(pixelBuffer)
-        let pixelBufferHeight = CVPixelBufferGetHeight(pixelBuffer)
-        if (pixelBufferWidth == Int(renderSize.width)) && (pixelBufferHeight == Int(renderSize.height)) {
+    private func applyTransform(to pixelBuffer: CVPixelBuffer, renderSize: CGSize, instruction: CompositionInstruction) -> CVPixelBuffer? {
+        if let rotationAngle = getRotationAngle(from: instruction) {
+            let isMovVideo = isMovVideo(instruction)
+            return processRotation(pixelBuffer, rotationAngle: rotationAngle, renderSize: renderSize, isMovVideo: isMovVideo)
+        }
+        if !isMovVideo(instruction) {
             return nil
         }
-        
+        /// Fix mov format video of rotating 90 to the left.
+        return processRotation(pixelBuffer, rotationAngle: .angle0, renderSize: renderSize, isMovVideo: true)
+    }
+    
+    private func getRotationAngle(from instruction: CompositionInstruction) -> RotationAngle? {
+        if let compositeInstruction = instruction as? CompositeInstruction {
+            for subInstruction in compositeInstruction.instructions {
+                if let rotateInstruction = subInstruction as? RotateInstruction {
+                    return rotateInstruction.rotationAngle
+                }
+            }
+        } else if let rotateInstruction = instruction as? RotateInstruction {
+            return rotateInstruction.rotationAngle
+        }
+        return nil
+    }
+    
+    private func isMovVideo(_ instruction: CompositionInstruction) -> Bool {
+        if let provider = instruction.provider {
+            return provider.orientation == .right
+        }
+        return false
+    }
+    
+    private func processRotation(_ pixelBuffer: CVPixelBuffer, rotationAngle: RotationAngle, renderSize: CGSize, isMovVideo: Bool) -> CVPixelBuffer? {
         guard let cgImage = toCGImage(pixelBuffer: pixelBuffer) else {
             return nil
         }
-        
         let outputWidth  = Int(renderSize.width)
         let outputHeight = Int(renderSize.height)
         guard let outputPixelBuffer = createBlankPixelBuffer(width: outputWidth, height: outputHeight) else {
@@ -139,12 +164,13 @@ extension VideoCompositor {
         
         context.clear(CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight))
         
-        // preferredTransform: CGAffineTransform(a: 0.0, b: 1.0, c: -1.0, d: 0.0, tx: 1080.0, ty: 0.0)
-        // Rotate 90 degrees to the right, and then tx: 1080.0, ty: 0.0, move the image to the top left corner.
-        context.translateBy(x: 0, y: renderSize.height)
-        context.rotate(by: -CGFloat.pi / 2)
+        if let (transX, transY, rotate) = rotationAngle.rotation(isMovVideo: isMovVideo, renderSize: renderSize) {
+            context.translateBy(x: transX, y: transY)
+            context.rotate(by: rotate)
+        }
         
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        let imageRect = CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height)
+        context.draw(cgImage, in: imageRect)
         
         return outputPixelBuffer
     }

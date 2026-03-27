@@ -196,10 +196,30 @@ extension VideoX {
         let videoComposition = AVMutableVideoComposition()
         videoComposition.customVideoCompositorClass = VideoCompositor.self
         videoComposition.frameDuration = VideoX.Option.setupVideoFrameDuration(options: options)
-        videoComposition.renderSize = composition.naturalSize
         videoComposition.renderScale = VideoX.Option.setupRenderScale(options: options)
+        videoComposition.renderSize = setupRenderSize(for: composition, instructions: instructions)
         videoComposition.instructions = instructions
         return videoComposition
+    }
+    
+    private func setupRenderSize(for composition: AVComposition, instructions: [CompositionInstruction]) -> CGSize {
+        var renderSize = composition.naturalSize
+        
+        for instruction in instructions {
+            if let compositeInstruction = instruction as? CompositeInstruction {
+                for subInstruction in compositeInstruction.instructions {
+                    if let rotateInstruction = subInstruction as? RotateInstruction {
+                        renderSize = rotateInstruction.rotatedSize(from: renderSize)
+                        break
+                    }
+                }
+            } else if let rotateInstruction = instruction as? RotateInstruction {
+                renderSize = rotateInstruction.rotatedSize(from: renderSize)
+                break
+            }
+        }
+        
+        return renderSize
     }
     
     private func setupAudioMix() -> AVAudioMix? {
