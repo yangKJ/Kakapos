@@ -1317,7 +1317,12 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.summary.state, .active)
         XCTAssertEqual(sink.summary.lastFrameIndex, 1)
         XCTAssertEqual(sink.summary.lastImageWidth, 10)
-        XCTAssertEqual(sink.summary.summaryText, "state active · frame 1 · image 10x8 · pending no")
+        XCTAssertEqual(sink.summary.lastPresentationTime, .zero)
+        XCTAssertEqual(sink.summary.lastSourceTime, .zero)
+        XCTAssertEqual(
+            sink.summary.summaryText,
+            "state active · frame 1 · presentation 0.00s · sourceTime 0.00s · image 10x8 · pending no"
+        )
 
         sink.pause()
         sink.consume(second) { result in
@@ -1329,7 +1334,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.summary.state, .paused)
         XCTAssertEqual(sink.summary.hasPendingFrame, true)
         XCTAssertEqual(sink.summary.lastFrameIndex, 1)
-        XCTAssertEqual(sink.summary.summaryText, "state paused · frame 1 · image 10x8 · pending yes")
+        XCTAssertEqual(
+            sink.summary.summaryText,
+            "state paused · frame 1 · presentation 0.00s · sourceTime 0.00s · image 10x8 · pending yes"
+        )
     }
 
     func testPreviewSinkCachesLatestFrameWhilePausedAndFlushesOnResume() throws {
