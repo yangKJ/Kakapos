@@ -1445,6 +1445,49 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedStatuses, [.exporting, .cancelled])
     }
 
+    func testReaderWriterExportJobCancelWhileExportingRemovesPartialOutputImmediately() throws {
+        let session = FakeReaderWriterExportSession()
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: outputURL,
+            sessionFactory: { _, _, _ in session }
+        )
+        let cancelExpectation = expectation(description: "cancel status")
+        let completionExpectation = expectation(description: "completion suppressed after cancel")
+        completionExpectation.isInverted = true
+        var receivedStatuses: [ReaderWriterExportJob.Status] = []
+
+        job.statusHandler = { status in
+            receivedStatuses.append(status)
+            if status == .cancelled {
+                cancelExpectation.fulfill()
+            }
+        }
+
+        job.export { _ in
+            completionExpectation.fulfill()
+        }
+        session.emitStatus(.exporting)
+        FileManager.default.createFile(atPath: outputURL.path, contents: Data("partial".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+
+        job.cancel()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertEqual(session.cancelCallCount, 1)
+        wait(for: [cancelExpectation, completionExpectation], timeout: 1)
+
+        session.finish(with: nil)
+        session.emitStatus(.failed)
+
+        XCTAssertEqual(job.status, .cancelled)
+        XCTAssertEqual(receivedStatuses, [.exporting, .cancelled])
+    }
+
     func testVideoXExportPipelineDefaultsToAssetExportSession() {
         XCTAssertEqual(VideoX.Option.setupExportPipeline(options: [:]), .assetExportSession)
     }
