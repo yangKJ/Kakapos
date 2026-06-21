@@ -16,9 +16,22 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
         public let authorizationStatus: CameraAuthorizationStatus
         public let isPaused: Bool
         public let captureMode: CameraCaptureMode
+        public let lastFrameIndex: Int64?
+        public let lastPresentationTime: CMTime?
+        public let lastMediaType: String?
 
         public var summaryText: String {
-            "state \(state) · position \(position) · auth \(authorizationStatus) · paused \(isPaused ? "yes" : "no") · mode \(captureMode)"
+            var text = "state \(state) · position \(position) · auth \(authorizationStatus) · paused \(isPaused ? "yes" : "no") · mode \(captureMode)"
+            if let lastFrameIndex {
+                text += " · frame \(lastFrameIndex)"
+            }
+            if let lastPresentationTime {
+                text += " · presentation \(String(format: "%.2fs", lastPresentationTime.seconds))"
+            }
+            if let lastMediaType {
+                text += " · mediaType \(lastMediaType)"
+            }
+            return text
         }
     }
 
@@ -47,7 +60,10 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
             position: currentPosition,
             authorizationStatus: authorizationStatus,
             isPaused: isPaused,
-            captureMode: configuration.captureMode
+            captureMode: configuration.captureMode,
+            lastFrameIndex: frameIndex > 0 ? frameIndex : nil,
+            lastPresentationTime: lastPresentationTime,
+            lastMediaType: lastMediaType
         )
     }
 
@@ -61,6 +77,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     private let outputNode = MediaOutputNode()
     private var lifecycle: CameraSessionLifecycle
     private var frameIndex: Int64 = 0
+    private var lastPresentationTime: CMTime?
+    private var lastMediaType: String?
     private var currentOrientation: AVCaptureVideoOrientation = .portrait
 
     public init(configuration: CameraSourceConfiguration = CameraSourceConfiguration()) throws {
@@ -85,6 +103,9 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     public func start() {
         let status = Self.authorizationStatus(for: configuration.captureMode)
         authorizationStatus = status
+        frameIndex = 0
+        lastPresentationTime = nil
+        lastMediaType = nil
         publish(.authorizationChanged(status))
         if status != .authorized {
             guard configuration.automaticallyRequestsAuthorization, status == .notDetermined else {
@@ -217,6 +238,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
         frameIndex += 1
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let duration = CMSampleBufferGetDuration(sampleBuffer)
+        lastPresentationTime = presentationTime
+        lastMediaType = mediaType.rawValue
         var frame = MediaFrame(
             sampleBuffer: sampleBuffer,
             metadata: FrameMetadata(
