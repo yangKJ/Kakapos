@@ -35,7 +35,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
         case .record:
             return "Camera capture, recording, and sink lifecycle through RecordingPipeline, CameraSource, and RecorderSink."
         case .timeline:
-            return "Layer composition, keyframes, transitions, and audio mix through TimelineComposition."
+            return "Layer composition, keyframes, transitions, and audio mix through TimelinePipeline and TimelineComposition."
         }
     }
 
@@ -48,7 +48,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
         case .record:
             return ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"]
         case .timeline:
-            return ["TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"]
+            return ["TimelinePipeline", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"]
         }
     }
 }

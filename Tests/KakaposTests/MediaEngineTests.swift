@@ -13,6 +13,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.displayName, "Export")
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.primaryTypes, ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.primaryTypes, ["TimelinePipeline", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"])
         XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
     }
 
@@ -2590,6 +2591,32 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summary.hasRecordedClip)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertTrue(pipeline.summaryText.contains("recorder finished"))
+    }
+
+    func testTimelinePipelineCompilesTimelineAndSummarizesBoardState() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let pipeline = TimelinePipeline(
+            renderSize: CGSize(width: 1280, height: 720),
+            frameDuration: CMTime(value: 1, timescale: 30),
+            layers: [clip]
+        )
+
+        let compiled = pipeline.compile()
+
+        XCTAssertEqual(pipeline.renderSize, CGSize(width: 1280, height: 720))
+        XCTAssertEqual(pipeline.frameDuration, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(pipeline.layers.count, 1)
+        XCTAssertEqual(pipeline.transitions.count, 0)
+        XCTAssertEqual(compiled.summary.renderSize, CGSize(width: 1280, height: 720))
+        XCTAssertEqual(compiled.summary.videoLayerCount, 1)
+        XCTAssertTrue(pipeline.summaryText.contains("layers 1"))
+        XCTAssertTrue(pipeline.summaryText.contains("transitions 0"))
+        XCTAssertTrue(pipeline.summaryText.contains("processors 0"))
     }
 
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
