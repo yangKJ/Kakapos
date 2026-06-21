@@ -11,7 +11,7 @@ import AVFoundation
 #if canImport(UIKit)
 import UIKit
 
-public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNode {
+public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNode, MediaSourceSnapshotProviding {
     public struct Summary {
         public let state: State
         public let generation: Int64
@@ -94,6 +94,23 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     public var summaryText: String {
         summary.summaryText
+    }
+
+    public var sourceSnapshot: MediaSourceSnapshot {
+        MediaSourceSnapshot(
+            stateDescription: String(describing: summary.state),
+            lastFrameIndex: summary.frameIndex > 0 ? summary.frameIndex : nil,
+            lastPresentationTime: summary.lastPresentationTime,
+            lastSourceTime: summary.lastPlayerItemTime,
+            lastErrorDescription: summary.lastErrorDescription,
+            details: [
+                "generation": "\(summary.generation)",
+                "fps": "\(summary.preferredFramesPerSecond)",
+                "reason": summary.lastFrameRequestReason ?? "n/a",
+                "seekTarget": summary.hasSeekTarget ? "yes" : "no",
+                "lastFrame": summary.hasLastFrame ? "yes" : "no"
+            ]
+        )
     }
 
     private var coordinator = PlayerFrameCoordinator()
