@@ -994,6 +994,40 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(info.videoProgress, 1.0, accuracy: 0.0001)
         XCTAssertEqual(info.audioProgress, 0.0, accuracy: 0.0001)
         XCTAssertEqual(info.fractionCompleted, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(info.phase, .idle)
+    }
+
+    func testReaderWriterProgressInfoTracksExportPhaseUpdates() {
+        let job = ReaderWriterExportJob(
+            asset: AVMutableComposition(),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+        )
+        job._setStatusForTesting(.exporting)
+
+        job._setProgressInfoForTesting(
+            ReaderWriterExportJob.ProgressInfo(
+                videoProgress: 0.3,
+                audioProgress: 0.0,
+                hasVideo: true,
+                hasAudio: false,
+                phase: .videoEncoding
+            )
+        )
+        XCTAssertEqual(job.lastProgressInfo?.phase, .videoEncoding)
+
+        job._setProgressInfoForTesting(
+            ReaderWriterExportJob.ProgressInfo(
+                videoProgress: 0.7,
+                audioProgress: 0.6,
+                hasVideo: true,
+                hasAudio: true,
+                finishWritingProgress: 0.1,
+                phase: .finishing
+            )
+        )
+        XCTAssertEqual(job.lastProgressInfo?.phase, .finishing)
     }
 
     func testReaderWriterProgressInfoReturnsZeroWithoutActiveTracksAndUsesFinishWritingForOverallProgress() {
@@ -1046,6 +1080,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lastProgressInfo.audioProgress, 0.75, accuracy: 0.0001)
         XCTAssertEqual(lastProgressInfo.finishWritingProgress, 0.5, accuracy: 0.0001)
         XCTAssertEqual(lastProgressInfo.overallFractionCompleted, progress.overallFractionCompleted, accuracy: 0.0001)
+        XCTAssertEqual(lastProgressInfo.phase, .idle)
     }
 
     func testReaderWriterExportJobSummaryReflectsTracksProcessorsAndProgress() {
@@ -1233,6 +1268,7 @@ final class MediaEngineTests: XCTestCase {
                 finishWritingProgress: 0.1
             )
         )
+        XCTAssertEqual(job.lastProgressInfo?.phase, .finishing)
         session.finish(with: nil)
 
         wait(for: [completionExpectation, statusExpectation], timeout: 1)
@@ -1240,6 +1276,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedStatuses, [.exporting, .completed])
         XCTAssertNotNil(job.lastProgressInfo)
         XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted ?? -1, 0.29, accuracy: 0.0001)
+        XCTAssertEqual(job.lastProgressInfo?.phase, .finishing)
         if case .failure(let error)? = receivedResult {
             XCTFail("Unexpected export failure: \(error)")
         }

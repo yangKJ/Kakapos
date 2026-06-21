@@ -30,24 +30,34 @@ public final class ReaderWriterExportJob {
     }
 
     public struct ProgressInfo {
+        public enum Phase: String, Sendable {
+            case idle
+            case videoEncoding
+            case audioEncoding
+            case finishing
+        }
+
         public var videoProgress: Double
         public var audioProgress: Double
         public var hasVideo: Bool
         public var hasAudio: Bool
         public var finishWritingProgress: Double
+        public var phase: Phase
 
         public init(
             videoProgress: Double,
             audioProgress: Double,
             hasVideo: Bool,
             hasAudio: Bool,
-            finishWritingProgress: Double = 0
+            finishWritingProgress: Double = 0,
+            phase: Phase = .idle
         ) {
             self.videoProgress = min(max(videoProgress, 0), 1)
             self.audioProgress = min(max(audioProgress, 0), 1)
             self.hasVideo = hasVideo
             self.hasAudio = hasAudio
             self.finishWritingProgress = min(max(finishWritingProgress, 0), 1)
+            self.phase = phase
         }
 
         public var fractionCompleted: Double {
@@ -335,7 +345,8 @@ public final class ReaderWriterExportJob {
             audioProgress: progress.audioProgress?.fractionCompleted ?? 0,
             hasVideo: progress.videoProgress != nil,
             hasAudio: progress.audioProgress != nil,
-            finishWritingProgress: progress.finishWritingProgress.fractionCompleted
+            finishWritingProgress: progress.finishWritingProgress.fractionCompleted,
+            phase: progress.phase
         )
         storeProgress(info)
         DispatchQueue.main.async {
