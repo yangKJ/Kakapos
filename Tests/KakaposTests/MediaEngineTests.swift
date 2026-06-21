@@ -131,6 +131,34 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(VideoX.Option.setupExportPipeline(options: options), .readerWriter)
     }
 
+    func testVideoXMakeExportJobReturnsNilForAssetExportSessionPipeline() throws {
+        let exporter = try makeSampleExporter()
+        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
+
+        let exportJob = try exporter.makeExportJob(
+            options: [:],
+            instructions: [instruction]
+        )
+
+        XCTAssertNil(exportJob)
+    }
+
+    func testVideoXMakeExportJobReturnsReaderWriterJobWhenConfigured() throws {
+        let exporter = try makeSampleExporter()
+        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
+        let outputURL = try XCTUnwrap(exporter.provider.outputURL as URL?)
+
+        let exportJob = try exporter.makeExportJob(
+            options: [.ExportPipeline: VideoX.ExportPipeline.readerWriter],
+            instructions: [instruction]
+        )
+
+        XCTAssertNotNil(exportJob)
+        XCTAssertEqual(exportJob?.status, .idle)
+        XCTAssertEqual(try exporter.makeReaderWriterExportJob(instructions: [instruction]).status, .idle)
+        XCTAssertEqual(outputURL.pathExtension.lowercased(), "mp4")
+    }
+
     func testPreviewSinkBuildsPreviewImageAndPreservesMetadata() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
         let metadata = FrameMetadata(
@@ -439,4 +467,18 @@ private func makePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
     )
     XCTAssertEqual(status, kCVReturnSuccess)
     return pixelBuffer!
+}
+
+private func makeSampleExporter() throws -> VideoX {
+    let sampleURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("KakaposExamples")
+        .appendingPathComponent("IMG_1388.mp4")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: sampleURL.path))
+    let outputURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("mp4")
+    return VideoX(provider: .init(with: sampleURL, to: outputURL))
 }
