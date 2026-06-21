@@ -470,13 +470,17 @@ private struct CameraRecordView: View {
                     }
                     pipeline.completionHandler = {
                         let clip = recorder.recordedClip ?? RecordedClip(outputURL: outputURL, duration: .zero, startedAt: nil, endedAt: nil)
-                        player = AVPlayer(url: clip.outputURL)
+                        guard let clipURL = clip.outputURL else {
+                            message = "Recording finished without output URL"
+                            return
+                        }
+                        player = AVPlayer(url: clipURL)
                         player?.play()
                         livePreviewImage = nil
                         recordedDurationText = String(format: "%.2fs", clip.duration.seconds)
                         recorderStateText = String(describing: recorder.state)
-                        lastOutputText = clip.outputURL.lastPathComponent
-                        message = "Recorded: \(clip.outputURL.lastPathComponent)"
+                        lastOutputText = clipURL.lastPathComponent
+                        message = "Recorded: \(clipURL.lastPathComponent)"
                     }
                     self.cameraSource = source
                     self.recorder = recorder
