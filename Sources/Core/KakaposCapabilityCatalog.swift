@@ -33,7 +33,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
         case .preview:
             return "Player frame sourcing and preview routing through PreviewPipeline, MediaPipeline, and PreviewSink."
         case .record:
-            return "Camera capture, recording, and sink lifecycle through CameraSource and RecorderSink."
+            return "Camera capture, recording, and sink lifecycle through RecordingPipeline, CameraSource, and RecorderSink."
         case .timeline:
             return "Layer composition, keyframes, transitions, and audio mix through TimelineComposition."
         }
@@ -46,7 +46,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
         case .preview:
             return ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"]
         case .record:
-            return ["CameraSource", "RecorderSink", "RecordingSession"]
+            return ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"]
         case .timeline:
             return ["TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"]
         }

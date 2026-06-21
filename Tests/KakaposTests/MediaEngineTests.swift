@@ -12,6 +12,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(boards.map(\.board), [.export, .preview, .record, .timeline])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.displayName, "Export")
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.primaryTypes, ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"])
         XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
     }
 
@@ -2556,6 +2557,39 @@ final class MediaEngineTests: XCTestCase {
             sink.summary.summaryText,
             "state recording · clips 0 · total 0.00s · clip 0.00s · recorded no · presentation 0.00s"
         )
+    }
+
+    func testRecordingPipelineRoutesFramesToRecorderAndSummarizesBoardState() throws {
+        let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
+        let frame = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
+        )
+        let source = TestSource(frames: [frame])
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let pipeline = try RecordingPipeline(source: source, outputURL: outputURL)
+        let completion = expectation(description: "recording pipeline completion")
+
+        pipeline.pipeline.completionHandler = {
+            completion.fulfill()
+        }
+
+        pipeline.start()
+
+        wait(for: [completion], timeout: 2)
+
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(pipeline.recorderSink.state, .finished)
+        XCTAssertEqual(pipeline.summary.sourceTypeName, "TestSource")
+        XCTAssertEqual(pipeline.summary.processorCount, 0)
+        XCTAssertEqual(pipeline.summary.pipelineState, .finished)
+        XCTAssertEqual(pipeline.summary.recorderState, .finished)
+        XCTAssertEqual(pipeline.summary.clipCount, 1)
+        XCTAssertTrue(pipeline.summary.hasRecordedClip)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertTrue(pipeline.summaryText.contains("recorder finished"))
     }
 
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
