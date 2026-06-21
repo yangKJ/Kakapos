@@ -5,6 +5,16 @@ import CoreGraphics
 
 final class MediaEngineTests: XCTestCase {
 
+    func testCapabilityCatalogGroupsPublicSurfaceIntoFourBoards() {
+        let boards = KakaposCapabilityCatalog.boards
+
+        XCTAssertEqual(boards.count, 4)
+        XCTAssertEqual(boards.map(\.board), [.export, .preview, .record, .timeline])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.displayName, "Export")
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
+        XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
+    }
+
     func testPassthroughFrameProcessorPreservesPixelBufferMetadata() throws {
         let pixelBuffer = try makePixelBuffer(width: 16, height: 16)
         let metadata = FrameMetadata(
