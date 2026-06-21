@@ -212,6 +212,7 @@ private struct CameraRecordView: View {
     @State private var player: AVPlayer?
     @State private var frameCount = 0
     @State private var recordedDurationText = "0.00s"
+    @State private var sessionStateText = "idle"
     @State private var message = "Camera recording requires device camera permission"
     #if canImport(UIKit) && !os(watchOS)
     @State private var pipeline: MediaPipeline?
@@ -227,9 +228,12 @@ private struct CameraRecordView: View {
                 .cornerRadius(8)
             Text("Captured Frames: \(frameCount)").font(.headline)
             Text("Recorded Duration: \(recordedDurationText)").font(.subheadline).foregroundColor(.secondary)
+            Text("Session State: \(sessionStateText)").font(.subheadline).foregroundColor(.secondary)
             HStack {
                 Button("Start Camera") { startCamera() }
                 Button("Stop") { stopCamera() }
+                Button("Flip Camera") { flipCamera() }
+                    .disabled(cameraSource == nil)
             }
             .buttonStyle(.borderedProminent)
             Text(message).font(.footnote).foregroundColor(.secondary)
@@ -248,6 +252,23 @@ private struct CameraRecordView: View {
                 }
                 do {
                     let source = try CameraSource()
+                    source.sessionEventHandler = { event in
+                        sessionStateText = String(describing: source.state)
+                        switch event {
+                        case .willStart:
+                            message = "Starting camera session"
+                        case .didStart:
+                            message = "Recording camera frames"
+                        case .didStop:
+                            message = "Camera session stopped"
+                        case .wasInterrupted:
+                            message = "Camera session interrupted"
+                        case .interruptionEnded:
+                            message = "Camera interruption ended"
+                        case .positionChanged(let position):
+                            message = "Switched camera: \(String(describing: position))"
+                        }
+                    }
                     let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
                     let recorder = try RecorderSink(outputURL: outputURL)
                     recorder.durationChangedHandler = { duration in
@@ -273,8 +294,9 @@ private struct CameraRecordView: View {
                     self.pipeline = pipeline
                     frameCount = 0
                     recordedDurationText = "0.00s"
+                    sessionStateText = String(describing: source.state)
                     pipeline.start()
-                    message = "Recording camera frames"
+                    message = "Starting camera session"
                 } catch {
                     message = error.localizedDescription
                 }
@@ -290,8 +312,19 @@ private struct CameraRecordView: View {
         pipeline?.stop()
         cameraSource = nil
         recorder = nil
+        sessionStateText = "stopped"
         #else
         message = "CameraSource is unavailable here"
+        #endif
+    }
+
+    private func flipCamera() {
+        #if canImport(UIKit) && !os(watchOS)
+        guard let cameraSource else { return }
+        let didSwitch = cameraSource.switchCameraPosition()
+        if !didSwitch {
+            message = "Failed to switch camera"
+        }
         #endif
     }
 }

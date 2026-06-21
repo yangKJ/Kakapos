@@ -13,20 +13,36 @@ public final class CameraSource: NSObject, MediaSource {
     public weak var delegate: MediaSourceDelegate?
     public let session: AVCaptureSession
     public private(set) var isPaused: Bool = false
+    public private(set) var state: CameraSessionState = .idle
+    public private(set) var currentPosition: CameraPosition
+    public var sessionEventHandler: ((CameraSessionEvent) -> Void)?
 
     private let queue = DispatchQueue(label: "com.condy.kakapos.camera-source")
     private var frameIndex: Int64 = 0
     private let videoOutput = AVCaptureVideoDataOutput()
     private let audioOutput = AVCaptureAudioDataOutput()
+    private var videoInput: AVCaptureDeviceInput?
+    private var lifecycle: CameraSessionLifecycle
 
     public init(sessionPreset: AVCaptureSession.Preset = .high, position: AVCaptureDevice.Position = .back) throws {
         self.session = AVCaptureSession()
+        self.currentPosition = Self.cameraPosition(from: position)
+        self.lifecycle = CameraSessionLifecycle(position: Self.cameraPosition(from: position))
         super.init()
         try configure(sessionPreset: sessionPreset, position: position)
+        addObservers()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     public func start() {
-        queue.async { self.session.startRunning() }
+        publish(.startRequested)
+        queue.async {
+            self.session.startRunning()
+            self.publish(.didStartRunning)
+        }
     }
 
     public func pause() {
@@ -40,6 +56,7 @@ public final class CameraSource: NSObject, MediaSource {
     public func stop() {
         queue.async {
             self.session.stopRunning()
+            self.publish(.didStopRunning)
             DispatchQueue.main.async { self.delegate?.mediaSourceDidFinish(self) }
         }
     }
@@ -57,7 +74,10 @@ public final class CameraSource: NSObject, MediaSource {
             throw VideoX.Error.videoTrackEmpty
         }
         let videoInput = try AVCaptureDeviceInput(device: videoDevice)
-        if session.canAddInput(videoInput) { session.addInput(videoInput) }
+        if session.canAddInput(videoInput) {
+            session.addInput(videoInput)
+            self.videoInput = videoInput
+        }
 
         videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         videoOutput.setSampleBufferDelegate(self, queue: queue)
@@ -67,6 +87,73 @@ public final class CameraSource: NSObject, MediaSource {
             session.addInput(audioInput)
             audioOutput.setSampleBufferDelegate(self, queue: queue)
             if session.canAddOutput(audioOutput) { session.addOutput(audioOutput) }
+        }
+    }
+
+    @discardableResult
+    public func switchCameraPosition() -> Bool {
+        queue.sync {
+            guard let currentInput = videoInput else { return false }
+            let nextPosition: AVCaptureDevice.Position = currentInput.device.position == .back ? .front : .back
+            guard let nextDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: nextPosition),
+                  let nextInput = try? AVCaptureDeviceInput(device: nextDevice) else {
+                return false
+            }
+            session.beginConfiguration()
+            session.removeInput(currentInput)
+            guard session.canAddInput(nextInput) else {
+                session.addInput(currentInput)
+                session.commitConfiguration()
+                return false
+            }
+            session.addInput(nextInput)
+            session.commitConfiguration()
+            videoInput = nextInput
+            publish(.positionChanged(Self.cameraPosition(from: nextPosition)))
+            return true
+        }
+    }
+
+    @objc private func handleSessionWasInterrupted(_ notification: Notification) {
+        publish(.wasInterrupted)
+    }
+
+    @objc private func handleSessionInterruptionEnded(_ notification: Notification) {
+        publish(.interruptionEnded)
+    }
+
+    private func addObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSessionWasInterrupted(_:)),
+            name: AVCaptureSession.wasInterruptedNotification,
+            object: session
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSessionInterruptionEnded(_:)),
+            name: AVCaptureSession.interruptionEndedNotification,
+            object: session
+        )
+    }
+
+    private func publish(_ action: CameraLifecycleAction) {
+        guard let event = lifecycle.handle(action) else { return }
+        state = lifecycle.state
+        currentPosition = lifecycle.position
+        DispatchQueue.main.async {
+            self.sessionEventHandler?(event)
+        }
+    }
+
+    private static func cameraPosition(from position: AVCaptureDevice.Position) -> CameraPosition {
+        switch position {
+        case .front:
+            return .front
+        case .back:
+            return .back
+        default:
+            return .unspecified
         }
     }
 }
