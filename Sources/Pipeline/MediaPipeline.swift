@@ -175,8 +175,10 @@ public final class MediaPipeline {
     #endif
 
     public func start() {
+        guard canStart() else { return }
+        resetLifecycleState()
         resetSourceCallbacksAcceptance()
-        transitionIfNeeded(from: [.idle], to: .running)
+        transitionIfNeeded(from: [.idle, .finished, .cancelled, .failed], to: .running)
         source.start()
     }
 
@@ -283,6 +285,22 @@ public final class MediaPipeline {
     private func storeLastFrameMetadata(_ metadata: FrameMetadata) {
         stateQueue.sync {
             _lastFrameMetadata = metadata
+        }
+    }
+
+    private func resetLifecycleState() {
+        stateQueue.sync {
+            hasFinished = false
+            sourceDidFinish = false
+            pendingSourceFrameDeliveries = 0
+            _lastFrameMetadata = nil
+            _lastErrorDescription = nil
+        }
+    }
+
+    private func canStart() -> Bool {
+        stateQueue.sync {
+            state != .running && state != .paused
         }
     }
 
