@@ -9,6 +9,69 @@ import Foundation
 import AVFoundation
 
 public final class RecordingPipeline {
+    public struct ManifestRecorderSnapshot: Equatable, Sendable, Codable {
+        public let stateDescription: String
+        public let outputURL: URL
+        public let recordedClipURL: URL?
+        public let totalDurationSeconds: Double
+        public let currentClipDurationSeconds: Double
+        public let clipCount: Int
+        public let currentClipHasStarted: Bool
+        public let currentClipHasVideo: Bool
+        public let currentClipHasAudio: Bool
+        public let recordedVideoSegmentCount: Int
+        public let recordedAudioSegmentCount: Int
+        public let lastPresentationTimeSeconds: Double?
+        public let pausedAtSeconds: Double?
+        public let hasRecordedClip: Bool
+
+        public init(snapshot: RecorderSink.Snapshot) {
+            self.stateDescription = String(describing: snapshot.state)
+            self.outputURL = snapshot.outputURL
+            self.recordedClipURL = snapshot.recordedClipURL
+            self.totalDurationSeconds = snapshot.totalDuration.seconds
+            self.currentClipDurationSeconds = snapshot.currentClipDuration.seconds
+            self.clipCount = snapshot.clipCount
+            self.currentClipHasStarted = snapshot.currentClipHasStarted
+            self.currentClipHasVideo = snapshot.currentClipHasVideo
+            self.currentClipHasAudio = snapshot.currentClipHasAudio
+            self.recordedVideoSegmentCount = snapshot.recordedVideoSegmentCount
+            self.recordedAudioSegmentCount = snapshot.recordedAudioSegmentCount
+            self.lastPresentationTimeSeconds = snapshot.lastPresentationTime?.seconds
+            self.pausedAtSeconds = snapshot.pausedAt?.seconds
+            self.hasRecordedClip = snapshot.hasRecordedClip
+        }
+    }
+
+    public struct Manifest: Equatable, Sendable, Codable {
+        public let sourceTypeName: String
+        public let processorCount: Int
+        public let pipelineStateDescription: String
+        public let recorderStateDescription: String
+        public let sourceSnapshot: PreviewPipeline.ManifestSourceSnapshot?
+        public let recorderSnapshot: ManifestRecorderSnapshot
+#if canImport(UIKit) && !os(watchOS)
+        public let cameraSourceStateDescription: String?
+        public let cameraSourcePositionDescription: String?
+        public let cameraSourceAuthorizationStatusDescription: String?
+        public let cameraSourceIsPaused: Bool?
+        public let cameraSourceCaptureModeDescription: String?
+        public let cameraSourceLastFrameIndex: Int64?
+        public let cameraSourceLastPresentationTimeSeconds: Double?
+        public let cameraSourceLastMediaType: String?
+#endif
+        public let clipCount: Int
+        public let totalDurationSeconds: Double
+        public let currentClipDurationSeconds: Double
+        public let hasRecordedClip: Bool
+        public let currentClipHasStarted: Bool
+        public let currentClipHasVideo: Bool
+        public let currentClipHasAudio: Bool
+        public let recordedVideoSegmentCount: Int
+        public let recordedAudioSegmentCount: Int
+        public let lastErrorDescription: String?
+    }
+
     public struct Snapshot {
         public let sourceTypeName: String
         public let processorCount: Int
@@ -188,6 +251,58 @@ public final class RecordingPipeline {
 
     public var summaryText: String {
         summary.summaryText
+    }
+
+    public var manifest: Manifest {
+        let recorderSnapshot = recorderSink.snapshot
+        let currentSnapshot = snapshot
+#if canImport(UIKit) && !os(watchOS)
+        return Manifest(
+            sourceTypeName: currentSnapshot.sourceTypeName,
+            processorCount: currentSnapshot.processorCount,
+            pipelineStateDescription: String(describing: currentSnapshot.pipelineState),
+            recorderStateDescription: String(describing: currentSnapshot.recorderState),
+            sourceSnapshot: currentSnapshot.sourceSnapshot.map(PreviewPipeline.ManifestSourceSnapshot.init(snapshot:)),
+            recorderSnapshot: ManifestRecorderSnapshot(snapshot: recorderSnapshot),
+            cameraSourceStateDescription: currentSnapshot.cameraSourceSnapshot.map { String(describing: $0.state) },
+            cameraSourcePositionDescription: currentSnapshot.cameraSourceSnapshot.map { String(describing: $0.position) },
+            cameraSourceAuthorizationStatusDescription: currentSnapshot.cameraSourceSnapshot.map { String(describing: $0.authorizationStatus) },
+            cameraSourceIsPaused: currentSnapshot.cameraSourceSnapshot?.isPaused,
+            cameraSourceCaptureModeDescription: currentSnapshot.cameraSourceSnapshot.map { String(describing: $0.captureMode) },
+            cameraSourceLastFrameIndex: currentSnapshot.cameraSourceSnapshot?.lastFrameIndex,
+            cameraSourceLastPresentationTimeSeconds: currentSnapshot.cameraSourceSnapshot?.lastPresentationTime?.seconds,
+            cameraSourceLastMediaType: currentSnapshot.cameraSourceSnapshot?.lastMediaType,
+            clipCount: currentSnapshot.clipCount,
+            totalDurationSeconds: currentSnapshot.totalDuration.seconds,
+            currentClipDurationSeconds: currentSnapshot.currentClipDuration.seconds,
+            hasRecordedClip: currentSnapshot.hasRecordedClip,
+            currentClipHasStarted: currentSnapshot.currentClipHasStarted,
+            currentClipHasVideo: currentSnapshot.currentClipHasVideo,
+            currentClipHasAudio: currentSnapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: currentSnapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: currentSnapshot.recordedAudioSegmentCount,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
+        )
+#else
+        return Manifest(
+            sourceTypeName: currentSnapshot.sourceTypeName,
+            processorCount: currentSnapshot.processorCount,
+            pipelineStateDescription: String(describing: currentSnapshot.pipelineState),
+            recorderStateDescription: String(describing: currentSnapshot.recorderState),
+            sourceSnapshot: currentSnapshot.sourceSnapshot.map(PreviewPipeline.ManifestSourceSnapshot.init(snapshot:)),
+            recorderSnapshot: ManifestRecorderSnapshot(snapshot: recorderSnapshot),
+            clipCount: currentSnapshot.clipCount,
+            totalDurationSeconds: currentSnapshot.totalDuration.seconds,
+            currentClipDurationSeconds: currentSnapshot.currentClipDuration.seconds,
+            hasRecordedClip: currentSnapshot.hasRecordedClip,
+            currentClipHasStarted: currentSnapshot.currentClipHasStarted,
+            currentClipHasVideo: currentSnapshot.currentClipHasVideo,
+            currentClipHasAudio: currentSnapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: currentSnapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: currentSnapshot.recordedAudioSegmentCount,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
+        )
+#endif
     }
 
     public init(
