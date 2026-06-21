@@ -76,6 +76,10 @@ public final class PreviewPipeline {
         summary.summaryText
     }
 
+    public var sourceSnapshot: MediaSourceSnapshot? {
+        pipeline.summary.sourceSnapshot
+    }
+
 #if canImport(UIKit)
     public var playerSourceState: PlayerFrameSource.State? {
         playerSource?.summary.state

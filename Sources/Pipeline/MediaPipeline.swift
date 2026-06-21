@@ -92,11 +92,13 @@ public final class MediaPipeline {
     }
 
     public var summary: MediaPipelineSummary {
-        MediaPipelineSummary(
+        let sourceSnapshot = (source as? MediaSourceSnapshotProviding)?.sourceSnapshot
+        return MediaPipelineSummary(
             sourceTypeName: String(describing: type(of: source)),
             processorTypeNames: processors.map { String(describing: type(of: $0)) },
             sinkTypeNames: sinks.map { String(describing: type(of: $0)) },
             state: state,
+            sourceSnapshot: sourceSnapshot,
             lastFrameIndex: lastFrameMetadata?.frameIndex,
             lastPresentationTime: lastFrameMetadata?.presentationTime,
             lastSourceTime: lastFrameMetadata?.sourceTime,

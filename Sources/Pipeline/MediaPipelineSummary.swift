@@ -13,6 +13,7 @@ public struct MediaPipelineSummary {
     public let processorTypeNames: [String]
     public let sinkTypeNames: [String]
     public let state: MediaPipeline.State
+    public let sourceSnapshot: MediaSourceSnapshot?
     public let lastFrameIndex: Int64?
     public let lastPresentationTime: CMTime?
     public let lastSourceTime: CMTime?

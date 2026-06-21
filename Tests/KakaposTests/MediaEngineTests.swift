@@ -128,6 +128,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.summary.processorTypeNames, ["ClosureFrameProcessor"])
         XCTAssertEqual(pipeline.summary.sinkTypeNames, ["TestSink"])
         XCTAssertEqual(pipeline.summary.state, .idle)
+        XCTAssertNil(pipeline.summary.sourceSnapshot)
         XCTAssertNil(pipeline.summary.lastFrameIndex)
         XCTAssertNil(pipeline.summary.lastPresentationTime)
         XCTAssertNil(pipeline.summary.lastSourceTime)
@@ -168,6 +169,8 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertTrue(pipeline.source is PlayerFrameSource)
         XCTAssertEqual(pipeline.sinks.count, 1)
+        XCTAssertNotNil(pipeline.summary.sourceSnapshot)
+        XCTAssertEqual(pipeline.summary.sourceSnapshot?.details["generation"], "0")
     }
     #endif
 
@@ -1837,6 +1840,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.source is PlayerFrameSource)
         XCTAssertNotNil(pipeline.playerSource)
         XCTAssertEqual(pipeline.summary.sourceTypeName, "PlayerFrameSource")
+        XCTAssertNotNil(pipeline.sourceSnapshot)
+        XCTAssertEqual(pipeline.sourceSnapshot?.details["generation"], "0")
     }
 
     func testPreviewPipelineExposesPlayerSourceStateSnapshot() throws {
@@ -1862,6 +1867,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.playerSourceState, .active)
         XCTAssertEqual(pipeline.playerSourceGeneration, 1)
         XCTAssertEqual(pipeline.playerSourceFrameIndex, 0)
+        XCTAssertEqual(pipeline.sourceSnapshot?.details["generation"], "1")
+        XCTAssertEqual(pipeline.sourceSnapshot?.details["reason"], "playback")
 
         driver.emitFrame(
             .init(
@@ -1878,6 +1885,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.playerSourceState, .active)
         XCTAssertEqual(pipeline.playerSourceGeneration, 1)
         XCTAssertEqual(pipeline.playerSourceFrameIndex, 1)
+        XCTAssertEqual(pipeline.sourceSnapshot?.details["generation"], "1")
     }
     #endif
 
@@ -1899,6 +1907,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.summary.state, .active)
         XCTAssertEqual(source.summary.generation, 1)
         XCTAssertEqual(source.summary.frameIndex, 0)
+        XCTAssertEqual(source.sourceSnapshot.details["generation"], "1")
+        XCTAssertEqual(source.sourceSnapshot.details["reason"], "playback")
         XCTAssertEqual(source.summary.hasLastFrame, false)
         XCTAssertEqual(source.summary.summaryText, "state active · generation 1 · frame 0 · lastFrame no · seekTarget no · fps 30")
 

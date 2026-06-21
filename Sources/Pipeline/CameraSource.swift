@@ -9,7 +9,7 @@ import Foundation
 import AVFoundation
 
 #if canImport(UIKit) && !os(watchOS)
-public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
+public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, MediaSourceSnapshotProviding {
     public struct Summary {
         public let state: CameraSessionState
         public let position: CameraPosition
@@ -69,6 +69,22 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
 
     public var summaryText: String {
         summary.summaryText
+    }
+
+    public var sourceSnapshot: MediaSourceSnapshot {
+        MediaSourceSnapshot(
+            stateDescription: String(describing: summary.state),
+            lastFrameIndex: summary.lastFrameIndex,
+            lastPresentationTime: summary.lastPresentationTime,
+            lastSourceTime: summary.lastPresentationTime,
+            details: [
+                "position": String(describing: summary.position),
+                "auth": String(describing: summary.authorizationStatus),
+                "paused": summary.isPaused ? "yes" : "no",
+                "mode": String(describing: summary.captureMode),
+                "mediaType": summary.lastMediaType ?? "n/a"
+            ]
+        )
     }
 
     private let queue = DispatchQueue(label: "com.condy.kakapos.camera-source")
