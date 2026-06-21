@@ -116,6 +116,10 @@ public final class PreviewPipeline {
         previewSink.snapshot
     }
 
+    public var playerSourceSnapshot: PlayerFrameSource.Snapshot? {
+        playerSource?.snapshot
+    }
+
 #if canImport(UIKit) || os(macOS)
     public var playerSourceState: PlayerFrameSource.State? {
         playerSource?.summary.state

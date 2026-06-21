@@ -40,6 +40,19 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         }
     }
 
+    public struct Snapshot {
+        public let state: State
+        public let generation: Int64
+        public let frameIndex: Int64
+        public let hasLastFrame: Bool
+        public let hasSeekTarget: Bool
+        public let lastFrameRequestReason: String?
+        public let lastPresentationTime: CMTime?
+        public let lastPlayerItemTime: CMTime?
+        public let preferredFramesPerSecond: Int
+        public let lastErrorDescription: String?
+    }
+
     public enum State: Equatable {
         case idle
         case active
@@ -75,8 +88,8 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         }
     }
 
-    public var summary: Summary {
-        Summary(
+    public var snapshot: Snapshot {
+        Snapshot(
             state: state,
             generation: coordinator.generation,
             frameIndex: coordinator.frameIndex,
@@ -87,6 +100,22 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             lastPlayerItemTime: lastPlayerItemTime,
             preferredFramesPerSecond: preferredFramesPerSecond,
             lastErrorDescription: lastErrorDescription
+        )
+    }
+
+    public var summary: Summary {
+        let currentSnapshot = snapshot
+        return Summary(
+            state: currentSnapshot.state,
+            generation: currentSnapshot.generation,
+            frameIndex: currentSnapshot.frameIndex,
+            hasLastFrame: currentSnapshot.hasLastFrame,
+            hasSeekTarget: currentSnapshot.hasSeekTarget,
+            lastFrameRequestReason: currentSnapshot.lastFrameRequestReason,
+            lastPresentationTime: currentSnapshot.lastPresentationTime,
+            lastPlayerItemTime: currentSnapshot.lastPlayerItemTime,
+            preferredFramesPerSecond: currentSnapshot.preferredFramesPerSecond,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
         )
     }
 
