@@ -1500,8 +1500,7 @@ final class MediaEngineTests: XCTestCase {
             sessionFactory: { _, _, _ in session }
         )
         let cancelExpectation = expectation(description: "cancel status")
-        let completionExpectation = expectation(description: "completion suppressed after cancel")
-        completionExpectation.isInverted = true
+        let completionExpectation = expectation(description: "cancel completion")
         var receivedStatuses: [ReaderWriterExportJob.Status] = []
 
         job.statusHandler = { status in
@@ -1511,7 +1510,14 @@ final class MediaEngineTests: XCTestCase {
             }
         }
 
-        job.export { _ in
+        job.export { result in
+            if case .failure(let error) = result {
+                guard case VideoX.Error.exportCancelled = VideoX.Error.toError(error) else {
+                    return XCTFail("Expected cancelled export failure")
+                }
+            } else {
+                XCTFail("Expected cancelled export failure")
+            }
             completionExpectation.fulfill()
         }
         session.emitStatus(.exporting)
