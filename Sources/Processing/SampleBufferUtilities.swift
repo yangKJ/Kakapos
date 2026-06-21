@@ -10,6 +10,13 @@ import AVFoundation
 import CoreVideo
 
 public enum SampleBufferUtilities {
+    public static func makeSampleBufferByReplacingImageBuffer(
+        of sampleBuffer: CMSampleBuffer,
+        with imageBuffer: CVImageBuffer
+    ) -> CMSampleBuffer? {
+        replacingImageBuffer(of: sampleBuffer, with: imageBuffer)
+    }
+
     public static func replacingImageBuffer(of sampleBuffer: CMSampleBuffer, with imageBuffer: CVImageBuffer) -> CMSampleBuffer? {
         guard CMSampleBufferGetImageBuffer(sampleBuffer) != nil else {
             return nil
