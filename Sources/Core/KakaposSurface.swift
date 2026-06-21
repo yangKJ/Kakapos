@@ -77,6 +77,10 @@ public enum KakaposSurface {
         KakaposCapabilityCatalog.guide
     }
 
+    public static var manifest: KakaposSurfaceManifest {
+        KakaposCapabilityCatalog.manifest
+    }
+
     public static func board(named name: String) -> KakaposCapabilityBoardInfo? {
         KakaposCapabilityCatalog.board(named: name)
     }
