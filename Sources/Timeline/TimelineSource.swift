@@ -588,6 +588,17 @@ struct TimelineRenderPlanBuilder {
 }
 
 public extension CompiledTimelineComposition {
+    var timelineProcessors: [FrameProcessor] {
+        renderPlan.processorSegments
+            .sorted { lhs, rhs in
+                if lhs.destinationTimeRange.start == rhs.destinationTimeRange.start {
+                    return lhs.layerLevel < rhs.layerLevel
+                }
+                return lhs.destinationTimeRange.start < rhs.destinationTimeRange.start
+            }
+            .compactMap { $0.source.processor }
+    }
+
     func makePlayerItem() -> AVPlayerItem {
         let playerItem = AVPlayerItem(asset: composition)
         playerItem.videoComposition = videoComposition
@@ -602,14 +613,15 @@ public extension CompiledTimelineComposition {
         metadata: [AVMetadataItem] = [],
         videoProcessors: [FrameProcessor] = []
     ) -> ReaderWriterExportJob {
-        ReaderWriterExportJob(
+        let processors = videoProcessors.isEmpty ? timelineProcessors : videoProcessors
+        return ReaderWriterExportJob(
             asset: composition,
             outputURL: outputURL,
             fileType: fileType,
             timeRange: CMTimeRange(start: .zero, duration: composition.duration),
             videoComposition: videoComposition,
             audioMix: audioMix,
-            videoProcessors: videoProcessors,
+            videoProcessors: processors,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata
         )
@@ -659,14 +671,6 @@ public extension CompiledTimelineComposition {
     }
 
     func makeProcessorChain() -> MediaProcessorChain {
-        let processors = renderPlan.processorSegments
-            .sorted { lhs, rhs in
-                if lhs.destinationTimeRange.start == rhs.destinationTimeRange.start {
-                    return lhs.layerLevel < rhs.layerLevel
-                }
-                return lhs.destinationTimeRange.start < rhs.destinationTimeRange.start
-            }
-            .compactMap { $0.source.processor }
-        return MediaProcessorChain(processors: processors, sinks: [])
+        MediaProcessorChain(processors: timelineProcessors, sinks: [])
     }
 }
