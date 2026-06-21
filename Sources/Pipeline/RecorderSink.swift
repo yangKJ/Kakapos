@@ -128,6 +128,7 @@ public final class RecorderSink: MediaSink {
             let normalizedPauseTime = normalizedPresentationTime(for: time)
             pausedAt = normalizedPauseTime
             session.pause(at: normalizedPauseTime)
+            session.configureNextClipMinimumDuration(.zero)
             session.finalizeCurrentClipIfNeeded(preferredEndTime: normalizedPauseTime)
             applyPaddingAfterResume = false
             setState(.paused)
@@ -140,6 +141,7 @@ public final class RecorderSink: MediaSink {
             let time = normalizedPresentationTime(for: lastPresentationTime ?? startTime ?? .zero)
             pausedAt = time
             session.pause(at: time)
+            session.configureNextClipMinimumDuration(CMTime(value: 1, timescale: 600))
             session.finalizeCurrentClipIfNeeded(preferredEndTime: time)
             applyPaddingAfterResume = true
             setState(.paused)
@@ -149,10 +151,6 @@ public final class RecorderSink: MediaSink {
     public func resumeRecording() {
         queue.sync {
             guard state == .paused else { return }
-            if let pausedAt, let lastPresentationTime {
-                session.resume(at: max(lastPresentationTime, pausedAt))
-            }
-            self.pausedAt = nil
             setState(.recording)
         }
     }

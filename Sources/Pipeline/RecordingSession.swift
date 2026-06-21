@@ -54,6 +54,7 @@ public struct RecordingSessionStateSnapshot: Equatable {
 }
 
 final class RecordingSession {
+    private let defaultSingleFrameDuration = CMTime(value: 1, timescale: 600)
     private(set) var clips: [RecordedClipSegment] = []
     private(set) var currentClipHasStarted = false
     private(set) var currentClipHasVideo = false
@@ -63,6 +64,8 @@ final class RecordingSession {
 
     private var currentClipStart: CMTime?
     private var currentClipEnd: CMTime?
+    private var currentClipMinimumDuration: CMTime?
+    private var nextClipMinimumDuration: CMTime?
     private var timeOffset: CMTime = .zero
     private var pauseAnchor: CMTime?
     private var clipIndex = 0
@@ -72,6 +75,8 @@ final class RecordingSession {
         currentClipHasStarted = true
         currentClipStart = time
         currentClipEnd = time
+        currentClipMinimumDuration = nextClipMinimumDuration ?? defaultSingleFrameDuration
+        nextClipMinimumDuration = defaultSingleFrameDuration
         currentClipDuration = .zero
         currentClipHasVideo = false
         currentClipHasAudio = false
@@ -103,6 +108,10 @@ final class RecordingSession {
         time - timeOffset
     }
 
+    func configureNextClipMinimumDuration(_ duration: CMTime?) {
+        nextClipMinimumDuration = duration
+    }
+
     func finalizeCurrentClipIfNeeded(preferredEndTime: CMTime? = nil) {
         guard currentClipHasStarted,
               let currentClipStart,
@@ -118,8 +127,10 @@ final class RecordingSession {
         }
         var duration = max(endTime - currentClipStart, .zero)
         if duration == .zero, currentClipHasVideo || currentClipHasAudio {
-            duration = CMTime(value: 1, timescale: 600)
-            endTime = currentClipStart + duration
+            if let currentClipMinimumDuration, currentClipMinimumDuration > .zero {
+                duration = currentClipMinimumDuration
+                endTime = currentClipStart + duration
+            }
         }
         clips.append(
             RecordedClipSegment(
@@ -172,9 +183,15 @@ final class RecordingSession {
     }
 
     private func updateClipTiming(with time: CMTime) {
-        currentClipEnd = time
         if let currentClipStart {
-            currentClipDuration = max(time - currentClipStart, .zero)
+            var duration = max(time - currentClipStart, .zero)
+            if duration == .zero, let currentClipMinimumDuration, currentClipMinimumDuration > .zero {
+                duration = currentClipMinimumDuration
+            }
+            currentClipDuration = duration
+            currentClipEnd = currentClipStart + duration
+        } else {
+            currentClipEnd = time
         }
     }
 
@@ -184,6 +201,7 @@ final class RecordingSession {
         currentClipHasAudio = false
         currentClipStart = nil
         currentClipEnd = nil
+        currentClipMinimumDuration = nil
         currentClipDuration = .zero
     }
 }
