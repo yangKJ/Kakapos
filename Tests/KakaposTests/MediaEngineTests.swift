@@ -2378,6 +2378,43 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.sourceSnapshot?.details["generation"], "1")
     }
 
+    func testPreviewPipelinePlayerSourceSnapshotExposesUnderlyingPlayerState() throws {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let pipeline = PreviewPipeline(source: source) { _, _ in }
+
+        pipeline.start()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 2, timescale: 30),
+                playerTimestamp: CMTime(value: 2, timescale: 30),
+                requestTimestamp: CMTime(value: 2, timescale: 30),
+                pixelBuffer: try makePixelBuffer(width: 18, height: 12)
+            )
+        )
+
+        let snapshot = try XCTUnwrap(pipeline.playerSourceSnapshot)
+        XCTAssertEqual(snapshot.state, .active)
+        XCTAssertEqual(snapshot.generation, 1)
+        XCTAssertEqual(snapshot.frameIndex, 1)
+        XCTAssertEqual(snapshot.lastFrameRequestReason, "manual")
+        XCTAssertEqual(pipeline.playerSourceState, snapshot.state)
+        XCTAssertEqual(pipeline.playerSourceGeneration, snapshot.generation)
+        XCTAssertEqual(pipeline.playerSourceFrameIndex, snapshot.frameIndex)
+        XCTAssertEqual(pipeline.summary.playerSourceState, snapshot.state)
+        XCTAssertEqual(pipeline.summary.playerSourceGeneration, snapshot.generation)
+        XCTAssertEqual(pipeline.summary.playerSourceFrameIndex, snapshot.frameIndex)
+    }
+
     func testPreviewPipelineSummaryTracksPausedManualFrames() throws {
         let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
         let driver = FakePlayerFrameDriver()
@@ -2939,6 +2976,48 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.lastFrame?.metadata.frameIndex, 1)
         XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(source.lastFrame?.pixelBuffer)), 18)
         XCTAssertEqual(receivedFrame?.metadata.userInfo[PlayerFrameSource.MetadataKey.frameRequestReason] as? String, "manual")
+    }
+
+    func testPlayerFrameSourceSnapshotMirrorsSummaryAndSourceSnapshotState() throws {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+
+        source.start()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 4, timescale: 30),
+                playerTimestamp: CMTime(value: 4, timescale: 30),
+                requestTimestamp: CMTime(value: 5, timescale: 30),
+                pixelBuffer: try makePixelBuffer(width: 18, height: 12)
+            )
+        )
+
+        let snapshot = source.snapshot
+        XCTAssertEqual(snapshot.state, .active)
+        XCTAssertEqual(snapshot.generation, 1)
+        XCTAssertEqual(snapshot.frameIndex, 1)
+        XCTAssertTrue(snapshot.hasLastFrame)
+        XCTAssertFalse(snapshot.hasSeekTarget)
+        XCTAssertEqual(snapshot.lastFrameRequestReason, "manual")
+        XCTAssertEqual(snapshot.lastPresentationTime, CMTime(value: 4, timescale: 30))
+        XCTAssertEqual(snapshot.lastPlayerItemTime, CMTime(value: 5, timescale: 30))
+        XCTAssertEqual(snapshot.preferredFramesPerSecond, 30)
+        XCTAssertNil(snapshot.lastErrorDescription)
+        XCTAssertEqual(source.summary.state, snapshot.state)
+        XCTAssertEqual(source.summary.generation, snapshot.generation)
+        XCTAssertEqual(source.summary.frameIndex, snapshot.frameIndex)
+        XCTAssertEqual(source.sourceSnapshot.details["generation"], "1")
+        XCTAssertEqual(source.sourceSnapshot.details["reason"], "manual")
+        XCTAssertTrue(source.summaryText.contains("sourceSnapshot state active"))
     }
 
     func testPlayerFrameSourceSeekRecordsTargetAndRefreshesDriver() throws {
