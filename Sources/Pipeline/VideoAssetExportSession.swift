@@ -47,6 +47,7 @@ final class VideoAssetExportSession {
         let videoProgress: Progress?
         let audioProgress: Progress?
         let finishWritingProgress: Progress
+        private(set) var phase: ReaderWriterExportJob.ProgressInfo.Phase = .idle
 
         private let childProgressTotalUnitCount: Int64 = 10_000
 
@@ -64,14 +65,17 @@ final class VideoAssetExportSession {
         }
 
         func updateVideoEncodingProgress(fractionCompleted: Double) {
+            phase = .videoEncoding
             videoProgress?.completedUnitCount = Int64(Double(childProgressTotalUnitCount) * fractionCompleted)
         }
 
         func updateAudioEncodingProgress(fractionCompleted: Double) {
+            phase = .audioEncoding
             audioProgress?.completedUnitCount = Int64(Double(childProgressTotalUnitCount) * fractionCompleted)
         }
 
         func updateFinishWritingProgress(fractionCompleted: Double) {
+            phase = .finishing
             finishWritingProgress.completedUnitCount = Int64(Double(childProgressTotalUnitCount) * fractionCompleted)
         }
     }
