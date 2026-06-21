@@ -12,9 +12,14 @@ public struct MediaPipelineSummary {
     public let processorTypeNames: [String]
     public let sinkTypeNames: [String]
     public let state: MediaPipeline.State
+    public let lastErrorDescription: String?
 
     public var summaryText: String {
-        "source \(sourceTypeName) · processors \(processorTypeNames.count) · sinks \(sinkTypeNames.count) · state \(state)"
+        var text = "source \(sourceTypeName) · processors \(processorTypeNames.count) · sinks \(sinkTypeNames.count) · state \(state)"
+        if let lastErrorDescription {
+            text += " · error \(lastErrorDescription)"
+        }
+        return text
     }
 }
 
@@ -26,4 +31,3 @@ public struct MediaProcessorChainSummary {
         "processors \(processorTypeNames.count) · sinks \(sinkTypeNames.count)"
     }
 }
-

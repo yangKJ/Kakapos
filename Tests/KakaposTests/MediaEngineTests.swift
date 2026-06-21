@@ -989,6 +989,29 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(job.summary.summaryText, "state exporting · tracks 1/1 · processors 1 · progress 58%")
     }
 
+    func testReaderWriterExportJobSummaryIncludesFailureDescription() {
+        let job = ReaderWriterExportJob(
+            asset: AVMutableComposition(),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+        )
+        let completionExpectation = expectation(description: "reader writer export failure")
+
+        job.export { result in
+            if case .success(let outputURL) = result {
+                XCTFail("Unexpected reader/writer export success: \(outputURL)")
+            }
+            completionExpectation.fulfill()
+        }
+
+        wait(for: [completionExpectation], timeout: 1)
+
+        XCTAssertEqual(job.status, .failed)
+        XCTAssertNotNil(job.lastErrorDescription)
+        XCTAssertTrue(job.summary.summaryText.contains("error"))
+    }
+
     func testReaderWriterExportJobKeepsStableStatusOutsideExportingState() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),
@@ -1529,6 +1552,11 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedError?.domain, "MediaPipelineTests")
         XCTAssertEqual(receivedError?.code, 11)
         XCTAssertEqual(failurePipeline.state, .failed)
+        XCTAssertEqual(failurePipeline.lastErrorDescription, "MediaPipelineTests#11")
+        XCTAssertEqual(
+            failurePipeline.summary.summaryText,
+            "source FailingSource · processors 0 · sinks 0 · state failed · error MediaPipelineTests#11"
+        )
     }
 
     func testMediaPipelineSurfacesSinkFinishFailuresAfterSourceCompletion() {
@@ -1560,6 +1588,11 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedError?.domain, "MediaPipelineTests")
         XCTAssertEqual(receivedError?.code, 29)
         XCTAssertEqual(pipeline.state, .failed)
+        XCTAssertEqual(pipeline.lastErrorDescription, "MediaPipelineTests#29")
+        XCTAssertEqual(
+            pipeline.summary.summaryText,
+            "source TestSource · processors 0 · sinks 1 · state failed · error MediaPipelineTests#29"
+        )
     }
 
     func testPlayerFrameCoordinatorResetsFrameIndexWhenCurrentItemChanges() {
