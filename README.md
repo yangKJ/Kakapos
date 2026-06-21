@@ -25,14 +25,23 @@ Kakapos is not a filter-kernel library. It owns media lifecycle, frame sourcing,
 
 ### Lightweight Boards
 
-Kakapos stays easier to adopt when the public surface is used in four small boards instead of one large API surface:
+Kakapos stays easier to adopt when the public surface is used in four small boards instead of one large API surface.
+
+Start with the smallest entry points:
+
+- **Export**: `VideoX`, `ReaderWriterExportJob`
+- **Preview**: `PreviewPipeline`, `PlayerFrameSource`, `PreviewSink`
+- **Record**: `RecordingPipeline`, `CameraSource`, `RecorderSink`
+- **Timeline**: `TimelinePipeline`, `TimelineComposition`
+
+The fuller surface stays available behind each board:
 
 - **Export**: `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, `WatermarkInstruction`, `ReaderWriterExportJob`
 - **Preview**: `PlayerFrameSource`, `PreviewSink`, `MediaPipeline`, `MediaProcessorChain`
 - **Record**: `CameraSource`, `RecorderSink`, `RecordingSession`
 - **Timeline**: `TimelineComposition`, `ClipLayer`, `ImageLayer`, `AudioLayer`, `EffectLayer`, `GroupLayer`, `Transition`, `KeyframeAnimation`
 
-You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface.
+You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface and its starter types.
 
 ### 🔧 How It Works
 

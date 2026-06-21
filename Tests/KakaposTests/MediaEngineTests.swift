@@ -14,6 +14,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.primaryTypes, ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.primaryTypes, ["TimelinePipeline", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.starterTypes, ["VideoX", "ReaderWriterExportJob"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.starterTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.starterTypes, ["RecordingPipeline", "CameraSource", "RecorderSink"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.starterTypes, ["TimelinePipeline", "TimelineComposition"])
         XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
     }
 

@@ -51,6 +51,19 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
             return ["TimelinePipeline", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"]
         }
     }
+
+    public var starterTypes: [String] {
+        switch self {
+        case .export:
+            return ["VideoX", "ReaderWriterExportJob"]
+        case .preview:
+            return ["PreviewPipeline", "PlayerFrameSource", "PreviewSink"]
+        case .record:
+            return ["RecordingPipeline", "CameraSource", "RecorderSink"]
+        case .timeline:
+            return ["TimelinePipeline", "TimelineComposition"]
+        }
+    }
 }
 
 public struct KakaposCapabilityBoardInfo: Sendable, Hashable {
@@ -58,6 +71,7 @@ public struct KakaposCapabilityBoardInfo: Sendable, Hashable {
     public let displayName: String
     public let summary: String
     public let primaryTypes: [String]
+    public let starterTypes: [String]
 }
 
 public enum KakaposCapabilityCatalog {
@@ -66,7 +80,8 @@ public enum KakaposCapabilityCatalog {
             board: $0,
             displayName: $0.displayName,
             summary: $0.summary,
-            primaryTypes: $0.primaryTypes
+            primaryTypes: $0.primaryTypes,
+            starterTypes: $0.starterTypes
         )
     }
 
