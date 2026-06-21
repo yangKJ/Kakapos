@@ -97,6 +97,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     public func stop() {
         coordinator.stop()
         updateState(from: coordinator.playbackState)
+        lastSeekTargetTime = nil
         invalidateObservers()
         delegate?.mediaSourceDidFinish(self)
     }
@@ -205,6 +206,10 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     private func handleCurrentItemChange(_ item: AVPlayerItem?) {
         let didChange = coordinator.updateCurrentItem(item)
+        if didChange {
+            lastSeekTargetTime = nil
+            lastFrame = nil
+        }
         itemChangedHandler?(item)
         observeAttachedItem(item)
         if didChange {
