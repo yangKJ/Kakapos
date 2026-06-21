@@ -1995,6 +1995,44 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    func testMediaPipelineRestartClearsStaleFailureAndFrameMetadata() throws {
+        let firstFrame = MediaFrame(
+            pixelBuffer: try makePixelBuffer(width: 12, height: 10),
+            metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
+        )
+        let secondFrame = MediaFrame(
+            pixelBuffer: try makePixelBuffer(width: 16, height: 12),
+            metadata: FrameMetadata(
+                presentationTime: CMTime(value: 1, timescale: 30),
+                sourceTime: CMTime(value: 1, timescale: 30),
+                frameIndex: 2
+            )
+        )
+        let source = SequencedSource(runs: [
+            [.output(firstFrame), .fail(NSError(domain: "MediaPipelineRestartTests", code: 91))],
+            [.output(secondFrame), .finish]
+        ])
+        let sink = TestSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+
+        pipeline.start()
+
+        XCTAssertEqual(pipeline.state, .failed)
+        XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 1)
+        XCTAssertEqual(pipeline.lastErrorDescription, "MediaPipelineRestartTests#91")
+
+        pipeline.start()
+
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 2)
+        XCTAssertNil(pipeline.lastErrorDescription)
+        XCTAssertEqual(sink.frames.count, 2)
+        XCTAssertEqual(
+            pipeline.summary.summaryText,
+            "source SequencedSource · processors 0 · sinks 1 · state finished · frame 2 · presentation 0.03s · sourceTime 0.03s"
+        )
+    }
+
     func testMediaPipelineSurfacesSinkFinishFailuresAfterSourceCompletion() {
         let source = TestSource(frames: [])
         let sinkError = NSError(domain: "MediaPipelineTests", code: 29)
@@ -3590,6 +3628,46 @@ private final class TestSource: MediaSource {
     func start() {
         frames.forEach { delegate?.mediaSource(self, didOutput: $0) }
         delegate?.mediaSourceDidFinish(self)
+    }
+
+    func pause() {}
+    func resume() {}
+    func stop() {}
+    func cancel() {}
+}
+
+private enum SequencedSourceEvent {
+    case output(MediaFrame)
+    case fail(Error)
+    case finish
+}
+
+private final class SequencedSource: MediaSource {
+    weak var delegate: MediaSourceDelegate?
+    private let runs: [[SequencedSourceEvent]]
+    private var startCount = 0
+
+    init(runs: [[SequencedSourceEvent]]) {
+        self.runs = runs
+    }
+
+    func start() {
+        guard runs.isEmpty == false else {
+            delegate?.mediaSourceDidFinish(self)
+            return
+        }
+        let index = min(startCount, runs.count - 1)
+        startCount += 1
+        runs[index].forEach { event in
+            switch event {
+            case .output(let frame):
+                delegate?.mediaSource(self, didOutput: frame)
+            case .fail(let error):
+                delegate?.mediaSource(self, didFail: error)
+            case .finish:
+                delegate?.mediaSourceDidFinish(self)
+            }
+        }
     }
 
     func pause() {}
