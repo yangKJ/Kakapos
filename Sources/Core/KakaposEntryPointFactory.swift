@@ -1,5 +1,5 @@
 //
-//  KakaposBoards.swift
+//  KakaposEntryPointFactory.swift
 //  Kakapos
 //
 //  Created by Condy on 2026/6/22.
@@ -8,32 +8,26 @@
 import Foundation
 import AVFoundation
 
-/// Thin public entry points that keep Kakapos adoption lightweight.
-///
-/// These helpers do not add new media behavior. They only gather the four
-/// starter boards around the existing engine types so external code can
-/// begin from a smaller surface area.
-@available(*, deprecated, message: "Use KakaposSurface as the recommended lightweight entry point.")
-public enum KakaposBoards {
-    public static func export(provider: VideoX.Provider) -> VideoX {
-        KakaposEntryPointFactory.export(provider: provider)
+enum KakaposEntryPointFactory {
+    static func export(provider: VideoX.Provider) -> VideoX {
+        VideoX(provider: provider)
     }
 
-    public static func exportTask(
+    static func exportTask(
         provider: VideoX.Provider,
         options: [VideoX.Option: Any] = [:],
         instructions: [CompositionInstruction]
     ) throws -> VideoX.ExportTask {
-        try KakaposEntryPointFactory.exportTask(provider: provider, options: options, instructions: instructions)
+        try export(provider: provider).makeExportTask(options: options, instructions: instructions)
     }
 
-    public static func preview(
+    static func preview(
         source: MediaSource,
         processors: [FrameProcessor] = [],
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        PreviewPipeline(
             source: source,
             processors: processors,
             callbackQueue: callbackQueue,
@@ -42,14 +36,14 @@ public enum KakaposBoards {
     }
 
 #if canImport(UIKit)
-    public static func preview(
+    static func preview(
         player: AVPlayer,
         preferredFramesPerSecond: Int = 30,
         processors: [FrameProcessor] = [],
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        PreviewPipeline(
             player: player,
             preferredFramesPerSecond: preferredFramesPerSecond,
             processors: processors,
@@ -58,14 +52,14 @@ public enum KakaposBoards {
         )
     }
 
-    public static func preview(
+    static func preview(
         asset: AVAsset,
         preferredFramesPerSecond: Int = 30,
         processors: [FrameProcessor] = [],
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        PreviewPipeline(
             asset: asset,
             preferredFramesPerSecond: preferredFramesPerSecond,
             processors: processors,
@@ -75,13 +69,13 @@ public enum KakaposBoards {
     }
 #endif
 
-    public static func record(
+    static func record(
         source: MediaSource,
         outputURL: URL,
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> RecordingPipeline {
-        try KakaposEntryPointFactory.record(
+        try RecordingPipeline(
             source: source,
             outputURL: outputURL,
             fileType: fileType,
@@ -90,13 +84,13 @@ public enum KakaposBoards {
     }
 
 #if canImport(UIKit) && !os(watchOS)
-    public static func record(
+    static func record(
         configuration: CameraSourceConfiguration = .init(),
         outputURL: URL,
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> RecordingPipeline {
-        try KakaposEntryPointFactory.record(
+        try RecordingPipeline(
             configuration: configuration,
             outputURL: outputURL,
             fileType: fileType,
@@ -105,13 +99,13 @@ public enum KakaposBoards {
     }
 #endif
 
-    public static func timeline(
+    static func timeline(
         renderSize: CGSize = CGSize(width: 720, height: 1280),
         frameDuration: CMTime = CMTime(value: 1, timescale: 30),
         layers: [TimelineLayer] = [],
         transitions: [Transition] = []
     ) -> TimelinePipeline {
-        KakaposEntryPointFactory.timeline(
+        TimelinePipeline(
             renderSize: renderSize,
             frameDuration: frameDuration,
             layers: layers,
@@ -119,7 +113,7 @@ public enum KakaposBoards {
         )
     }
 
-    public static func timelineExportTask(
+    static func timelineExportTask(
         renderSize: CGSize = CGSize(width: 720, height: 1280),
         frameDuration: CMTime = CMTime(value: 1, timescale: 30),
         layers: [TimelineLayer] = [],
@@ -130,11 +124,12 @@ public enum KakaposBoards {
         metadata: [AVMetadataItem] = [],
         videoProcessors: [FrameProcessor] = []
     ) -> TimelineExportTask {
-        KakaposEntryPointFactory.timelineExportTask(
+        timeline(
             renderSize: renderSize,
             frameDuration: frameDuration,
             layers: layers,
-            transitions: transitions,
+            transitions: transitions
+        ).makeExportTask(
             outputURL: outputURL,
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,

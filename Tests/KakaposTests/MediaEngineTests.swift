@@ -43,6 +43,32 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposSurface.board(named: "export")?.starterTypes, ["VideoX", "ReaderWriterExportJob"])
     }
 
+    func testKakaposSurfaceAndBoardsProduceTheSameTimelineExportTaskSummary() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+
+        let surfaceTask = KakaposSurface.timelineExportTask(
+            layers: [clip],
+            outputURL: outputURL
+        )
+        let boardsTask = KakaposBoards.timelineExportTask(
+            layers: [clip],
+            outputURL: outputURL
+        )
+
+        XCTAssertEqual(surfaceTask.summary.layerCount, boardsTask.summary.layerCount)
+        XCTAssertEqual(surfaceTask.summary.transitionCount, boardsTask.summary.transitionCount)
+        XCTAssertEqual(surfaceTask.summary.processorCount, boardsTask.summary.processorCount)
+        XCTAssertEqual(surfaceTask.summary.renderSize, boardsTask.summary.renderSize)
+    }
+
     func testPassthroughFrameProcessorPreservesPixelBufferMetadata() throws {
         let pixelBuffer = try makePixelBuffer(width: 16, height: 16)
         let metadata = FrameMetadata(
