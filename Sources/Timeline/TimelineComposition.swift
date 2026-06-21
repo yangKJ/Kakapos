@@ -9,10 +9,20 @@ import Foundation
 import AVFoundation
 import CoreGraphics
 
+public enum TimelineLayerKind: Equatable {
+    case clip
+    case image
+    case effect
+}
+
 public struct TimelineLayerRenderState {
+    public let kind: TimelineLayerKind
     public let layerLevel: Int
     public let opacity: Float
     public let transform: CGAffineTransform
+    public let trackID: CMPersistentTrackID?
+    public let image: CGImage?
+    public let processor: FrameProcessor?
     public let effectIntensity: Float?
 }
 
@@ -21,6 +31,7 @@ public struct TimelineRenderInstruction {
     public let layerLevels: [Int]
     public let sourceTrackIDs: [CMPersistentTrackID]
     public let layerStates: [TimelineLayerRenderState]
+    public let processors: [FrameProcessor]
 }
 
 public struct ResolvedTimelineLayers {
@@ -114,7 +125,7 @@ public final class TimelineComposition {
     private func flattenLayers(_ input: [TimelineLayer]) -> [TimelineLayer] {
         input.flatMap { layer -> [TimelineLayer] in
             if let group = layer as? GroupLayer {
-                return flattenLayers(group.layers.map { $0.applyingOffset(group.timeRange.start, inheritedLevel: group.layerLevel) })
+                return group.flattenedLayers()
             }
             return [layer]
         }
@@ -341,8 +352,8 @@ public final class TimelineComposition {
         let layerByTrackID = Dictionary(
             uniqueKeysWithValues: clipLayers.compactMap { layer -> (CMPersistentTrackID, (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState))? in
                 guard let trackID = allocation[ObjectIdentifier(layer)] else { return nil }
-                let startState = renderState(for: layer, at: layer.timeRange.start)
-                let endState = renderState(for: layer, at: layer.timeRange.end)
+                let startState = renderState(for: layer, at: layer.timeRange.start, allocation: allocation)
+                let endState = renderState(for: layer, at: layer.timeRange.end, allocation: allocation)
                 return (trackID, (layer, startState, endState))
             }
         )
@@ -404,7 +415,8 @@ public final class TimelineComposition {
                     timeRange: timeRange,
                     layerLevels: intervalLayers.map(\.layerLevel),
                     sourceTrackIDs: uniqueTrackIDsPreservingOrder(trackIDs),
-                    layerStates: intervalLayers.map { renderState(for: $0, at: timeRange.start) }
+                    layerStates: intervalLayers.map { renderState(for: $0, at: timeRange.start, allocation: allocation) },
+                    processors: intervalLayers.compactMap { ($0 as? EffectLayer)?.processor }
                 )
             )
         }
@@ -472,8 +484,8 @@ public final class TimelineComposition {
 
         for layer in activeLayers {
             guard let trackID = allocation[ObjectIdentifier(layer)] else { continue }
-            let startState = renderState(for: layer, at: timeRange.start)
-            let endState = renderState(for: layer, at: timeRange.end)
+            let startState = renderState(for: layer, at: timeRange.start, allocation: allocation)
+            let endState = renderState(for: layer, at: timeRange.end, allocation: allocation)
             result[trackID] = (layer, startState, endState)
         }
         return result
@@ -536,21 +548,53 @@ public final class TimelineComposition {
         return (source.1, source.0, destination.1, destination.0)
     }
 
-    private func renderState(for layer: TimelineLayer, at time: CMTime) -> TimelineLayerRenderState {
+    private func renderState(
+        for layer: TimelineLayer,
+        at time: CMTime,
+        allocation: [ObjectIdentifier: CMPersistentTrackID]
+    ) -> TimelineLayerRenderState {
         let opacity = KeyframeAnimation.value(for: "opacity", at: time, animations: layer.keyframes) ?? layer.opacity
         let transform = resolvedTransform(for: layer, at: time)
+        let kind: TimelineLayerKind
+        let trackID: CMPersistentTrackID?
+        let image: CGImage?
+        let processor: FrameProcessor?
         let effectIntensity: Float?
-        if let effectLayer = layer as? EffectLayer {
+        if let clipLayer = layer as? ClipLayer {
+            kind = .clip
+            trackID = allocation[ObjectIdentifier(clipLayer)]
+            image = nil
+            processor = nil
+            effectIntensity = nil
+        } else if let imageLayer = layer as? ImageLayer {
+            kind = .image
+            trackID = nil
+            image = imageLayer.image
+            processor = nil
+            effectIntensity = nil
+        } else if let effectLayer = layer as? EffectLayer {
+            kind = .effect
+            trackID = nil
+            image = nil
+            processor = effectLayer.processor
             effectIntensity = KeyframeAnimation.value(for: "effect.intensity", at: time, animations: effectLayer.keyframes)
                 ?? KeyframeAnimation.value(for: "intensity", at: time, animations: effectLayer.keyframes)
                 ?? effectLayer.intensity
         } else {
+            kind = .effect
+            trackID = nil
+            image = nil
+            processor = nil
             effectIntensity = nil
         }
         return TimelineLayerRenderState(
+            kind: kind,
             layerLevel: layer.layerLevel,
             opacity: opacity,
             transform: transform,
+            trackID: trackID,
+            image: image,
+            processor: processor,
             effectIntensity: effectIntensity
         )
     }

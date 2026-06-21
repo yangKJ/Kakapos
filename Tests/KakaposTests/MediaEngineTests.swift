@@ -85,6 +85,42 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(compiled.resolvedLayers.videoLayers.first?.layerLevel, 3)
     }
 
+    func testTimelineCompositionGroupLayerAppliesInheritedOpacityTransformAndKeyframes() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let child = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        child.opacity = 0.8
+
+        let group = GroupLayer(
+            timeRange: CMTimeRange(start: CMTime(value: 60, timescale: 30), duration: CMTime(value: 30, timescale: 30)),
+            layers: [child],
+            layerLevel: 2
+        )
+        group.opacity = 0.5
+        group.transform = CGAffineTransform(translationX: 24, y: 12)
+        group.keyframes = [
+            KeyframeAnimation(
+                keyPath: "translation.y",
+                values: [30, 0],
+                keyTimes: [group.timeRange.start, group.timeRange.end]
+            )
+        ]
+
+        let timeline = TimelineComposition(layers: [group])
+        let compiled = timeline.compile()
+        let state = try XCTUnwrap(compiled.renderInstructions.first?.layerStates.first)
+
+        XCTAssertEqual(state.kind, .clip)
+        XCTAssertEqual(state.layerLevel, 2)
+        XCTAssertEqual(state.opacity, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(state.transform.tx, 24, accuracy: 0.0001)
+        XCTAssertEqual(state.transform.ty, 30, accuracy: 0.0001)
+        XCTAssertNotNil(state.trackID)
+    }
+
     func testTimelineCompositionReusesSingleVideoTrackForNonOverlappingClips() throws {
         let asset = AVAsset(url: try makeSampleAssetURL())
         let first = ClipLayer(
@@ -400,6 +436,34 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertEqual(state.layerLevel, 3)
         XCTAssertEqual(intensity, 0.4, accuracy: 0.0001)
+    }
+
+    func testTimelineCompositionIncludesImageAndEffectLayersInRenderPlan() throws {
+        let imageLayer = ImageLayer(
+            image: try makeImage(width: 20, height: 10),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 45, timescale: 30)),
+            layerLevel: 1
+        )
+        let effect = EffectLayer(
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 45, timescale: 30)),
+            processor: PassthroughFrameProcessor(),
+            intensity: 0.6,
+            layerLevel: 2
+        )
+        let timeline = TimelineComposition(layers: [imageLayer, effect])
+
+        let compiled = timeline.compile()
+        let instruction = try XCTUnwrap(compiled.renderInstructions.first)
+        let imageState = try XCTUnwrap(instruction.layerStates.first(where: { $0.kind == .image }))
+        let effectState = try XCTUnwrap(instruction.layerStates.first(where: { $0.kind == .effect }))
+        let intensity = try XCTUnwrap(effectState.effectIntensity)
+
+        XCTAssertEqual(instruction.processors.count, 1)
+        XCTAssertEqual(imageState.image?.width, 20)
+        XCTAssertEqual(imageState.image?.height, 10)
+        XCTAssertNil(imageState.trackID)
+        XCTAssertNotNil(effectState.processor)
+        XCTAssertEqual(intensity, 0.6, accuracy: 0.0001)
     }
 
     func testReaderWriterProgressInfoUsesVideoProgressWhenAudioTrackIsMissing() {
@@ -1118,6 +1182,28 @@ private func makePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
     )
     XCTAssertEqual(status, kCVReturnSuccess)
     return pixelBuffer!
+}
+
+private func makeImage(width: Int, height: Int) throws -> CGImage {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+    guard let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: bitmapInfo
+    ) else {
+        throw NSError(domain: "MediaEngineTests", code: -1)
+    }
+    context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    guard let image = context.makeImage() else {
+        throw NSError(domain: "MediaEngineTests", code: -2)
+    }
+    return image
 }
 
 private func makeSampleExporter() throws -> VideoX {
