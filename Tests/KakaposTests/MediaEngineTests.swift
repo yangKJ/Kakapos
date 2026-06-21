@@ -1437,6 +1437,54 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(driver.updateIfNeededCallCount, 1)
         XCTAssertEqual(source.state, .active)
     }
+
+    func testPlayerFrameSourceResetsSeekTargetAndLastFrameWhenCurrentItemChanges() throws {
+        let firstItem = AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL()))
+        let secondItem = AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL()))
+        let player = AVPlayer(playerItem: firstItem)
+        let driver = FakePlayerFrameDriver()
+        let itemExpectation = expectation(description: "current item changed")
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let pixelBuffer = try makePixelBuffer(width: 20, height: 14)
+        let target = CMTime(value: 30, timescale: 30)
+        var observedItems: [AVPlayerItem?] = []
+
+        source.itemChangedHandler = { item in
+            observedItems.append(item)
+            if item === secondItem {
+                itemExpectation.fulfill()
+            }
+        }
+
+        source.start()
+        source.seek(to: target) { _ in }
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: .zero,
+                playerTimestamp: .zero,
+                requestTimestamp: .zero,
+                pixelBuffer: pixelBuffer
+            )
+        )
+
+        XCTAssertEqual(source.lastSeekTargetTime, target)
+        XCTAssertNotNil(source.lastFrame)
+
+        player.replaceCurrentItem(with: secondItem)
+
+        wait(for: [itemExpectation], timeout: 1)
+        XCTAssertEqual(observedItems.compactMap { $0 }, [firstItem, secondItem])
+        XCTAssertNil(source.lastSeekTargetTime)
+        XCTAssertNil(source.lastFrame)
+    }
     #endif
 
     func testRecorderSinkFinishRecordingReturnsRecordedClip() throws {
