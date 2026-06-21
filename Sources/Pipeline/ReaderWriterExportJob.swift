@@ -75,9 +75,15 @@ public final class ReaderWriterExportJob {
 
     public struct Summary {
         public let status: Status
+        public let fileType: AVFileType
+        public let timeRange: CMTimeRange
+        public let shouldOptimizeForNetworkUse: Bool
+        public let metadataCount: Int
         public let videoTrackCount: Int
         public let audioTrackCount: Int
         public let processorCount: Int
+        public let hasVideoComposition: Bool
+        public let hasAudioMix: Bool
         public let lastPhase: ProgressInfo.Phase
         public let lastProgressInfo: ProgressInfo?
         public let lastErrorDescription: String?
@@ -107,8 +113,31 @@ public final class ReaderWriterExportJob {
             return text
         }
 
+        public var configurationSummaryText: String {
+            [
+                "file \(fileType.rawValue)",
+                "range \(timeRangeText(timeRange))",
+                "processors \(processorCount)",
+                "metadata \(metadataCount)",
+                "network \(shouldOptimizeForNetworkUse ? "yes" : "no")",
+                "videoComposition \(hasVideoComposition ? "yes" : "no")",
+                "audioMix \(hasAudioMix ? "yes" : "no")"
+            ].joined(separator: " · ")
+        }
+
         private func percentageText(_ value: Double) -> String {
             "\(Int((value * 100).rounded()))%"
+        }
+
+        private func timeRangeText(_ timeRange: CMTimeRange) -> String {
+            guard timeRange.duration.isValid,
+                  timeRange.duration.isNumeric,
+                  timeRange.duration.isPositiveInfinity == false else {
+                return "full"
+            }
+            let start = timeRange.start.seconds
+            let end = timeRange.end.seconds
+            return String(format: "%.2fs→%.2fs", start, end)
         }
     }
 
@@ -133,13 +162,23 @@ public final class ReaderWriterExportJob {
     public var summary: Summary {
         Summary(
             status: status,
+            fileType: fileType,
+            timeRange: timeRange ?? CMTimeRange(start: .zero, duration: .positiveInfinity),
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadataCount: metadata.count,
             videoTrackCount: asset.tracks(withMediaType: .video).count,
             audioTrackCount: asset.tracks(withMediaType: .audio).count,
             processorCount: videoProcessors.count,
+            hasVideoComposition: videoComposition != nil,
+            hasAudioMix: audioMix != nil,
             lastPhase: lastProgressInfo?.phase ?? .idle,
             lastProgressInfo: lastProgressInfo,
             lastErrorDescription: lastErrorDescription
         )
+    }
+
+    public var configurationSummaryText: String {
+        summary.configurationSummaryText
     }
 
     private let asset: AVAsset
