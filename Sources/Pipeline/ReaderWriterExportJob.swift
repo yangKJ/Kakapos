@@ -62,16 +62,30 @@ public final class ReaderWriterExportJob {
 
         public var summaryText: String {
             let progressText: String
+            let breakdownText: String?
             if let lastProgressInfo {
                 progressText = "\(Int((lastProgressInfo.overallFractionCompleted * 100).rounded()))%"
+                breakdownText = [
+                    "video \(percentageText(lastProgressInfo.videoProgress))",
+                    "audio \(percentageText(lastProgressInfo.audioProgress))",
+                    "finish \(percentageText(lastProgressInfo.finishWritingProgress))"
+                ].joined(separator: " · ")
             } else {
                 progressText = "n/a"
+                breakdownText = nil
             }
             var text = "state \(status) · tracks \(videoTrackCount)/\(audioTrackCount) · processors \(processorCount) · progress \(progressText)"
+            if let breakdownText {
+                text += " · \(breakdownText)"
+            }
             if let lastErrorDescription {
                 text += " · error \(lastErrorDescription)"
             }
             return text
+        }
+
+        private func percentageText(_ value: Double) -> String {
+            "\(Int((value * 100).rounded()))%"
         }
     }
 
