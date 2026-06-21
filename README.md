@@ -38,6 +38,20 @@ let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [si
 pipeline.start()
 ```
 
+For reusable real-time routing, build a chain once and attach it anywhere a `MediaSink` is accepted:
+
+```swift
+let previewChain = MediaProcessorChain(
+    processors: [HarbethFrameProcessor(filters: filters)],
+    sinks: [
+        PreviewSink { image, metadata in
+            // update UI
+        },
+        RecorderSink(outputURL: outputURL)
+    ]
+)
+```
+
 For existing offline export users, the instruction-based API still works:
 
 ---

@@ -11,10 +11,19 @@ import CoreGraphics
 
 public protocol MediaSink: AnyObject {
     func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void)
+    func pause()
+    func resume()
+    func cancel()
     func finish(completion: @escaping (Result<Void, Error>) -> Void)
 }
 
 public extension MediaSink {
+    func pause() {}
+
+    func resume() {}
+
+    func cancel() {}
+
     func finish(completion: @escaping (Result<Void, Error>) -> Void) {
         completion(.success(()))
     }

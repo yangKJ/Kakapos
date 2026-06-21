@@ -730,6 +730,48 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.finishCount, 1)
     }
 
+    func testMediaProcessorChainCanBeNestedAsSink() throws {
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let expectation = expectation(description: "nested chain consumes processed frame")
+        let sink = TestSink()
+
+        let nestedChain = MediaProcessorChain(
+            processors: [
+                ClosureFrameProcessor { frame, completion in
+                    var output = frame
+                    output.metadata.frameIndex = 3
+                    completion(.success(output))
+                }
+            ],
+            sinks: [sink]
+        )
+
+        nestedChain.consume(frame) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected nested chain failure: \(error)")
+            }
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(sink.frames.first?.metadata.frameIndex, 3)
+    }
+
+    func testMediaPipelinePauseResumeAndCancelPropagateToSinks() {
+        let source = TestSource(frames: [])
+        let sink = LifecycleAwareSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+
+        pipeline.pause()
+        pipeline.resume()
+        pipeline.cancel()
+
+        XCTAssertEqual(sink.pauseCount, 1)
+        XCTAssertEqual(sink.resumeCount, 1)
+        XCTAssertEqual(sink.cancelCount, 1)
+    }
+
     func testPlayerFrameCoordinatorResetsFrameIndexWhenCurrentItemChanges() {
         final class Token: NSObject {}
 
@@ -882,6 +924,8 @@ final class MediaEngineTests: XCTestCase {
 
         wait(for: [finishExpectation], timeout: 5)
         XCTAssertEqual(recordedClip?.duration, CMTime(value: 30, timescale: 30))
+        XCTAssertEqual(recordedClip?.segments.count, 2)
+        XCTAssertEqual(recordedClip?.segments.first?.duration, CMTime(value: 30, timescale: 30))
     }
 
     func testRecorderSinkFinishWhilePausedKeepsRecordedDuration() throws {
@@ -1013,6 +1057,7 @@ final class MediaEngineTests: XCTestCase {
         wait(for: [finishExpectation], timeout: 5)
         XCTAssertEqual(recordedClip?.duration, CMTime(value: 601, timescale: 600))
         XCTAssertEqual(durations.last, CMTime(value: 601, timescale: 600))
+        XCTAssertEqual(recordedClip?.segments.count, 2)
     }
 
     func testRecorderSinkCancelMakesFinishReturnExportCancelled() throws {
@@ -1167,6 +1212,28 @@ private final class CountingSink: MediaSink {
     func finish(completion: @escaping (Result<Void, Error>) -> Void) {
         finishCount += 1
         completion(.success(()))
+    }
+}
+
+private final class LifecycleAwareSink: MediaSink {
+    var pauseCount = 0
+    var resumeCount = 0
+    var cancelCount = 0
+
+    func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        completion(.success(()))
+    }
+
+    func pause() {
+        pauseCount += 1
+    }
+
+    func resume() {
+        resumeCount += 1
+    }
+
+    func cancel() {
+        cancelCount += 1
     }
 }
 
