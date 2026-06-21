@@ -418,6 +418,58 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(foundFadeIn)
     }
 
+    func testTimelineCompositionExposesTransitionAndAudioMixPlans() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let first = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            layerLevel: 0,
+            volume: 0.8
+        )
+        let second = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: CMTime(value: 90, timescale: 30), duration: CMTime(value: 120, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            layerLevel: 1,
+            volume: 0.6
+        )
+        let transitionRange = CMTimeRange(start: CMTime(value: 90, timescale: 30), duration: CMTime(value: 30, timescale: 30))
+        let timeline = TimelineComposition(
+            layers: [first, second],
+            transitions: [
+                Transition(
+                    timeRange: transitionRange,
+                    sourceLayerLevel: 0,
+                    destinationLayerLevel: 1,
+                    audioBehavior: .crossfade,
+                    timingFunction: .easeInOut
+                )
+            ]
+        )
+
+        let compiled = timeline.compile()
+        let transitionSegment = try XCTUnwrap(compiled.renderPlan.transitionSegments.first)
+        let transitionInterval = try XCTUnwrap(compiled.renderPlan.visualIntervals.first(where: { $0.timeRange == transitionRange }))
+        let fadeOut = try XCTUnwrap(compiled.renderPlan.audioMixSegments.first(where: { $0.kind == .transitionFadeOut }))
+        let fadeIn = try XCTUnwrap(compiled.renderPlan.audioMixSegments.first(where: { $0.kind == .transitionFadeIn }))
+
+        XCTAssertEqual(compiled.renderPlan.transitionSegments.count, 1)
+        XCTAssertEqual(transitionSegment.timeRange, transitionRange)
+        XCTAssertEqual(transitionSegment.sourceLayerLevel, 0)
+        XCTAssertEqual(transitionSegment.destinationLayerLevel, 1)
+        XCTAssertEqual(transitionSegment.transition.timingFunction, .easeInOut)
+        XCTAssertEqual(transitionInterval.transitionSegments.count, 1)
+        XCTAssertEqual(fadeOut.timeRange, transitionRange)
+        XCTAssertEqual(fadeIn.timeRange, transitionRange)
+        XCTAssertEqual(fadeOut.startVolume, 0.8, accuracy: 0.0001)
+        XCTAssertEqual(fadeOut.endVolume, 0, accuracy: 0.0001)
+        XCTAssertEqual(fadeIn.startVolume, 0, accuracy: 0.0001)
+        XCTAssertEqual(fadeIn.endVolume, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(fadeOut.timingFunction, .easeInOut)
+        XCTAssertEqual(fadeIn.timingFunction, .easeInOut)
+    }
+
     func testTimelineCompositionAppliesBaseAudioVolumeAndRampToAudioLayer() throws {
         let asset = AVAsset(url: try makeSampleAssetURL())
         let rampRange = CMTimeRange(start: CMTime(value: 15, timescale: 30), duration: CMTime(value: 30, timescale: 30))
@@ -448,6 +500,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(resolvedRange, rampRange)
         XCTAssertEqual(startVolume, 0.1, accuracy: 0.0001)
         XCTAssertEqual(endVolume, 0.5, accuracy: 0.0001)
+        let layerRamp = try XCTUnwrap(compiled.renderPlan.audioMixSegments.first(where: { $0.kind == .layerRamp }))
+        XCTAssertEqual(layerRamp.timeRange, rampRange)
+        XCTAssertEqual(layerRamp.startVolume, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(layerRamp.endVolume, 0.5, accuracy: 0.0001)
     }
 
     func testKeyframeAnimationAppliesEaseInOutInterpolation() throws {
