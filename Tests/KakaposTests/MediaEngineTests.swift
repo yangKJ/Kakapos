@@ -1929,6 +1929,38 @@ final class MediaEngineTests: XCTestCase {
         }
     }
 
+    func testRecorderSinkCancelRemovesPartialOutputFile() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
+        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let appendExpectation = expectation(description: "append frame before cancel")
+        let cancelExpectation = expectation(description: "cancel state callback")
+
+        sink.consume(frame) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        wait(for: [appendExpectation], timeout: 2)
+
+        sink.stateChangedHandler = { state in
+            if state == .cancelled {
+                cancelExpectation.fulfill()
+            }
+        }
+        sink.cancel()
+
+        wait(for: [cancelExpectation], timeout: 5)
+        XCTAssertEqual(sink.state, .cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertNil(sink.recordedClip)
+    }
+
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
         var lifecycle = CameraSessionLifecycle(position: .back)
 
