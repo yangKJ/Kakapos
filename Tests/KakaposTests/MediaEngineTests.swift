@@ -1845,6 +1845,37 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    func testMediaPipelineIgnoresLateSourceCallbacksAfterFinish() throws {
+        let source = ManualSource()
+        let sink = TestSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+        let initialFrame = MediaFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        )
+        let lateFrame = MediaFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2)
+        )
+
+        pipeline.start()
+        source.emit(initialFrame)
+        source.finish()
+
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(sink.frames.count, 1)
+        XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 1)
+
+        source.emit(lateFrame)
+        source.finish()
+        source.fail(NSError(domain: "MediaPipelineTests", code: 999))
+
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(sink.frames.count, 1)
+        XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 1)
+        XCTAssertNil(pipeline.lastErrorDescription)
+    }
+
     func testMediaPipelineCancelsUpstreamSourceWhenSinkFailsDuringStreaming() throws {
         let firstFrame = MediaFrame(
             pixelBuffer: try makePixelBuffer(width: 8, height: 8),
@@ -3198,6 +3229,28 @@ private final class TestSource: MediaSource {
     func resume() {}
     func stop() {}
     func cancel() {}
+}
+
+private final class ManualSource: MediaSource {
+    weak var delegate: MediaSourceDelegate?
+
+    func start() {}
+    func pause() {}
+    func resume() {}
+    func stop() {}
+    func cancel() {}
+
+    func emit(_ frame: MediaFrame) {
+        delegate?.mediaSource(self, didOutput: frame)
+    }
+
+    func finish() {
+        delegate?.mediaSourceDidFinish(self)
+    }
+
+    func fail(_ error: Error) {
+        delegate?.mediaSource(self, didFail: error)
+    }
 }
 
 private final class TestSink: MediaSink {

@@ -129,7 +129,9 @@ public final class MediaPipeline {
 
     private let sourceAdapter: MediaSourceNodeAdapter
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-pipeline.state")
+    private let lifecycleLock = NSLock()
     private var hasFinished = false
+    private var acceptsSourceCallbacks = true
     private var _lastFrameMetadata: FrameMetadata?
     private var _lastErrorDescription: String?
 
@@ -138,14 +140,19 @@ public final class MediaPipeline {
         self.chain = MediaProcessorChain(processors: processors, sinks: sinks)
         self.sourceAdapter = MediaSourceNodeAdapter(source: source)
         self.sourceAdapter.add(consumer: chain.node)
+        self.sourceAdapter.shouldAcceptSourceCallbacks = { [weak self] in
+            self?.canAcceptSourceCallbacks() ?? false
+        }
         self.sourceAdapter.finishHandler = { [weak self] in
             self?.finishChain()
         }
         self.sourceAdapter.frameHandler = { [weak self] frame in
-            self?.storeLastFrameMetadata(frame.metadata)
+            guard let self, self.canAcceptSourceCallbacks() else { return }
+            self.storeLastFrameMetadata(frame.metadata)
         }
         self.sourceAdapter.errorHandler = { [weak self] error in
-            self?.failChain(with: error)
+            guard let self, self.canAcceptSourceCallbacks() else { return }
+            self.failChain(with: error)
         }
     }
 
@@ -160,6 +167,7 @@ public final class MediaPipeline {
     #endif
 
     public func start() {
+        resetSourceCallbacksAcceptance()
         transitionIfNeeded(from: [.idle], to: .running)
         source.start()
     }
@@ -177,11 +185,13 @@ public final class MediaPipeline {
     }
 
     public func stop() {
+        rejectFurtherSourceCallbacks()
         source.stop()
         finishChain()
     }
 
     public func cancel() {
+        rejectFurtherSourceCallbacks()
         transitionIfNeeded(from: [.idle, .running, .paused], to: .cancelled)
         source.cancel()
         chain.cancel()
@@ -189,6 +199,7 @@ public final class MediaPipeline {
 
     private func finishChain() {
         guard transitionIfNeeded(from: [.running, .paused, .idle], to: .finished) else { return }
+        rejectFurtherSourceCallbacks()
         let shouldFinish = stateQueue.sync { () -> Bool in
             guard !hasFinished else { return false }
             hasFinished = true
@@ -213,6 +224,7 @@ public final class MediaPipeline {
             allowedStates.append(.finished)
         }
         guard transitionIfNeeded(from: allowedStates, to: .failed) else { return }
+        rejectFurtherSourceCallbacks()
         source.cancel()
         if cancelChain {
             chain.cancel()
@@ -226,6 +238,25 @@ public final class MediaPipeline {
         stateQueue.sync {
             _lastFrameMetadata = metadata
         }
+    }
+
+    private func resetSourceCallbacksAcceptance() {
+        lifecycleLock.lock()
+        acceptsSourceCallbacks = true
+        lifecycleLock.unlock()
+    }
+
+    private func rejectFurtherSourceCallbacks() {
+        lifecycleLock.lock()
+        acceptsSourceCallbacks = false
+        lifecycleLock.unlock()
+    }
+
+    private func canAcceptSourceCallbacks() -> Bool {
+        lifecycleLock.lock()
+        let result = acceptsSourceCallbacks
+        lifecycleLock.unlock()
+        return result
     }
 
     @discardableResult
