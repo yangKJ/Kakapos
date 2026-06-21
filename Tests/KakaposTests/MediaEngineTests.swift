@@ -2331,6 +2331,19 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.finishCount, 1)
     }
 
+    func testMediaPipelineStopInvokesUpstreamStopOnlyOnceAfterTerminalState() {
+        let source = CountingStopSource()
+        let sink = CountingSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+
+        pipeline.stop()
+        pipeline.stop()
+
+        XCTAssertEqual(source.stopCount, 1)
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(sink.finishCount, 1)
+    }
+
     func testMediaProcessorChainCanBeNestedAsSink() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
         let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
@@ -4256,6 +4269,22 @@ private final class StopAwareSource: MediaSource {
     func resume() {}
 
     func stop() {
+        delegate?.mediaSourceDidFinish(self)
+    }
+
+    func cancel() {}
+}
+
+private final class CountingStopSource: MediaSource {
+    weak var delegate: MediaSourceDelegate?
+    private(set) var stopCount = 0
+
+    func start() {}
+    func pause() {}
+    func resume() {}
+
+    func stop() {
+        stopCount += 1
         delegate?.mediaSourceDidFinish(self)
     }
 
