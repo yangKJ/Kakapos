@@ -39,11 +39,16 @@ public final class RecorderSink: MediaSink {
         public let hasRecordedClip: Bool
         public let lastPresentationTime: CMTime?
         public let pausedAt: CMTime?
+        public let currentClipHasStarted: Bool
+        public let currentClipHasVideo: Bool
+        public let currentClipHasAudio: Bool
+        public let recordedVideoSegmentCount: Int
+        public let recordedAudioSegmentCount: Int
 
         public var summaryText: String {
             let durationText = String(format: "%.2fs", totalDuration.seconds)
             let currentClipText = String(format: "%.2fs", currentClipDuration.seconds)
-            var text = "state \(state) · clips \(clipCount) · total \(durationText) · clip \(currentClipText) · recorded \(hasRecordedClip ? "yes" : "no")"
+            var text = "state \(state) · clips \(clipCount) · total \(durationText) · clip \(currentClipText) · recorded \(hasRecordedClip ? "yes" : "no") · started \(currentClipHasStarted ? "yes" : "no") · video \(currentClipHasVideo ? "yes" : "no") · audio \(currentClipHasAudio ? "yes" : "no") · segments v\(recordedVideoSegmentCount)/a\(recordedAudioSegmentCount)"
             if let lastPresentationTime {
                 text += " · presentation \(String(format: "%.2fs", lastPresentationTime.seconds))"
             }
@@ -100,7 +105,12 @@ public final class RecorderSink: MediaSink {
             currentClipDuration: currentSnapshot.currentClipDuration,
             hasRecordedClip: currentSnapshot.hasRecordedClip,
             lastPresentationTime: currentSnapshot.lastPresentationTime,
-            pausedAt: currentSnapshot.pausedAt
+            pausedAt: currentSnapshot.pausedAt,
+            currentClipHasStarted: currentSnapshot.currentClipHasStarted,
+            currentClipHasVideo: currentSnapshot.currentClipHasVideo,
+            currentClipHasAudio: currentSnapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: currentSnapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: currentSnapshot.recordedAudioSegmentCount
         )
     }
 

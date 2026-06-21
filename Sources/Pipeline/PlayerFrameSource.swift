@@ -107,7 +107,11 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
                 "generation": "\(summary.generation)",
                 "fps": "\(summary.preferredFramesPerSecond)",
                 "reason": summary.lastFrameRequestReason ?? "n/a",
+                "playerRate": Self.timeText(player.rate),
+                "itemTime": Self.timeText(summary.lastPlayerItemTime),
+                "playbackState": String(describing: coordinator.playbackState),
                 "seekTarget": summary.hasSeekTarget ? "yes" : "no",
+                "seekTargetTime": Self.timeText(lastSeekTargetTime),
                 "lastFrame": summary.hasLastFrame ? "yes" : "no"
             ]
         )
@@ -460,6 +464,17 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     public func removeAllConsumers() {
         outputNode.removeAllConsumers()
+    }
+
+    private static func timeText(_ time: CMTime?) -> String {
+        guard let time, time.isNumeric else {
+            return "n/a"
+        }
+        return String(format: "%.2fs", time.seconds)
+    }
+
+    private static func timeText(_ value: Float) -> String {
+        String(format: "%.2f", value)
     }
 }
 #endif
