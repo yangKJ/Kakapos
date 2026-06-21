@@ -78,6 +78,7 @@ public final class ReaderWriterExportJob {
         public let videoTrackCount: Int
         public let audioTrackCount: Int
         public let processorCount: Int
+        public let lastPhase: ProgressInfo.Phase
         public let lastProgressInfo: ProgressInfo?
         public let lastErrorDescription: String?
 
@@ -96,6 +97,7 @@ public final class ReaderWriterExportJob {
                 breakdownText = nil
             }
             var text = "state \(status) · tracks \(videoTrackCount)/\(audioTrackCount) · processors \(processorCount) · progress \(progressText)"
+            text += " · phase \(lastPhase)"
             if let breakdownText {
                 text += " · \(breakdownText)"
             }
@@ -130,6 +132,7 @@ public final class ReaderWriterExportJob {
             videoTrackCount: asset.tracks(withMediaType: .video).count,
             audioTrackCount: asset.tracks(withMediaType: .audio).count,
             processorCount: videoProcessors.count,
+            lastPhase: lastProgressInfo?.phase ?? .idle,
             lastProgressInfo: lastProgressInfo,
             lastErrorDescription: lastErrorDescription
         )
