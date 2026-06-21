@@ -3697,6 +3697,29 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summaryText.contains("segments v1/a0"))
     }
 
+#if canImport(UIKit) && !os(watchOS)
+    func testRecordingPipelineSummarySurfacesCameraSourceSnapshot() throws {
+        let configuration = CameraSourceConfiguration(
+            captureMode: .videoWithoutAudio,
+            preferredPosition: .front,
+            mirroringMode: .on
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let pipeline = try RecordingPipeline(configuration: configuration, outputURL: outputURL)
+
+        XCTAssertEqual(pipeline.summary.cameraSourceState, .idle)
+        XCTAssertEqual(pipeline.summary.cameraSourcePosition, .front)
+        XCTAssertEqual(pipeline.summary.cameraSourceAuthorizationStatus, pipeline.cameraSource?.authorizationStatus)
+        XCTAssertEqual(pipeline.summary.cameraSourceIsPaused, false)
+        XCTAssertEqual(pipeline.summary.cameraSourceCaptureMode, .videoWithoutAudio)
+        XCTAssertNil(pipeline.summary.cameraSourceLastFrameIndex)
+        XCTAssertNil(pipeline.summary.cameraSourceLastPresentationTime)
+        XCTAssertNil(pipeline.summary.cameraSourceLastMediaType)
+    }
+#endif
+
     func testRecordingPipelineSummaryIncludesFailureDescriptionFromUnderlyingPipeline() throws {
         let source = FailingSource(error: NSError(domain: "RecordingPipelineTests", code: 23))
         let outputURL = FileManager.default.temporaryDirectory
