@@ -62,6 +62,17 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.frames.first?.metadata.frameIndex, 2)
     }
 
+    #if canImport(UIKit)
+    func testMediaPipelinePlayerInitializerUsesPlayerFrameSource() {
+        let player = AVPlayer()
+        let sink = TestSink()
+        let pipeline = MediaPipeline(player: player, processors: [], sinks: [sink])
+
+        XCTAssertTrue(pipeline.source is PlayerFrameSource)
+        XCTAssertEqual(pipeline.sinks.count, 1)
+    }
+    #endif
+
     func testImageSourceCanBroadcastFramesDirectlyToConsumerNode() throws {
         let frame = StillImageFrame(image: try makeImage(width: 16, height: 16))
         let source = ImageSource(frames: [frame], callbackQueue: .main)
