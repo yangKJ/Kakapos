@@ -13,6 +13,7 @@ import AVFoundation
 /// These helpers do not add new media behavior. They only gather the four
 /// starter boards around the existing engine types so external code can
 /// begin from a smaller surface area.
+@available(*, deprecated, message: "Use KakaposSurface as the recommended lightweight entry point.")
 public enum KakaposBoards {
     public static func export(provider: VideoX.Provider) -> VideoX {
         VideoX(provider: provider)
