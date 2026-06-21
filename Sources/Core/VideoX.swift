@@ -343,7 +343,8 @@ extension VideoX {
             fileType: avFileType,
             timeRange: components.exportTimeRange,
             videoComposition: components.videoComposition,
-            audioMix: components.audioMix
+            audioMix: components.audioMix,
+            shouldOptimizeForNetworkUse: VideoX.Option.setupOptimizeForNetworkUse(options: options)
         )
     }
     
