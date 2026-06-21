@@ -39,6 +39,19 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
         }
     }
 
+    public var usageHint: String {
+        switch self {
+        case .export:
+            return "Start with VideoX when you already have an asset and need offline export compatibility."
+        case .preview:
+            return "Start with PreviewPipeline when you want player frames or a custom source routed to preview."
+        case .record:
+            return "Start with RecordingPipeline when you want camera capture or a source recorded to a file."
+        case .timeline:
+            return "Start with TimelinePipeline when you need layered composition, keyframes, and export planning."
+        }
+    }
+
     public var primaryTypes: [String] {
         switch self {
         case .export:
@@ -70,6 +83,7 @@ public struct KakaposCapabilityBoardInfo: Sendable, Hashable {
     public let board: KakaposCapabilityBoard
     public let displayName: String
     public let summary: String
+    public let usageHint: String
     public let primaryTypes: [String]
     public let starterTypes: [String]
 }
@@ -80,6 +94,7 @@ public enum KakaposCapabilityCatalog {
             board: $0,
             displayName: $0.displayName,
             summary: $0.summary,
+            usageHint: $0.usageHint,
             primaryTypes: $0.primaryTypes,
             starterTypes: $0.starterTypes
         )

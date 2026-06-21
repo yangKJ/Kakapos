@@ -169,6 +169,7 @@ public enum KakaposSurface {
         public var board: KakaposCapabilityBoard { .export }
         public var displayName: String { board.displayName }
         public var summary: String { board.summary }
+        public var usageHint: String { board.usageHint }
         public var primaryTypes: [String] { board.primaryTypes }
         public var starterTypes: [String] { board.starterTypes }
 
@@ -189,6 +190,7 @@ public enum KakaposSurface {
         public var board: KakaposCapabilityBoard { .preview }
         public var displayName: String { board.displayName }
         public var summary: String { board.summary }
+        public var usageHint: String { board.usageHint }
         public var primaryTypes: [String] { board.primaryTypes }
         public var starterTypes: [String] { board.starterTypes }
 
@@ -245,6 +247,7 @@ public enum KakaposSurface {
         public var board: KakaposCapabilityBoard { .record }
         public var displayName: String { board.displayName }
         public var summary: String { board.summary }
+        public var usageHint: String { board.usageHint }
         public var primaryTypes: [String] { board.primaryTypes }
         public var starterTypes: [String] { board.starterTypes }
 
@@ -283,6 +286,7 @@ public enum KakaposSurface {
         public var board: KakaposCapabilityBoard { .timeline }
         public var displayName: String { board.displayName }
         public var summary: String { board.summary }
+        public var usageHint: String { board.usageHint }
         public var primaryTypes: [String] { board.primaryTypes }
         public var starterTypes: [String] { board.starterTypes }
 
