@@ -37,11 +37,20 @@ public final class RecorderSink: MediaSink {
         public let totalDuration: CMTime
         public let currentClipDuration: CMTime
         public let hasRecordedClip: Bool
+        public let lastPresentationTime: CMTime?
+        public let pausedAt: CMTime?
 
         public var summaryText: String {
             let durationText = String(format: "%.2fs", totalDuration.seconds)
             let currentClipText = String(format: "%.2fs", currentClipDuration.seconds)
-            return "state \(state) · clips \(clipCount) · total \(durationText) · clip \(currentClipText) · recorded \(hasRecordedClip ? "yes" : "no")"
+            var text = "state \(state) · clips \(clipCount) · total \(durationText) · clip \(currentClipText) · recorded \(hasRecordedClip ? "yes" : "no")"
+            if let lastPresentationTime {
+                text += " · presentation \(String(format: "%.2fs", lastPresentationTime.seconds))"
+            }
+            if let pausedAt {
+                text += " · pausedAt \(String(format: "%.2fs", pausedAt.seconds))"
+            }
+            return text
         }
     }
 
@@ -89,7 +98,9 @@ public final class RecorderSink: MediaSink {
             clipCount: currentSnapshot.clipCount,
             totalDuration: currentSnapshot.totalDuration,
             currentClipDuration: currentSnapshot.currentClipDuration,
-            hasRecordedClip: currentSnapshot.hasRecordedClip
+            hasRecordedClip: currentSnapshot.hasRecordedClip,
+            lastPresentationTime: currentSnapshot.lastPresentationTime,
+            pausedAt: currentSnapshot.pausedAt
         )
     }
 
