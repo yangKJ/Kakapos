@@ -386,14 +386,30 @@ private struct PlayerPreviewView: View {
     }
 
     private func seekPreview(to time: CMTime, message: String = "Preview seeked") {
-        player?.seek(to: time)
         #if canImport(UIKit)
-        pipeline?.resume()
-        #endif
+        frameSource?.seek(to: time) { finished in
+            guard finished else { return }
+            DispatchQueue.main.async {
+                self.player?.play()
+                self.previewStateText = "running"
+                self.currentTimeText = String(format: "%.2fs", time.seconds)
+                self.message = message
+            }
+        }
+        if frameSource == nil {
+            player?.seek(to: time)
+            player?.play()
+            currentTimeText = String(format: "%.2fs", time.seconds)
+            previewStateText = "running"
+            self.message = message
+        }
+        #else
+        player?.seek(to: time)
         player?.play()
         currentTimeText = String(format: "%.2fs", time.seconds)
         previewStateText = "running"
         self.message = message
+        #endif
     }
 
     private func stopPreview() {
