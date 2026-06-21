@@ -14,6 +14,7 @@ public final class PreviewPipeline {
         public let processorCount: Int
         public let pipelineState: MediaPipeline.State
         public let previewState: PreviewSink.State
+        public let sourceSnapshot: MediaSourceSnapshot?
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
         public let lastSourceTime: CMTime?
@@ -60,6 +61,7 @@ public final class PreviewPipeline {
             processorCount: processors.count,
             pipelineState: pipeline.state,
             previewState: previewSink.state,
+            sourceSnapshot: pipeline.summary.sourceSnapshot,
             lastFrameIndex: previewSink.lastFrame?.metadata.frameIndex,
             lastPresentationTime: previewSink.lastFrame?.metadata.presentationTime,
             lastSourceTime: previewSink.lastFrame?.metadata.sourceTime,
@@ -77,7 +79,7 @@ public final class PreviewPipeline {
     }
 
     public var sourceSnapshot: MediaSourceSnapshot? {
-        pipeline.summary.sourceSnapshot
+        summary.sourceSnapshot
     }
 
 #if canImport(UIKit)

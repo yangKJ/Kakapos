@@ -14,6 +14,7 @@ public final class RecordingPipeline {
         public let processorCount: Int
         public let pipelineState: MediaPipeline.State
         public let recorderState: RecorderSink.State
+        public let sourceSnapshot: MediaSourceSnapshot?
         public let clipCount: Int
         public let totalDuration: CMTime
         public let currentClipDuration: CMTime
@@ -51,6 +52,7 @@ public final class RecordingPipeline {
             processorCount: processors.count,
             pipelineState: pipeline.state,
             recorderState: recorderSink.state,
+            sourceSnapshot: pipeline.summary.sourceSnapshot,
             clipCount: snapshot.clipCount,
             totalDuration: snapshot.totalDuration,
             currentClipDuration: snapshot.currentClipDuration,
@@ -61,6 +63,10 @@ public final class RecordingPipeline {
 
     public var lastErrorDescription: String? {
         pipeline.lastErrorDescription
+    }
+
+    public var sourceSnapshot: MediaSourceSnapshot? {
+        summary.sourceSnapshot
     }
 
     public var summaryText: String {

@@ -1785,7 +1785,16 @@ final class MediaEngineTests: XCTestCase {
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
-        let source = TestSource(frames: [frame])
+        let source = SnapshotSource(
+            frames: [frame],
+            snapshot: MediaSourceSnapshot(
+                stateDescription: "primed",
+                lastFrameIndex: 9,
+                lastPresentationTime: .zero,
+                lastSourceTime: .zero,
+                details: ["board": "preview"]
+            )
+        )
         let completion = expectation(description: "preview pipeline completion")
         let previewFrames = expectation(description: "preview frame delivered")
         var receivedPreviewMetadata: FrameMetadata?
@@ -1804,10 +1813,12 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertEqual(pipeline.state, .finished)
         XCTAssertEqual(pipeline.previewSink.state, .finished)
-        XCTAssertEqual(pipeline.summary.sourceTypeName, "TestSource")
+        XCTAssertEqual(pipeline.summary.sourceTypeName, "SnapshotSource")
         XCTAssertEqual(pipeline.summary.processorCount, 0)
         XCTAssertEqual(pipeline.summary.previewState, .finished)
         XCTAssertEqual(pipeline.summary.lastFrameIndex, 1)
+        XCTAssertEqual(pipeline.summary.sourceSnapshot?.stateDescription, "primed")
+        XCTAssertEqual(pipeline.summary.sourceSnapshot?.details["board"], "preview")
         XCTAssertEqual(receivedPreviewMetadata?.frameIndex, 1)
         XCTAssertTrue(pipeline.summary.summaryText.contains("preview finished"))
     }
@@ -3220,7 +3231,16 @@ final class MediaEngineTests: XCTestCase {
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
-        let source = TestSource(frames: [frame])
+        let source = SnapshotSource(
+            frames: [frame],
+            snapshot: MediaSourceSnapshot(
+                stateDescription: "primed",
+                lastFrameIndex: 9,
+                lastPresentationTime: .zero,
+                lastSourceTime: .zero,
+                details: ["board": "record"]
+            )
+        )
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("mp4")
@@ -3237,12 +3257,14 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertEqual(pipeline.state, .finished)
         XCTAssertEqual(pipeline.recorderSink.state, .finished)
-        XCTAssertEqual(pipeline.summary.sourceTypeName, "TestSource")
+        XCTAssertEqual(pipeline.summary.sourceTypeName, "SnapshotSource")
         XCTAssertEqual(pipeline.summary.processorCount, 0)
         XCTAssertEqual(pipeline.summary.pipelineState, .finished)
         XCTAssertEqual(pipeline.summary.recorderState, .finished)
         XCTAssertEqual(pipeline.summary.clipCount, 1)
         XCTAssertTrue(pipeline.summary.hasRecordedClip)
+        XCTAssertEqual(pipeline.summary.sourceSnapshot?.stateDescription, "primed")
+        XCTAssertEqual(pipeline.summary.sourceSnapshot?.details["board"], "record")
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertTrue(pipeline.summaryText.contains("recorder finished"))
     }
@@ -3711,6 +3733,27 @@ private final class TestSource: MediaSource {
 
     init(frames: [MediaFrame]) {
         self.frames = frames
+    }
+
+    func start() {
+        frames.forEach { delegate?.mediaSource(self, didOutput: $0) }
+        delegate?.mediaSourceDidFinish(self)
+    }
+
+    func pause() {}
+    func resume() {}
+    func stop() {}
+    func cancel() {}
+}
+
+private final class SnapshotSource: MediaSource, MediaSourceSnapshotProviding {
+    weak var delegate: MediaSourceDelegate?
+    private let frames: [MediaFrame]
+    let sourceSnapshot: MediaSourceSnapshot
+
+    init(frames: [MediaFrame], snapshot: MediaSourceSnapshot) {
+        self.frames = frames
+        self.sourceSnapshot = snapshot
     }
 
     func start() {
