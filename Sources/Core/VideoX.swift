@@ -270,7 +270,7 @@ extension VideoX {
 
     private struct ExportComponents {
         let composition: AVMutableComposition
-        let videoComposition: AVVideoComposition
+        let videoComposition: AVVideoComposition?
         let audioMix: AVAudioMix?
         let exportTimeRange: CMTimeRange
     }
@@ -318,11 +318,15 @@ extension VideoX {
         let track = try setupVideoTrack(videoTrack: videoTrack, composition: composition)
         let exportTimeRange = VideoX.Option.setupExportSessionTimeRange(duration: provider.duration, options: options)
 
-        let compositeInstruction = CompositeInstruction(instructions: instructions)
-        compositeInstruction.timeRange = exportTimeRange
-        compositeInstruction.initCompositionTrack(track, provider: provider, options: options)
-
-        let videoComposition = setupVideoComposition(options: options, composition: composition, instructions: [compositeInstruction])
+        let videoComposition: AVVideoComposition?
+        if instructions.isEmpty {
+            videoComposition = nil
+        } else {
+            let compositeInstruction = CompositeInstruction(instructions: instructions)
+            compositeInstruction.timeRange = exportTimeRange
+            compositeInstruction.initCompositionTrack(track, provider: provider, options: options)
+            videoComposition = setupVideoComposition(options: options, composition: composition, instructions: [compositeInstruction])
+        }
         let audioMix = setupAudioMix()
         return ExportComponents(
             composition: composition,
@@ -336,7 +340,8 @@ extension VideoX {
         guard let avFileType = self.provider.fileType?.avFileType else {
             throw VideoX.Error.unsupportedFileType
         }
-        let components = try buildExportComponents(options: options, instructions: instructions)
+        let instructionPlan = extractReaderWriterInstructionPlan(from: instructions)
+        let components = try buildExportComponents(options: options, instructions: instructionPlan.compositionInstructions)
         return ReaderWriterExportJob(
             asset: components.composition,
             outputURL: self.provider.outputURL,
@@ -344,6 +349,7 @@ extension VideoX {
             timeRange: components.exportTimeRange,
             videoComposition: components.videoComposition,
             audioMix: components.audioMix,
+            videoProcessors: instructionPlan.videoProcessors,
             shouldOptimizeForNetworkUse: VideoX.Option.setupOptimizeForNetworkUse(options: options)
         )
     }
@@ -408,6 +414,22 @@ extension VideoX {
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = inputParameters
         return audioMix
+    }
+
+    private func extractReaderWriterInstructionPlan(from instructions: [CompositionInstruction]) -> (compositionInstructions: [CompositionInstruction], videoProcessors: [FrameProcessor]) {
+        var compositionInstructions: [CompositionInstruction] = []
+        var videoProcessors: [FrameProcessor] = []
+
+        for instruction in instructions {
+            if let processorInstruction = instruction as? FrameProcessorProvidingInstruction,
+               let processor = processorInstruction.kakaposFrameProcessor {
+                videoProcessors.append(processor)
+            } else {
+                compositionInstructions.append(instruction)
+            }
+        }
+
+        return (compositionInstructions, videoProcessors)
     }
 }
 

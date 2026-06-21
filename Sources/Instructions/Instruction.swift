@@ -9,6 +9,10 @@ import Foundation
 import AVFoundation
 import CoreVideo
 
+protocol FrameProcessorProvidingInstruction {
+    var kakaposFrameProcessor: FrameProcessor? { get }
+}
+
 public protocol InstructionProtocol {
     
     func operationPixelBuffer(_ buffer: CVPixelBuffer, block: @escaping BufferBlock, for request: AVAsynchronousVideoCompositionRequest)

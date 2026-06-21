@@ -65,6 +65,7 @@ public final class ReaderWriterExportJob {
     private let timeRange: CMTimeRange?
     private let videoComposition: AVVideoComposition?
     private let audioMix: AVAudioMix?
+    private let videoProcessors: [FrameProcessor]
     private let shouldOptimizeForNetworkUse: Bool
     private let metadata: [AVMetadataItem]
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.reader-writer-export.state")
@@ -78,6 +79,7 @@ public final class ReaderWriterExportJob {
         timeRange: CMTimeRange? = nil,
         videoComposition: AVVideoComposition? = nil,
         audioMix: AVAudioMix? = nil,
+        videoProcessors: [FrameProcessor] = [],
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = []
     ) {
@@ -87,6 +89,7 @@ public final class ReaderWriterExportJob {
         self.timeRange = timeRange
         self.videoComposition = videoComposition
         self.audioMix = audioMix
+        self.videoProcessors = videoProcessors
         self.shouldOptimizeForNetworkUse = shouldOptimizeForNetworkUse
         self.metadata = metadata
     }
@@ -172,6 +175,10 @@ public final class ReaderWriterExportJob {
         setStatus(status)
     }
 
+    var _videoProcessorCountForTesting: Int {
+        videoProcessors.count
+    }
+
     private func makeConfiguration() throws -> VideoAssetExportSession.Configuration {
         let videoSettings = try makeVideoSettings()
         let audioSettings = makeAudioSettings()
@@ -183,7 +190,8 @@ public final class ReaderWriterExportJob {
             timeRange: timeRange ?? CMTimeRange(start: .zero, duration: .positiveInfinity),
             metadata: metadata,
             videoComposition: videoComposition,
-            audioMix: audioMix
+            audioMix: audioMix,
+            videoProcessors: videoProcessors
         )
     }
 

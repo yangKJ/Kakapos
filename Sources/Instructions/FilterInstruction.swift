@@ -18,6 +18,7 @@ public final class FilterInstruction: CompositionInstruction, @unchecked Sendabl
     public typealias BufferCallback = (_ buffer: CVPixelBuffer, _ time: Int64, _ block: @escaping BufferBlock) -> Void
     
     private let callback: BufferCallback
+    private let processor: FrameProcessor?
     
     public convenience init(filtering: @escaping (CVPixelBuffer, @escaping BufferBlock) -> Void) {
         let callback = { (buffer, _: Int64, block) -> Void in
@@ -26,8 +27,9 @@ public final class FilterInstruction: CompositionInstruction, @unchecked Sendabl
         self.init(callback: callback)
     }
     
-    public init(callback: @escaping BufferCallback) {
+    public init(callback: @escaping BufferCallback, processor: FrameProcessor? = nil) {
         self.callback = callback
+        self.processor = processor
         super.init()
     }
 
@@ -45,7 +47,7 @@ public final class FilterInstruction: CompositionInstruction, @unchecked Sendabl
                     block(buffer)
                 }
             }
-        })
+        }, processor: processor)
     }
     
     public required init?(coder aDecoder: NSCoder) {
@@ -56,5 +58,11 @@ public final class FilterInstruction: CompositionInstruction, @unchecked Sendabl
         let compositionTime = request.compositionTime
         let time = compositionTime.value/Int64(compositionTime.timescale) - Int64(minTime)
         self.callback(buffer, time, block)
+    }
+}
+
+extension FilterInstruction: FrameProcessorProvidingInstruction {
+    var kakaposFrameProcessor: FrameProcessor? {
+        processor
     }
 }
