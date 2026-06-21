@@ -14,6 +14,10 @@ public final class PreviewPipeline {
         public let processorCount: Int
         public let pipelineState: MediaPipeline.State
         public let previewState: PreviewSink.State
+        public let playerSourceState: PlayerFrameSource.State?
+        public let playerSourceGeneration: Int64?
+        public let playerSourceFrameIndex: Int64?
+        public let playerSourceLastFrameRequestReason: String?
         public let sourceSnapshot: MediaSourceSnapshot?
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
@@ -73,11 +77,16 @@ public final class PreviewPipeline {
     }
 
     public var summary: Summary {
-        Summary(
+        let playerSummary = playerSource?.summary
+        return Summary(
             sourceTypeName: String(describing: type(of: source)),
             processorCount: processors.count,
             pipelineState: pipeline.state,
             previewState: previewSink.state,
+            playerSourceState: playerSummary?.state,
+            playerSourceGeneration: playerSummary?.generation,
+            playerSourceFrameIndex: playerSummary?.frameIndex,
+            playerSourceLastFrameRequestReason: playerSummary?.lastFrameRequestReason,
             sourceSnapshot: pipeline.summary.sourceSnapshot,
             lastFrameIndex: previewSink.lastFrame?.metadata.frameIndex,
             lastPresentationTime: previewSink.lastFrame?.metadata.presentationTime,
