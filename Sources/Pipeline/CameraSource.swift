@@ -80,6 +80,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     private var lastPresentationTime: CMTime?
     private var lastMediaType: String?
     private var currentOrientation: AVCaptureVideoOrientation = .portrait
+    private let lifecycleLock = NSLock()
+    private var acceptsFrames = true
 
     public init(configuration: CameraSourceConfiguration = CameraSourceConfiguration()) throws {
         self.realtime = KakaposRealtime()
@@ -101,6 +103,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     }
 
     public func start() {
+        resetFrameAcceptance()
         let status = Self.authorizationStatus(for: configuration.captureMode)
         authorizationStatus = status
         frameIndex = 0
@@ -146,12 +149,14 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     }
 
     public func stop() {
+        rejectFurtherFrames()
         queue.async {
             self.realtime.stop()
         }
     }
 
     public func cancel() {
+        rejectFurtherFrames()
         stop()
     }
 
@@ -234,6 +239,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     }
 
     private func emit(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
+        guard canAcceptFrames() else { return }
         guard !isPaused else { return }
         frameIndex += 1
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
@@ -360,6 +366,25 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
         case .automatic:
             realtime.mirroringMode = position == .front ? .auto : .off
         }
+    }
+
+    private func resetFrameAcceptance() {
+        lifecycleLock.lock()
+        acceptsFrames = true
+        lifecycleLock.unlock()
+    }
+
+    private func rejectFurtherFrames() {
+        lifecycleLock.lock()
+        acceptsFrames = false
+        lifecycleLock.unlock()
+    }
+
+    private func canAcceptFrames() -> Bool {
+        lifecycleLock.lock()
+        let result = acceptsFrames
+        lifecycleLock.unlock()
+        return result
     }
 
     private func emitPhotoResult(photoDictionary: [String: Any], isFromCurrentFrame: Bool) {
