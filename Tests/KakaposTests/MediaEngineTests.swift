@@ -2534,6 +2534,12 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedFrames[0].metadata.frameIndex, 1)
         XCTAssertEqual(receivedFrames[0].metadata.userInfo[CameraSource.MetadataKey.sessionState] as? String, "running")
         XCTAssertEqual(receivedFrames[0].metadata.userInfo[CameraSource.MetadataKey.mediaType] as? String, AVMediaType.video.rawValue)
+        XCTAssertEqual(source.summary.lastFrameIndex, 1)
+        XCTAssertEqual(source.summary.lastPresentationTime, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(source.summary.lastMediaType, AVMediaType.video.rawValue)
+        XCTAssertTrue(source.summary.summaryText.contains("frame 1"))
+        XCTAssertTrue(source.summary.summaryText.contains("presentation 0.03s"))
+        XCTAssertTrue(source.summary.summaryText.contains("mediaType video"))
 
         source.pause()
         XCTAssertEqual(source.state, .paused)
@@ -2548,6 +2554,9 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedFrames[1].metadata.frameIndex, 2)
         XCTAssertEqual(receivedFrames[1].metadata.userInfo[CameraSource.MetadataKey.sessionState] as? String, "running")
         XCTAssertEqual(receivedFrames[1].metadata.userInfo[CameraSource.MetadataKey.mediaType] as? String, AVMediaType.video.rawValue)
+        XCTAssertEqual(source.summary.lastFrameIndex, 2)
+        XCTAssertEqual(source.summary.lastPresentationTime, CMTime(value: 2, timescale: 30))
+        XCTAssertEqual(source.summary.lastMediaType, AVMediaType.video.rawValue)
     }
     #endif
 }
