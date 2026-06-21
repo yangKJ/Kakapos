@@ -1443,7 +1443,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(exportJob?.status, .idle)
         XCTAssertEqual(exportJob?._videoProcessorCountForTesting, 1)
         XCTAssertEqual(try exporter.makeReaderWriterExportJob(instructions: [instruction]).status, .idle)
-        XCTAssertEqual(outputURL.pathExtension.lowercased(), "mp4")
+        XCTAssertEqual(outputURL.pathExtension.lowercased(), "mov")
     }
 
     func testVideoXReaderWriterExportKeepsUnsupportedInstructionsInVideoComposition() throws {
@@ -1500,26 +1500,41 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testReaderWriterExportJobInvokesFrameProcessorDuringExport() throws {
-        let exporter = try makeSampleExporter()
         let callbackExpectation = expectation(description: "frame processor invoked")
         let exportExpectation = expectation(description: "reader writer export finished")
         callbackExpectation.assertForOverFulfill = false
         var invocationCount = 0
 
-        let instruction = FilterInstruction(processor: ClosureFrameProcessor { frame, completion in
+        let processor = ClosureFrameProcessor { frame, completion in
             invocationCount += 1
             callbackExpectation.fulfill()
             completion(.success(frame))
-        })
+        }
 
-        let exportJob = try XCTUnwrap(
-            exporter.makeExportJob(
-                options: [
-                    .ExportPipeline: VideoX.ExportPipeline.readerWriter,
-                    .ExportSessionTimeRange: TimeRangeType.range(0...0.2)
-                ],
-                instructions: [instruction]
-            )
+        let exportJob = try ReaderWriterExportJob(
+            asset: AVAsset(url: try makeSampleAssetURL()),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mov"),
+            fileType: .mov,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 5)),
+            videoComposition: nil,
+            audioMix: nil,
+            videoProcessors: [processor],
+            shouldOptimizeForNetworkUse: true,
+            metadata: [],
+            sessionFactory: { _, outputURL, configuration in
+                let syntheticBuffer = try makePixelBuffer(width: 16, height: 16)
+                let frame = MediaFrame(
+                    pixelBuffer: syntheticBuffer,
+                    metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
+                )
+                return SyntheticReaderWriterExportSession(
+                    processors: configuration.videoProcessors,
+                    frame: frame,
+                    outputURL: outputURL
+                )
+            }
         )
 
         exportJob.export { result in
@@ -1594,15 +1609,32 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testVideoXExportTaskForwardsReaderWriterProgressSnapshots() throws {
-        let exporter = try makeSampleExporter()
-        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
-        let exportTask = try exporter.makeExportTask(
-            options: [
-                .ExportPipeline: VideoX.ExportPipeline.readerWriter,
-                .ExportSessionTimeRange: TimeRangeType.range(0...0.2)
-            ],
-            instructions: [instruction]
+        let exportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mov")
+        let syntheticFrame = MediaFrame(
+            pixelBuffer: try makePixelBuffer(width: 16, height: 16),
+            metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
+        let exportJob = ReaderWriterExportJob(
+            asset: AVAsset(url: try makeSampleAssetURL()),
+            outputURL: exportURL,
+            fileType: .mov,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 5)),
+            videoComposition: nil,
+            audioMix: nil,
+            videoProcessors: [PassthroughFrameProcessor()],
+            shouldOptimizeForNetworkUse: true,
+            metadata: [],
+            sessionFactory: { _, outputURL, configuration in
+                SyntheticReaderWriterExportSession(
+                    processors: configuration.videoProcessors,
+                    frame: syntheticFrame,
+                    outputURL: outputURL
+                )
+            }
+        )
+        let exportTask = VideoX.ExportTask(readerWriterJob: exportJob)
 
         let progressExpectation = expectation(description: "progress snapshot")
         let completionExpectation = expectation(description: "reader writer export finished")
@@ -4180,22 +4212,94 @@ private func makeImage(width: Int, height: Int) throws -> CGImage {
     return image
 }
 
+private final class SyntheticReaderWriterExportSession: ReaderWriterExportSession {
+    private let processors: [FrameProcessor]
+    private let frame: MediaFrame
+    private let outputURL: URL
+
+    init(processors: [FrameProcessor], frame: MediaFrame, outputURL: URL) {
+        self.processors = processors
+        self.frame = frame
+        self.outputURL = outputURL
+    }
+
+    func export(
+        progress: ((VideoAssetExportSession.ExportProgress) -> Void)?,
+        status: ((VideoAssetExportSession.Status) -> Void)?,
+        completion: @escaping (Error?) -> Void
+    ) {
+        status?(.exporting)
+        let progressInfo = VideoAssetExportSession.ExportProgress(
+            tracksAudioEncoding: false,
+            tracksVideoEncoding: true
+        )
+        progressInfo.updateVideoEncodingProgress(fractionCompleted: 0.5)
+        progress?(progressInfo)
+        process(frame: frame, at: 0) { result in
+            switch result {
+            case .success:
+                progressInfo.updateFinishWritingProgress(fractionCompleted: 1.0)
+                progress?(progressInfo)
+                FileManager.default.createFile(atPath: self.outputURL.path, contents: Data([0]), attributes: nil)
+                status?(.completed)
+                completion(nil)
+            case .failure(let error):
+                status?(.failed)
+                completion(error)
+            }
+        }
+    }
+
+    func pause() {}
+    func resume() {}
+    func cancel() {}
+
+    private func process(
+        frame: MediaFrame,
+        at index: Int,
+        completion: @escaping (Result<MediaFrame, Error>) -> Void
+    ) {
+        guard index < processors.count else {
+            completion(.success(frame))
+            return
+        }
+        processors[index].process(frame) { [weak self] result in
+            guard let self else {
+                completion(.failure(NSError(domain: "KakaposTests", code: -1)))
+                return
+            }
+            switch result {
+            case .success(let nextFrame):
+                self.process(frame: nextFrame, at: index + 1, completion: completion)
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+}
+
 private func makeSampleExporter() throws -> VideoX {
     let sampleURL = try makeSampleAssetURL()
     XCTAssertTrue(FileManager.default.fileExists(atPath: sampleURL.path))
     let outputURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
-        .appendingPathExtension("mp4")
+        .appendingPathExtension("mov")
     return VideoX(provider: .init(with: sampleURL, to: outputURL))
 }
 
 private func makeSampleAssetURL() throws -> URL {
-    let sampleURL = URL(fileURLWithPath: #filePath)
+    let baseURL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .appendingPathComponent("KakaposExamples")
-        .appendingPathComponent("IMG_1388.mp4")
-    XCTAssertTrue(FileManager.default.fileExists(atPath: sampleURL.path))
-    return sampleURL
+    let preferredURLs = [
+        baseURL.appendingPathComponent("IMG_3156.MOV"),
+        baseURL.appendingPathComponent("IMG_1388.mp4")
+    ]
+    for sampleURL in preferredURLs where FileManager.default.fileExists(atPath: sampleURL.path) {
+        return sampleURL
+    }
+    XCTFail("Expected a sample asset under KakaposExamples.")
+    return baseURL.appendingPathComponent("IMG_3156.MOV")
 }

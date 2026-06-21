@@ -297,6 +297,7 @@ private struct PlayerPreviewView: View {
             Text("State: \(previewStateText)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+            #if canImport(UIKit)
             Text(frameSource?.summaryText ?? "state idle · generation 0 · frame 0 · lastFrame no · seekTarget no · fps 30")
                 .font(.footnote)
                 .foregroundColor(.secondary)
@@ -306,6 +307,17 @@ private struct PlayerPreviewView: View {
             Text(pipeline?.summary.summaryText ?? "source unavailable · processors 0 · sinks 0 · state idle")
                 .font(.footnote)
                 .foregroundColor(.secondary)
+            #else
+            Text("state idle · generation 0 · frame 0 · lastFrame no · seekTarget no · fps 30")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            Text("state idle · frame n/a · image n/a · pending no")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            Text("source unavailable · processors 0 · sinks 0 · state idle")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            #endif
 
             HStack {
                 Button("Start") { startPreview() }
@@ -475,8 +487,6 @@ private struct CameraRecordView: View {
             Text(recorder?.summaryText ?? "state idle · clips 0 · total 0.00s · clip 0.00s · recorded no")
                 .font(.footnote)
                 .foregroundColor(.secondary)
-            #endif
-            Text("Last Output: \(lastOutputText)").font(.subheadline).foregroundColor(.secondary)
             HStack {
                 Button("Start Camera") { startCamera() }
                 Button("Pause Record") { pauseRecording() }
@@ -488,6 +498,13 @@ private struct CameraRecordView: View {
                     .disabled(cameraSource == nil)
             }
             .buttonStyle(.borderedProminent)
+            #endif
+            Text("Last Output: \(lastOutputText)").font(.subheadline).foregroundColor(.secondary)
+            #if !(canImport(UIKit) && !os(watchOS))
+            Text("Camera controls unavailable on this platform")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            #endif
             Text(message).font(.footnote).foregroundColor(.secondary)
             Spacer()
         }

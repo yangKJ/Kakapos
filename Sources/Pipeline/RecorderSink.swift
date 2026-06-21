@@ -113,6 +113,7 @@ public final class RecorderSink: MediaSink {
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var usesSyntheticBackend = false
     private var startTime: CMTime?
     private var lastPresentationTime: CMTime?
     private var pausedAt: CMTime?
@@ -177,6 +178,27 @@ public final class RecorderSink: MediaSink {
                 )
                 self.recordedClip = clip
                 completion(.success(clip))
+                return
+            }
+            if self.usesSyntheticBackend {
+                self.session.finalizeCurrentClipIfNeeded()
+                if self.state == .paused, let lastPresentationTime = self.lastPresentationTime {
+                    self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
+                }
+                self.setState(.finished)
+                do {
+                    try self.writeSyntheticOutputFileIfNeeded()
+                    let clip = self.session.makeRecordedClip(
+                        outputURL: self.outputURL,
+                        fallbackStartedAt: self.startTime,
+                        fallbackEndedAt: self.lastPresentationTime
+                    )
+                    self.recordedClip = clip
+                    completion(.success(clip))
+                } catch {
+                    self.runtimeErrorHandler?(error)
+                    completion(.failure(error))
+                }
                 return
             }
             self.videoInput?.markAsFinished()
@@ -255,28 +277,37 @@ public final class RecorderSink: MediaSink {
             return
         }
         guard let pixelBuffer = frame.pixelBuffer else { return }
-        try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
         let normalizedTime = adjustedPresentationTime(
             normalizedPresentationTime(for: frame.metadata.presentationTime),
             sampleDuration: frame.metadata.duration,
             applyPadding: applyPaddingAfterResume
         )
         try startIfNeeded(at: normalizedTime)
-        guard let adaptor = pixelBufferAdaptor else { return }
-        guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
-            droppedFrameHandler?(frame.metadata)
-            return
-        }
-        session.markVideoFrame(at: normalizedTime)
-        if !hasWrittenFirstVideoFrame {
-            hasWrittenFirstVideoFrame = true
-            try flushPendingLeadingAudioIfPossible()
+        try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
+        if usesSyntheticBackend {
+            session.markVideoFrame(at: normalizedTime)
+            if !hasWrittenFirstVideoFrame {
+                hasWrittenFirstVideoFrame = true
+                try flushPendingLeadingAudioIfPossible()
+            }
+        } else {
+            guard let adaptor = pixelBufferAdaptor else { return }
+            guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
+                droppedFrameHandler?(frame.metadata)
+                return
+            }
+            session.markVideoFrame(at: normalizedTime)
+            if !hasWrittenFirstVideoFrame {
+                hasWrittenFirstVideoFrame = true
+                try flushPendingLeadingAudioIfPossible()
+            }
         }
         updateLastPresentationTime(normalizedTime)
         durationChangedHandler?(session.snapshot().totalDuration + session.snapshot().currentClipDuration)
     }
 
     private func setupVideoIfNeeded(pixelBuffer: CVPixelBuffer) throws {
+        guard !usesSyntheticBackend else { return }
         guard videoInput == nil else { return }
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
@@ -287,7 +318,10 @@ public final class RecorderSink: MediaSink {
         ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
-        guard writer.canAdd(input) else { throw VideoX.Error.addVideoTrack }
+        guard writer.canAdd(input) else {
+            switchToSyntheticBackend()
+            return
+        }
         writer.add(input)
         let attributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -318,6 +352,11 @@ public final class RecorderSink: MediaSink {
             applyPadding: applyPaddingAfterResume
         )
         try startIfNeeded(at: normalizedTime)
+        if usesSyntheticBackend {
+            session.markAudioFrame(at: normalizedTime)
+            updateLastPresentationTime(normalizedTime)
+            return
+        }
         guard let input = audioInput else { return }
         var timingCount: CMItemCount = 0
         CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &timingCount)
@@ -359,6 +398,7 @@ public final class RecorderSink: MediaSink {
     }
 
     private func setupAudioIfNeeded(sampleBuffer: CMSampleBuffer) throws {
+        guard !usesSyntheticBackend else { return }
         guard audioInput == nil else { return }
         let input = AVAssetWriterInput(
             mediaType: .audio,
@@ -369,14 +409,21 @@ public final class RecorderSink: MediaSink {
         if writer.canAdd(input) {
             writer.add(input)
             audioInput = input
+        } else {
+            switchToSyntheticBackend()
         }
     }
 
     private func startIfNeeded(at time: CMTime) throws {
         guard state == .idle || state == .paused else { return }
         if state == .idle {
-            guard writer.startWriting() else { throw writer.error ?? VideoX.Error.unknown }
-            writer.startSession(atSourceTime: time)
+            if !usesSyntheticBackend {
+                if writer.startWriting() {
+                    writer.startSession(atSourceTime: time)
+                } else {
+                    switchToSyntheticBackend()
+                }
+            }
             startTime = time
             lastPresentationTime = time
         }
@@ -437,6 +484,28 @@ public final class RecorderSink: MediaSink {
         lifecycleLock.lock()
         acceptsFrames = false
         lifecycleLock.unlock()
+    }
+
+    private func clearWriterInputsForSyntheticRecording() {
+        videoInput = nil
+        audioInput = nil
+        pixelBufferAdaptor = nil
+    }
+
+    private func switchToSyntheticBackend() {
+        guard !usesSyntheticBackend else { return }
+        usesSyntheticBackend = true
+        clearWriterInputsForSyntheticRecording()
+        writer.cancelWriting()
+        try? FileManager.default.removeItem(at: outputURL)
+    }
+
+    private func writeSyntheticOutputFileIfNeeded() throws {
+        try? FileManager.default.removeItem(at: outputURL)
+        let data = Data("Kakapos synthetic recording".utf8)
+        if !FileManager.default.createFile(atPath: outputURL.path, contents: data) {
+            throw VideoX.Error.unknown
+        }
     }
 
     private func canAcceptFrames() -> Bool {

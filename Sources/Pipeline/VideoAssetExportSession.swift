@@ -11,6 +11,12 @@ import AVFoundation
 final class VideoAssetExportSession {
 
     struct Configuration {
+        enum VideoEncodingStrategy {
+            case automatic
+            case encoded
+            case passthrough
+        }
+
         var fileType: AVFileType
         var shouldOptimizeForNetworkUse: Bool = true
         var videoSettings: [String: Any]
@@ -20,6 +26,7 @@ final class VideoAssetExportSession {
         var videoComposition: AVVideoComposition?
         var audioMix: AVAudioMix?
         var videoProcessors: [FrameProcessor] = []
+        var videoEncodingStrategy: VideoEncodingStrategy = .automatic
     }
 
     enum Status: Equatable {
@@ -105,6 +112,7 @@ final class VideoAssetExportSession {
         self.asset = asset.copy() as! AVAsset
         self.configuration = configuration
         self.outputURL = outputURL
+        try Self.prepareOutputURL(outputURL)
         self.reader = try AVAssetReader(asset: self.asset)
         self.writer = try AVAssetWriter(outputURL: outputURL, fileType: configuration.fileType)
         self.reader.timeRange = configuration.timeRange
@@ -121,8 +129,17 @@ final class VideoAssetExportSession {
         if videoTracks.count > 0 {
             let output: AVAssetReaderOutput
             let inputTransform: CGAffineTransform?
-            if let videoComposition = configuration.videoComposition {
-                let compositionOutput = AVAssetReaderVideoCompositionOutput(videoTracks: videoTracks, videoSettings: nil)
+            let sourceFormatHint: CMFormatDescription = videoTracks.first!.formatDescriptions.first as! CMFormatDescription
+            let readerVideoComposition = configuration.videoComposition ?? Self.makeReaderVideoComposition(
+                from: self.asset,
+                videoTracks: videoTracks,
+                shouldUseVideoProcessorPath: !configuration.videoProcessors.isEmpty
+            )
+            if let videoComposition = readerVideoComposition {
+                let compositionOutput = AVAssetReaderVideoCompositionOutput(
+                    videoTracks: videoTracks,
+                    videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+                )
                 compositionOutput.alwaysCopiesSampleData = false
                 compositionOutput.videoComposition = videoComposition
                 output = compositionOutput
@@ -144,7 +161,12 @@ final class VideoAssetExportSession {
 
             let input: AVAssetWriterInput
             let pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
-            if let transform = inputTransform {
+            let usePassthrough = configuration.videoEncodingStrategy == .passthrough
+                || (configuration.videoEncodingStrategy == .automatic
+                    && !configuration.videoProcessors.isEmpty
+                    && !writer.canApply(outputSettings: configuration.videoSettings, forMediaType: .video))
+
+            if !usePassthrough, let transform = inputTransform {
                 let size = CGSize(
                     width: configuration.videoSettings[AVVideoWidthKey] as? CGFloat ?? 0,
                     height: configuration.videoSettings[AVVideoHeightKey] as? CGFloat ?? 0
@@ -155,11 +177,20 @@ final class VideoAssetExportSession {
                 settings[AVVideoHeightKey] = abs(transformedSize.height)
                 input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
                 input.transform = transform
-            } else {
+            } else if !usePassthrough {
                 input = AVAssetWriterInput(mediaType: .video, outputSettings: configuration.videoSettings)
+            } else {
+                input = AVAssetWriterInput(
+                    mediaType: .video,
+                    outputSettings: nil,
+                    sourceFormatHint: sourceFormatHint
+                )
+                if let transform = inputTransform {
+                    input.transform = transform
+                }
             }
             input.expectsMediaDataInRealTime = false
-            if configuration.videoProcessors.isEmpty {
+            if configuration.videoProcessors.isEmpty || usePassthrough {
                 pixelBufferAdaptor = nil
             } else {
                 pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -194,13 +225,31 @@ final class VideoAssetExportSession {
             reader.add(output)
             audioOutput = output
 
-            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: configuration.audioSettings)
+            let audioTrack = audioTracks[0]
+            let audioFormatDescription = audioTrack.formatDescriptions.first as! CMFormatDescription
+
+            let input = AVAssetWriterInput(
+                mediaType: .audio,
+                outputSettings: configuration.audioSettings,
+                sourceFormatHint: audioFormatDescription
+            )
             input.expectsMediaDataInRealTime = false
-            guard writer.canAdd(input) else {
-                throw SessionError.cannotAddAudioInput
+            if writer.canAdd(input) {
+                writer.add(input)
+                audioInput = input
+            } else {
+                let passthroughInput = AVAssetWriterInput(
+                    mediaType: .audio,
+                    outputSettings: nil,
+                    sourceFormatHint: audioFormatDescription
+                )
+                passthroughInput.expectsMediaDataInRealTime = false
+                guard writer.canAdd(passthroughInput) else {
+                    throw SessionError.cannotAddAudioInput
+                }
+                writer.add(passthroughInput)
+                audioInput = passthroughInput
             }
-            writer.add(input)
-            audioInput = input
         } else {
             audioOutput = nil
             audioInput = nil
@@ -225,6 +274,14 @@ final class VideoAssetExportSession {
 
         do {
             guard writer.startWriting() else {
+                if Self.shouldFallbackToPassthrough(error: writer.error, configuration: configuration) {
+                    try self.exportWithPassthroughFallback(
+                        progress: progress,
+                        status: status,
+                        completion: completion
+                    )
+                    return
+                }
                 throw writer.error ?? SessionError.cannotStartWriting
             }
             guard reader.startReading() else {
@@ -484,6 +541,56 @@ final class VideoAssetExportSession {
             self.status = error == nil ? .completed : (self.cancelled ? .cancelled : .failed)
             self.dispatchStatus(self.status)
             completionHandler(error)
+        }
+    }
+
+    private func exportWithPassthroughFallback(
+        progress: ((ExportProgress) -> Void)?,
+        status: ((Status) -> Void)?,
+        completion: @escaping (Error?) -> Void
+    ) throws {
+        guard configuration.videoEncodingStrategy == .automatic, !configuration.videoProcessors.isEmpty else {
+            throw writer.error ?? SessionError.cannotStartWriting
+        }
+        var fallbackConfiguration = configuration
+        fallbackConfiguration.videoEncodingStrategy = .passthrough
+        let fallbackSession = try VideoAssetExportSession(asset: asset, outputURL: outputURL, configuration: fallbackConfiguration)
+        fallbackSession.export(progress: progress, status: status, completion: completion)
+    }
+
+    private static func shouldFallbackToPassthrough(error: Error?, configuration: Configuration) -> Bool {
+        guard configuration.videoEncodingStrategy == .automatic, !configuration.videoProcessors.isEmpty else {
+            return false
+        }
+        let nsError = error as NSError?
+        return nsError?.domain == AVFoundationErrorDomain && nsError?.code == -11834
+    }
+
+    private static func makeReaderVideoComposition(
+        from asset: AVAsset,
+        videoTracks: [AVAssetTrack],
+        shouldUseVideoProcessorPath: Bool
+    ) -> AVVideoComposition? {
+        guard shouldUseVideoProcessorPath else {
+            return nil
+        }
+        guard #available(macOS 10.14, iOS 11.0, tvOS 11.0, watchOS 4.0, *) else {
+            return nil
+        }
+        guard videoTracks.isEmpty == false else {
+            return nil
+        }
+        return AVMutableVideoComposition(propertiesOf: asset)
+    }
+
+    private static func prepareOutputURL(_ outputURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: outputURL.path) else {
+            return
+        }
+        do {
+            try FileManager.default.removeItem(at: outputURL)
+        } catch {
+            throw error
         }
     }
 }
