@@ -58,6 +58,7 @@ public final class ReaderWriterExportJob {
         public let audioTrackCount: Int
         public let processorCount: Int
         public let lastProgressInfo: ProgressInfo?
+        public let lastErrorDescription: String?
 
         public var summaryText: String {
             let progressText: String
@@ -66,7 +67,11 @@ public final class ReaderWriterExportJob {
             } else {
                 progressText = "n/a"
             }
-            return "state \(status) · tracks \(videoTrackCount)/\(audioTrackCount) · processors \(processorCount) · progress \(progressText)"
+            var text = "state \(status) · tracks \(videoTrackCount)/\(audioTrackCount) · processors \(processorCount) · progress \(progressText)"
+            if let lastErrorDescription {
+                text += " · error \(lastErrorDescription)"
+            }
+            return text
         }
     }
 
@@ -74,6 +79,10 @@ public final class ReaderWriterExportJob {
     public var statusHandler: ((Status) -> Void)?
     public var lastProgressInfo: ProgressInfo? {
         stateQueue.sync { _lastProgressInfo }
+    }
+
+    public var lastErrorDescription: String? {
+        stateQueue.sync { _lastErrorDescription }
     }
 
     public var status: Status {
@@ -86,7 +95,8 @@ public final class ReaderWriterExportJob {
             videoTrackCount: asset.tracks(withMediaType: .video).count,
             audioTrackCount: asset.tracks(withMediaType: .audio).count,
             processorCount: videoProcessors.count,
-            lastProgressInfo: lastProgressInfo
+            lastProgressInfo: lastProgressInfo,
+            lastErrorDescription: lastErrorDescription
         )
     }
 
@@ -102,6 +112,7 @@ public final class ReaderWriterExportJob {
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.reader-writer-export.state")
     private var _status: Status = .idle
     private var _lastProgressInfo: ProgressInfo?
+    private var _lastErrorDescription: String?
     private var exportSession: VideoAssetExportSession?
 
     public init(
@@ -152,6 +163,7 @@ public final class ReaderWriterExportJob {
                     self.exportSession = nil
                     if let error {
                         let mappedError = Self.mapError(error)
+                        self.storeError(mappedError)
                         if case VideoX.Error.exportCancelled = VideoX.Error.toError(mappedError) {
                             self.setStatus(.cancelled)
                         } else {
@@ -166,6 +178,7 @@ public final class ReaderWriterExportJob {
                 }
             )
         } catch {
+            storeError(error)
             setStatus(.failed)
             removePartialOutputIfNeeded()
             completion(.failure(Self.mapError(error)))
@@ -277,6 +290,13 @@ public final class ReaderWriterExportJob {
         }
     }
 
+    private func storeError(_ error: Error) {
+        let errorDescription = Self.errorDescription(for: error)
+        stateQueue.sync {
+            _lastErrorDescription = errorDescription
+        }
+    }
+
     private func setStatus(_ status: Status) {
         let didChange = stateQueue.sync { () -> Bool in
             guard _status != status else { return false }
@@ -329,5 +349,13 @@ public final class ReaderWriterExportJob {
         default:
             return VideoX.Error.toError(error)
         }
+    }
+
+    private static func errorDescription(for error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain != NSCocoaErrorDomain {
+            return "\(nsError.domain)#\(nsError.code)"
+        }
+        return nsError.localizedDescription
     }
 }

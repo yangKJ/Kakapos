@@ -96,8 +96,13 @@ public final class MediaPipeline {
             sourceTypeName: String(describing: type(of: source)),
             processorTypeNames: processors.map { String(describing: type(of: $0)) },
             sinkTypeNames: sinks.map { String(describing: type(of: $0)) },
-            state: state
+            state: state,
+            lastErrorDescription: lastErrorDescription
         )
+    }
+
+    public var lastErrorDescription: String? {
+        stateQueue.sync { _lastErrorDescription }
     }
 
     public var errorHandler: ((Error) -> Void)? {
@@ -118,6 +123,7 @@ public final class MediaPipeline {
     private let sourceAdapter: MediaSourceNodeAdapter
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-pipeline.state")
     private var hasFinished = false
+    private var _lastErrorDescription: String?
 
     public init(source: MediaSource, processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
         self.source = source
@@ -187,6 +193,10 @@ public final class MediaPipeline {
     }
 
     private func failChain(with error: Error, allowFromFinished: Bool = false, cancelChain: Bool = true) {
+        let errorDescription = Self.errorDescription(for: error)
+        stateQueue.sync {
+            _lastErrorDescription = errorDescription
+        }
         var allowedStates: [State] = [.running, .paused, .idle]
         if allowFromFinished {
             allowedStates.append(.finished)
@@ -215,6 +225,14 @@ public final class MediaPipeline {
             self.stateHandler?(newState)
         }
         return true
+    }
+
+    private static func errorDescription(for error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain != NSCocoaErrorDomain {
+            return "\(nsError.domain)#\(nsError.code)"
+        }
+        return nsError.localizedDescription
     }
 }
 
