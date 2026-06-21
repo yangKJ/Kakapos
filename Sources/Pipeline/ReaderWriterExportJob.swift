@@ -326,10 +326,17 @@ public final class ReaderWriterExportJob {
         }
         let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
         return [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoCodecKey: Self.preferredVideoCodec(for: fileType),
             AVVideoWidthKey: abs(size.width),
             AVVideoHeightKey: abs(size.height)
         ]
+    }
+
+    private static func preferredVideoCodec(for fileType: AVFileType) -> AVVideoCodecType {
+        if fileType == .mov {
+            return .jpeg
+        }
+        return .h264
     }
 
     private func makeAudioSettings() -> [String: Any] {
