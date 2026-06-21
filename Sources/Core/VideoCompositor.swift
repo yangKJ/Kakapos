@@ -113,16 +113,7 @@ extension VideoCompositor {
     }
     
     private func getRotationAngle(from instruction: CompositionInstruction) -> RotationAngle? {
-        if let compositeInstruction = instruction as? CompositeInstruction {
-            for subInstruction in compositeInstruction.instructions {
-                if let rotateInstruction = subInstruction as? RotateInstruction {
-                    return rotateInstruction.rotationAngle
-                }
-            }
-        } else if let rotateInstruction = instruction as? RotateInstruction {
-            return rotateInstruction.rotationAngle
-        }
-        return nil
+        InstructionTreeTraversal.firstRotationAngle(in: [instruction])
     }
     
     private func isMovVideo(_ instruction: CompositionInstruction) -> Bool {

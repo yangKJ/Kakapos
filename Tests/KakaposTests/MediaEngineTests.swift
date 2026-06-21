@@ -1390,6 +1390,44 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(exportJob._videoProcessorCountForTesting, 1)
     }
 
+    func testVideoXReaderWriterExportExtractsNestedProcessorInstructions() throws {
+        let exporter = try makeSampleExporter()
+        let nestedInstruction = CompositeInstruction(instructions: [
+            CompositeInstruction(instructions: [
+                FilterInstruction(processor: PassthroughFrameProcessor()),
+                RotateInstruction(rotationAngle: .angle90)
+            ])
+        ])
+
+        let exportJob = try XCTUnwrap(
+            exporter.makeExportJob(
+                options: [.ExportPipeline: VideoX.ExportPipeline.readerWriter],
+                instructions: [nestedInstruction]
+            )
+        )
+
+        XCTAssertEqual(exportJob._videoProcessorCountForTesting, 1)
+    }
+
+    func testVideoXAssetExportSessionUsesNestedRotateInstructionsForRenderSize() throws {
+        let exporter = try makeSampleExporter()
+        let nestedInstruction = CompositeInstruction(instructions: [
+            CompositeInstruction(instructions: [
+                RotateInstruction(rotationAngle: .angle90)
+            ])
+        ])
+
+        let exportSession = try exporter.makeAssetExportSession(instructions: [nestedInstruction])
+        let expectedSize = VideoX.Option.setupVideoRenderSize(
+            exporter.provider.videoTracks,
+            asset: exporter.provider.asset,
+            options: [:]
+        )
+        let swappedSize = CGSize(width: expectedSize.height, height: expectedSize.width)
+
+        XCTAssertEqual(exportSession.videoComposition?.renderSize, swappedSize)
+    }
+
     func testReaderWriterExportJobInvokesFrameProcessorDuringExport() throws {
         let exporter = try makeSampleExporter()
         let callbackExpectation = expectation(description: "frame processor invoked")

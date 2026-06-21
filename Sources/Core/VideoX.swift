@@ -358,7 +358,7 @@ extension VideoX {
         guard let avFileType = self.provider.fileType?.avFileType else {
             throw VideoX.Error.unsupportedFileType
         }
-        let instructionPlan = extractReaderWriterInstructionPlan(from: instructions)
+        let instructionPlan = InstructionTreeTraversal.splitReaderWriterInstructions(from: instructions)
         let components = try buildExportComponents(options: options, instructions: instructionPlan.compositionInstructions)
         return ReaderWriterExportJob(
             asset: components.composition,
@@ -411,15 +411,9 @@ extension VideoX {
         var renderSize = composition.naturalSize
         
         for instruction in instructions {
-            if let compositeInstruction = instruction as? CompositeInstruction {
-                for subInstruction in compositeInstruction.instructions {
-                    if let rotateInstruction = subInstruction as? RotateInstruction {
-                        renderSize = rotateInstruction.rotatedSize(from: renderSize)
-                        break
-                    }
-                }
-            } else if let rotateInstruction = instruction as? RotateInstruction {
-                renderSize = rotateInstruction.rotatedSize(from: renderSize)
+            if let rotationAngle = InstructionTreeTraversal.firstRotationAngle(in: [instruction]),
+               rotationAngle.shouldSwapDimensions {
+                renderSize = CGSize(width: renderSize.height, height: renderSize.width)
                 break
             }
         }
@@ -434,21 +428,6 @@ extension VideoX {
         return audioMix
     }
 
-    private func extractReaderWriterInstructionPlan(from instructions: [CompositionInstruction]) -> (compositionInstructions: [CompositionInstruction], videoProcessors: [FrameProcessor]) {
-        var compositionInstructions: [CompositionInstruction] = []
-        var videoProcessors: [FrameProcessor] = []
-
-        for instruction in instructions {
-            if let processorInstruction = instruction as? FrameProcessorProvidingInstruction,
-               let processor = processorInstruction.kakaposFrameProcessor {
-                videoProcessors.append(processor)
-            } else {
-                compositionInstructions.append(instruction)
-            }
-        }
-
-        return (compositionInstructions, videoProcessors)
-    }
 }
 
 final class ExportSessionProgressObserver<Session: NSObject> {
