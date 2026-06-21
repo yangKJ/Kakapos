@@ -1354,6 +1354,59 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(job.summary.summaryText.contains("tracks 0/0"))
     }
 
+    func testReaderWriterExportJobManifestIsCodableForExternalInspection() throws {
+        let asset = AVMutableComposition()
+        let metadataItem = AVMutableMetadataItem()
+        metadataItem.identifier = .commonIdentifierTitle
+        metadataItem.value = "Kakapos" as NSString
+
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mov"),
+            fileType: .mov,
+            timeRange: CMTimeRange(start: CMTime(value: 15, timescale: 30), duration: CMTime(value: 60, timescale: 30)),
+            videoComposition: AVMutableVideoComposition(),
+            audioMix: AVMutableAudioMix(),
+            videoProcessors: [PassthroughFrameProcessor()],
+            shouldOptimizeForNetworkUse: false,
+            metadata: [metadataItem]
+        )
+        job._setStatusForTesting(.exporting)
+        let progress = ReaderWriterExportJob.ProgressInfo(
+            videoProgress: 0.4,
+            audioProgress: 0.8,
+            hasVideo: true,
+            hasAudio: true,
+            finishWritingProgress: 0.2,
+            phase: .finishing
+        )
+        job._setProgressInfoForTesting(progress)
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(job.manifest)
+        let decoded = try JSONDecoder().decode(ReaderWriterExportJob.Manifest.self, from: data)
+
+        XCTAssertEqual(decoded.status, .exporting)
+        XCTAssertEqual(decoded.fileTypeRawValue, AVFileType.mov.rawValue)
+        XCTAssertEqual(decoded.timeRange.startSeconds, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(decoded.timeRange.durationSeconds), 2.0, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(decoded.timeRange.endSeconds), 2.5, accuracy: 0.0001)
+        XCTAssertEqual(decoded.timeRange.isInfinite, false)
+        XCTAssertEqual(decoded.shouldOptimizeForNetworkUse, false)
+        XCTAssertEqual(decoded.metadataCount, 1)
+        XCTAssertEqual(decoded.videoTrackCount, 0)
+        XCTAssertEqual(decoded.audioTrackCount, 0)
+        XCTAssertEqual(decoded.processorCount, 1)
+        XCTAssertTrue(decoded.hasVideoComposition)
+        XCTAssertTrue(decoded.hasAudioMix)
+        XCTAssertEqual(decoded.lastPhase, .finishing)
+        XCTAssertEqual(try XCTUnwrap(decoded.lastProgressInfo).overallFractionCompleted, progress.overallFractionCompleted, accuracy: 0.0001)
+        XCTAssertEqual(decoded.lastErrorDescription, nil)
+    }
+
     func testExportSessionProgressObserverTracksKvoProgressChanges() {
         let session = ObservableProgressSession()
         var receivedValues: [Float] = []
