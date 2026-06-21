@@ -254,7 +254,7 @@ public final class TimelineComposition {
 
             try? compositionTrack.insertTimeRange(sourceRange, of: sourceTrack, at: layer.timeRange.start)
             let parameters = parametersByTrackID[trackID] ?? AVMutableAudioMixInputParameters(track: compositionTrack)
-            applyAudioRamps(layer.audioRamps, to: parameters)
+            applyClipAudioMix(layer, to: parameters)
             parametersByTrackID[trackID] = parameters
         }
 
@@ -272,11 +272,29 @@ public final class TimelineComposition {
 
             try? compositionTrack.insertTimeRange(sourceRange, of: sourceTrack, at: layer.timeRange.start)
             let parameters = parametersByTrackID[trackID] ?? AVMutableAudioMixInputParameters(track: compositionTrack)
-            applyAudioRamps(layer.audioRamps, to: parameters)
+            applyAudioLayerMix(layer, to: parameters)
             parametersByTrackID[trackID] = parameters
         }
 
+        applyTransitionAudioMix(
+            clipLayers: clipLayers,
+            allocation: allocation,
+            parametersByTrackID: &parametersByTrackID
+        )
+
         return parametersByTrackID.keys.sorted().compactMap { parametersByTrackID[$0] }
+    }
+
+    private func applyClipAudioMix(_ layer: ClipLayer, to parameters: AVMutableAudioMixInputParameters) {
+        parameters.setVolume(layer.volume, at: layer.timeRange.start)
+        parameters.setVolume(layer.volume, at: layer.timeRange.end)
+        applyAudioRamps(layer.audioRamps, baseVolume: layer.volume, allowedTimeRange: layer.timeRange, to: parameters)
+    }
+
+    private func applyAudioLayerMix(_ layer: AudioLayer, to parameters: AVMutableAudioMixInputParameters) {
+        parameters.setVolume(layer.volume, at: layer.timeRange.start)
+        parameters.setVolume(layer.volume, at: layer.timeRange.end)
+        applyAudioRamps(layer.audioRamps, baseVolume: layer.volume, allowedTimeRange: layer.timeRange, to: parameters)
     }
 
     private func applyAudioRamps(_ ramps: [AudioVolumeRamp], to parameters: AVMutableAudioMixInputParameters) {
@@ -286,6 +304,60 @@ public final class TimelineComposition {
                 toEndVolume: ramp.endVolume,
                 timeRange: ramp.timeRange
             )
+        }
+    }
+
+    private func applyAudioRamps(
+        _ ramps: [AudioVolumeRamp],
+        baseVolume: Float,
+        allowedTimeRange: CMTimeRange,
+        to parameters: AVMutableAudioMixInputParameters
+    ) {
+        for ramp in ramps {
+            let clippedRange = CMTimeRangeGetIntersection(ramp.timeRange, otherRange: allowedTimeRange)
+            guard clippedRange.isValid, !clippedRange.isEmpty else { continue }
+            parameters.setVolumeRamp(
+                fromStartVolume: ramp.startVolume * baseVolume,
+                toEndVolume: ramp.endVolume * baseVolume,
+                timeRange: clippedRange
+            )
+        }
+    }
+
+    private func applyTransitionAudioMix(
+        clipLayers: [ClipLayer],
+        allocation: [ObjectIdentifier: CMPersistentTrackID],
+        parametersByTrackID: inout [CMPersistentTrackID: AVMutableAudioMixInputParameters]
+    ) {
+        guard !transitions.isEmpty else { return }
+        let layerByTrackID = Dictionary(
+            uniqueKeysWithValues: clipLayers.compactMap { layer -> (CMPersistentTrackID, ClipLayer)? in
+                guard let trackID = allocation[ObjectIdentifier(layer)] else { return nil }
+                return (trackID, layer)
+            }
+        )
+
+        for transition in transitions where transition.kind == .crossDissolve {
+            guard let selectedLayers = layersForTransition(transition, activeLayers: layerByTrackID) else { continue }
+            let overlap = CMTimeRangeGetIntersection(transition.timeRange, otherRange: selectedLayers.source.timeRange)
+            let transitionRange = CMTimeRangeGetIntersection(overlap, otherRange: selectedLayers.destination.timeRange)
+            guard transitionRange.isValid, !transitionRange.isEmpty else { continue }
+
+            if let sourceParameters = parametersByTrackID[selectedLayers.sourceTrackID] {
+                sourceParameters.setVolumeRamp(
+                    fromStartVolume: selectedLayers.source.volume,
+                    toEndVolume: 0,
+                    timeRange: transitionRange
+                )
+            }
+
+            if let destinationParameters = parametersByTrackID[selectedLayers.destinationTrackID] {
+                destinationParameters.setVolumeRamp(
+                    fromStartVolume: 0,
+                    toEndVolume: selectedLayers.destination.volume,
+                    timeRange: transitionRange
+                )
+            }
         }
     }
 

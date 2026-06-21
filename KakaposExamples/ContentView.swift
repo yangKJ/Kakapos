@@ -546,7 +546,7 @@ private struct CameraRecordView: View {
 
 private struct TimelineExportView: View {
     @State private var player: AVPlayer?
-    @State private var message = "Compile a timeline from bundled clips"
+    @State private var message = "Compile a timeline with video and audio transitions"
     @State private var transitionEnabled = true
 
     var body: some View {
@@ -555,7 +555,7 @@ private struct TimelineExportView: View {
                 .frame(maxHeight: 280)
                 .background(Color.black.opacity(0.08))
                 .cornerRadius(8)
-            Toggle("Cross Dissolve", isOn: $transitionEnabled)
+            Toggle("Cross Dissolve + Audio Crossfade", isOn: $transitionEnabled)
             Button("Compile Timeline") { compileTimeline() }
                 .buttonStyle(.borderedProminent)
             Text(message).font(.footnote).foregroundColor(.secondary)
@@ -574,12 +574,14 @@ private struct TimelineExportView: View {
         let firstClip = ClipLayer(
             asset: AVAsset(url: firstURL),
             timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 3.2, preferredTimescale: 600)),
-            layerLevel: 0
+            layerLevel: 0,
+            volume: 0.9
         )
         let secondClip = ClipLayer(
             asset: AVAsset(url: secondURL),
             timeRange: CMTimeRange(start: CMTime(seconds: 2.8, preferredTimescale: 600), duration: CMTime(seconds: 3.2, preferredTimescale: 600)),
-            layerLevel: 1
+            layerLevel: 1,
+            volume: 0.75
         )
         timeline.addLayer(firstClip)
         timeline.addLayer(secondClip)
@@ -598,7 +600,7 @@ private struct TimelineExportView: View {
         item.audioMix = compiled.audioMix
         player = AVPlayer(playerItem: item)
         player?.play()
-        message = "Timeline compiled with \(compiled.composition.tracks.count) tracks, \(compiled.renderInstructions.count) intervals"
+        message = "Timeline compiled with \(compiled.composition.tracks.count) tracks, \(compiled.renderInstructions.count) intervals and audio mix"
     }
 }
 
