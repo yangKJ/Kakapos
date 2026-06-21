@@ -2465,6 +2465,60 @@ final class MediaEngineTests: XCTestCase {
         )
         XCTAssertEqual(receivedFrames.count, 2)
     }
+
+    func testPlayerFrameSourceSurfacesItemFailureToDelegateAndSummary() throws {
+        let item = AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL()))
+        let player = AVPlayer(playerItem: item)
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        final class DelegateSpy: MediaSourceDelegate {
+            var didFailError: NSError?
+            var didFinishCount = 0
+
+            func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {}
+
+            func mediaSource(_ source: MediaSource, didFail error: Error) {
+                didFailError = error as NSError
+            }
+
+            func mediaSourceDidFinish(_ source: MediaSource) {
+                didFinishCount += 1
+            }
+        }
+
+        let spy = DelegateSpy()
+        source.delegate = spy
+        let stateExpectation = expectation(description: "player failure finished")
+        source.stateChangedHandler = { state in
+            if state == .finished {
+                stateExpectation.fulfill()
+            }
+        }
+
+        source.start()
+        let error = NSError(domain: "PlayerFrameSourceTests", code: 77)
+        NotificationCenter.default.post(
+            name: .AVPlayerItemFailedToPlayToEndTime,
+            object: item,
+            userInfo: [AVPlayerItemFailedToPlayToEndTimeErrorKey: error]
+        )
+
+        wait(for: [stateExpectation], timeout: 1)
+        XCTAssertEqual(source.state, .finished)
+        XCTAssertEqual(source.lastErrorDescription, "PlayerFrameSourceTests#77")
+        XCTAssertEqual(source.summary.lastErrorDescription, "PlayerFrameSourceTests#77")
+        XCTAssertTrue(source.summary.summaryText.contains("error PlayerFrameSourceTests#77"))
+        XCTAssertEqual(spy.didFailError?.domain, "PlayerFrameSourceTests")
+        XCTAssertEqual(spy.didFailError?.code, 77)
+        XCTAssertEqual(spy.didFinishCount, 0)
+    }
     #endif
 
     func testRecorderSinkFinishRecordingReturnsRecordedClip() throws {
