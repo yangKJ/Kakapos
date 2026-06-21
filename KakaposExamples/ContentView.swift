@@ -8,6 +8,7 @@
 import SwiftUI
 import AVFoundation
 import AVKit
+import VideoToolbox
 import Harbeth
 import Photos
 
@@ -261,9 +262,12 @@ private struct PlayerPreviewView: View {
 
 private struct CameraRecordView: View {
     @State private var player: AVPlayer?
+    @State private var livePreviewImage: CGImage?
     @State private var frameCount = 0
     @State private var recordedDurationText = "0.00s"
     @State private var sessionStateText = "idle"
+    @State private var recorderStateText = "idle"
+    @State private var lastOutputText = "none"
     @State private var message = "Camera recording requires device camera permission"
     #if canImport(UIKit) && !os(watchOS)
     @State private var pipeline: MediaPipeline?
@@ -273,15 +277,29 @@ private struct CameraRecordView: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            VideoPlayer(player: player)
-                .frame(maxHeight: 280)
-                .background(Color.black.opacity(0.08))
-                .cornerRadius(8)
+            Group {
+                if let livePreviewImage {
+                    Image(decorative: livePreviewImage, scale: 1)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    VideoPlayer(player: player)
+                }
+            }
+            .frame(maxHeight: 280)
+            .background(Color.black.opacity(0.08))
+            .cornerRadius(8)
             Text("Captured Frames: \(frameCount)").font(.headline)
             Text("Recorded Duration: \(recordedDurationText)").font(.subheadline).foregroundColor(.secondary)
             Text("Session State: \(sessionStateText)").font(.subheadline).foregroundColor(.secondary)
+            Text("Recorder State: \(recorderStateText)").font(.subheadline).foregroundColor(.secondary)
+            Text("Last Output: \(lastOutputText)").font(.subheadline).foregroundColor(.secondary)
             HStack {
                 Button("Start Camera") { startCamera() }
+                Button("Pause Record") { pauseRecording() }
+                    .disabled(recorder == nil)
+                Button("Resume Record") { resumeRecording() }
+                    .disabled(recorder == nil)
                 Button("Stop") { stopCamera() }
                 Button("Flip Camera") { flipCamera() }
                     .disabled(cameraSource == nil)
@@ -315,9 +333,11 @@ private struct CameraRecordView: View {
                         case .didStop:
                             message = "Camera session stopped"
                         case .wasInterrupted:
+                            source.pause()
                             recorder.pauseRecording()
                             message = "Camera session interrupted"
                         case .interruptionEnded:
+                            source.resume()
                             recorder.resumeRecording()
                             message = "Camera interruption ended"
                         case .runtimeError(let isRecoverable, let description):
@@ -335,25 +355,51 @@ private struct CameraRecordView: View {
                             recordedDurationText = String(format: "%.2fs", duration.seconds)
                         }
                     }
+                    recorder.stateChangedHandler = { state in
+                        recorderStateText = String(describing: state)
+                    }
                     let counter = PixelBufferSink { _ in frameCount += 1 }
+                    let preview = PixelBufferSink { frame in
+                        guard let pixelBuffer = frame.pixelBuffer,
+                              frame.metadata.userInfo[CameraSource.MetadataKey.mediaType] as? String == AVMediaType.video.rawValue else {
+                            return
+                        }
+                        var previewImage: CGImage?
+                        let status = VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &previewImage)
+                        guard status == noErr, let previewImage else { return }
+                        DispatchQueue.main.async {
+                            livePreviewImage = previewImage
+                            lastOutputText = "video @ \(String(format: "%.2fs", frame.metadata.presentationTime.seconds))"
+                        }
+                    }
                     let pipeline = MediaPipeline(
                         source: source,
                         processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05)])],
-                        sinks: [counter, recorder]
+                        sinks: [preview, counter, recorder]
                     )
+                    pipeline.errorHandler = { error in
+                        message = "Pipeline error: \(error.localizedDescription)"
+                    }
                     pipeline.completionHandler = {
                         let clip = recorder.recordedClip ?? RecordedClip(outputURL: outputURL, duration: .zero, startedAt: nil, endedAt: nil)
                         player = AVPlayer(url: clip.outputURL)
                         player?.play()
+                        livePreviewImage = nil
                         recordedDurationText = String(format: "%.2fs", clip.duration.seconds)
+                        recorderStateText = String(describing: recorder.state)
+                        lastOutputText = clip.outputURL.lastPathComponent
                         message = "Recorded: \(clip.outputURL.lastPathComponent)"
                     }
                     self.cameraSource = source
                     self.recorder = recorder
                     self.pipeline = pipeline
+                    self.player = nil
+                    self.livePreviewImage = nil
                     frameCount = 0
                     recordedDurationText = "0.00s"
                     sessionStateText = String(describing: source.state)
+                    recorderStateText = String(describing: recorder.state)
+                    lastOutputText = "awaiting frames"
                     pipeline.start()
                     message = "Starting camera session"
                 } catch {
@@ -371,9 +417,29 @@ private struct CameraRecordView: View {
         pipeline?.stop()
         cameraSource = nil
         recorder = nil
+        livePreviewImage = nil
         sessionStateText = "stopped"
+        recorderStateText = "finished"
         #else
         message = "CameraSource is unavailable here"
+        #endif
+    }
+
+    private func pauseRecording() {
+        #if canImport(UIKit) && !os(watchOS)
+        cameraSource?.pause()
+        recorder?.pauseRecording()
+        recorderStateText = "paused"
+        message = "Recording paused"
+        #endif
+    }
+
+    private func resumeRecording() {
+        #if canImport(UIKit) && !os(watchOS)
+        cameraSource?.resume()
+        recorder?.resumeRecording()
+        recorderStateText = "recording"
+        message = "Recording resumed"
         #endif
     }
 
@@ -383,6 +449,8 @@ private struct CameraRecordView: View {
         let didSwitch = cameraSource.switchCameraPosition()
         if !didSwitch {
             message = "Failed to switch camera"
+        } else {
+            lastOutputText = "camera: \(String(describing: cameraSource.currentPosition))"
         }
         #endif
     }

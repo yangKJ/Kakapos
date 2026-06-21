@@ -36,6 +36,7 @@ public final class RecorderSink: MediaSink {
     public private(set) var state: State = .idle
     public private(set) var recordedClip: RecordedClip?
     public var durationChangedHandler: ((CMTime) -> Void)?
+    public var stateChangedHandler: ((State) -> Void)?
 
     private let writer: AVAssetWriter
     private var videoInput: AVAssetWriterInput?
@@ -45,6 +46,8 @@ public final class RecorderSink: MediaSink {
     private var lastPresentationTime: CMTime?
     private var pausedAt: CMTime?
     private var accumulatedPauseDuration: CMTime = .zero
+    private var hasWrittenFirstVideoFrame = false
+    private var pendingLeadingAudioBuffers: [CMSampleBuffer] = []
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
 
     public init(outputURL: URL, fileType: AVFileType = .mp4) throws {
@@ -86,7 +89,7 @@ public final class RecorderSink: MediaSink {
                 return
             }
             guard self.state == .recording || self.state == .paused else {
-                self.state = .finished
+                self.setState(.finished)
                 let clip = RecordedClip(outputURL: self.outputURL, duration: .zero, startedAt: self.startTime, endedAt: self.lastPresentationTime)
                 self.recordedClip = clip
                 completion(.success(clip))
@@ -95,7 +98,7 @@ public final class RecorderSink: MediaSink {
             self.videoInput?.markAsFinished()
             self.audioInput?.markAsFinished()
             self.writer.finishWriting {
-                self.state = .finished
+                self.setState(.finished)
                 if let error = self.writer.error {
                     completion(.failure(error))
                 } else {
@@ -110,7 +113,7 @@ public final class RecorderSink: MediaSink {
     public func cancel() {
         queue.async {
             self.writer.cancelWriting()
-            self.state = .cancelled
+            self.setState(.cancelled)
             self.recordedClip = nil
         }
     }
@@ -119,7 +122,7 @@ public final class RecorderSink: MediaSink {
         queue.sync {
             guard state == .recording else { return }
             pausedAt = time
-            state = .paused
+            setState(.paused)
         }
     }
 
@@ -127,28 +130,37 @@ public final class RecorderSink: MediaSink {
         queue.sync {
             guard state == .recording else { return }
             pausedAt = lastPresentationTime ?? startTime ?? .zero
-            state = .paused
+            setState(.paused)
         }
     }
 
     public func resumeRecording() {
         queue.sync {
             guard state == .paused else { return }
-            state = .recording
+            setState(.recording)
         }
     }
 
     private func consumeOnQueue(_ frame: MediaFrame) throws {
+        guard state != .paused else { return }
+        guard state != .cancelled && state != .finished else { return }
         if let sampleBuffer = frame.sampleBuffer, CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
             try appendAudio(sampleBuffer)
             return
         }
         guard let pixelBuffer = frame.pixelBuffer else { return }
         try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
-        let normalizedTime = try normalizedPresentationTime(for: frame.metadata.presentationTime)
+        let normalizedTime = adjustedPresentationTime(
+            try normalizedPresentationTime(for: frame.metadata.presentationTime),
+            sampleDuration: frame.metadata.duration
+        )
         try startIfNeeded(at: normalizedTime)
         guard let input = videoInput, let adaptor = pixelBufferAdaptor, input.isReadyForMoreMediaData else { return }
         adaptor.append(pixelBuffer, withPresentationTime: normalizedTime)
+        if !hasWrittenFirstVideoFrame {
+            hasWrittenFirstVideoFrame = true
+            try flushPendingLeadingAudioIfPossible()
+        }
         updateLastPresentationTime(normalizedTime)
         if let startTime = startTime {
             durationChangedHandler?(normalizedTime - startTime)
@@ -179,7 +191,22 @@ public final class RecorderSink: MediaSink {
 
     private func appendAudio(_ sampleBuffer: CMSampleBuffer) throws {
         try setupAudioIfNeeded(sampleBuffer: sampleBuffer)
-        let normalizedTime = try normalizedPresentationTime(for: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        guard hasWrittenFirstVideoFrame else {
+            pendingLeadingAudioBuffers.append(sampleBuffer)
+            if pendingLeadingAudioBuffers.count > 3 {
+                pendingLeadingAudioBuffers.removeFirst(pendingLeadingAudioBuffers.count - 3)
+            }
+            return
+        }
+        try flushPendingLeadingAudioIfPossible()
+        try appendAudioSampleBuffer(sampleBuffer)
+    }
+
+    private func appendAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) throws {
+        let normalizedTime = adjustedPresentationTime(
+            try normalizedPresentationTime(for: CMSampleBufferGetPresentationTimeStamp(sampleBuffer)),
+            sampleDuration: CMSampleBufferGetDuration(sampleBuffer)
+        )
         try startIfNeeded(at: normalizedTime)
         guard let input = audioInput, input.isReadyForMoreMediaData else { return }
         var timingCount: CMItemCount = 0
@@ -203,6 +230,15 @@ public final class RecorderSink: MediaSink {
         updateLastPresentationTime(normalizedTime)
     }
 
+    private func flushPendingLeadingAudioIfPossible() throws {
+        guard hasWrittenFirstVideoFrame, !pendingLeadingAudioBuffers.isEmpty else { return }
+        let buffers = pendingLeadingAudioBuffers
+        pendingLeadingAudioBuffers.removeAll()
+        for buffer in buffers {
+            try appendAudioSampleBuffer(buffer)
+        }
+    }
+
     private func setupAudioIfNeeded(sampleBuffer: CMSampleBuffer) throws {
         guard audioInput == nil else { return }
         let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [AVFormatIDKey: kAudioFormatMPEG4AAC], sourceFormatHint: CMSampleBufferGetFormatDescription(sampleBuffer))
@@ -219,16 +255,27 @@ public final class RecorderSink: MediaSink {
         writer.startSession(atSourceTime: time)
         startTime = time
         lastPresentationTime = time
-        state = .recording
+        setState(.recording)
     }
 
     private func normalizedPresentationTime(for time: CMTime) throws -> CMTime {
         if let pausedAt, time.isValid, pausedAt.isValid {
             accumulatedPauseDuration = accumulatedPauseDuration + (time - pausedAt)
             self.pausedAt = nil
-            state = .recording
+            setState(.recording)
         }
         return time - accumulatedPauseDuration
+    }
+
+    private func adjustedPresentationTime(_ time: CMTime, sampleDuration: CMTime?) -> CMTime {
+        guard let lastPresentationTime, time <= lastPresentationTime else { return time }
+        let minimumStep: CMTime
+        if let sampleDuration, sampleDuration.isValid, sampleDuration > .zero {
+            minimumStep = sampleDuration
+        } else {
+            minimumStep = CMTime(value: 1, timescale: 600)
+        }
+        return lastPresentationTime + minimumStep
     }
 
     private func updateLastPresentationTime(_ time: CMTime) {
@@ -257,5 +304,13 @@ public final class RecorderSink: MediaSink {
             startedAt: startedAt,
             endedAt: endedAt
         )
+    }
+
+    private func setState(_ newState: State) {
+        guard state != newState else { return }
+        state = newState
+        DispatchQueue.main.async {
+            self.stateChangedHandler?(newState)
+        }
     }
 }
