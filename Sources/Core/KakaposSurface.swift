@@ -21,8 +21,24 @@ public enum KakaposSurface {
         KakaposCapabilityCatalog.board(named: name)
     }
 
+    public static var exportBoard: ExportBoard {
+        ExportBoard()
+    }
+
+    public static var previewBoard: PreviewBoard {
+        PreviewBoard()
+    }
+
+    public static var recordBoard: RecordBoard {
+        RecordBoard()
+    }
+
+    public static var timelineBoard: TimelineBoard {
+        TimelineBoard()
+    }
+
     public static func export(provider: VideoX.Provider) -> VideoX {
-        KakaposEntryPointFactory.export(provider: provider)
+        exportBoard.export(provider: provider)
     }
 
     public static func exportTask(
@@ -30,7 +46,7 @@ public enum KakaposSurface {
         options: [VideoX.Option: Any] = [:],
         instructions: [CompositionInstruction]
     ) throws -> VideoX.ExportTask {
-        try KakaposEntryPointFactory.exportTask(provider: provider, options: options, instructions: instructions)
+        try exportBoard.exportTask(provider: provider, options: options, instructions: instructions)
     }
 
     public static func preview(
@@ -39,7 +55,7 @@ public enum KakaposSurface {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        previewBoard.preview(
             source: source,
             processors: processors,
             callbackQueue: callbackQueue,
@@ -55,7 +71,7 @@ public enum KakaposSurface {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        previewBoard.preview(
             player: player,
             preferredFramesPerSecond: preferredFramesPerSecond,
             processors: processors,
@@ -71,7 +87,7 @@ public enum KakaposSurface {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        previewBoard.preview(
             asset: asset,
             preferredFramesPerSecond: preferredFramesPerSecond,
             processors: processors,
@@ -87,7 +103,7 @@ public enum KakaposSurface {
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> RecordingPipeline {
-        try KakaposEntryPointFactory.record(
+        try recordBoard.record(
             source: source,
             outputURL: outputURL,
             fileType: fileType,
@@ -102,7 +118,7 @@ public enum KakaposSurface {
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> RecordingPipeline {
-        try KakaposEntryPointFactory.record(
+        try recordBoard.record(
             configuration: configuration,
             outputURL: outputURL,
             fileType: fileType,
@@ -117,7 +133,7 @@ public enum KakaposSurface {
         layers: [TimelineLayer] = [],
         transitions: [Transition] = []
     ) -> TimelinePipeline {
-        KakaposEntryPointFactory.timeline(
+        timelineBoard.timeline(
             renderSize: renderSize,
             frameDuration: frameDuration,
             layers: layers,
@@ -136,7 +152,7 @@ public enum KakaposSurface {
         metadata: [AVMetadataItem] = [],
         videoProcessors: [FrameProcessor] = []
     ) -> TimelineExportTask {
-        KakaposEntryPointFactory.timelineExportTask(
+        timelineBoard.timelineExportTask(
             renderSize: renderSize,
             frameDuration: frameDuration,
             layers: layers,
@@ -147,5 +163,165 @@ public enum KakaposSurface {
             metadata: metadata,
             videoProcessors: videoProcessors
         )
+    }
+
+    public struct ExportBoard: Sendable {
+        public var board: KakaposCapabilityBoard { .export }
+        public var displayName: String { board.displayName }
+        public var summary: String { board.summary }
+        public var primaryTypes: [String] { board.primaryTypes }
+        public var starterTypes: [String] { board.starterTypes }
+
+        public func export(provider: VideoX.Provider) -> VideoX {
+            KakaposEntryPointFactory.export(provider: provider)
+        }
+
+        public func exportTask(
+            provider: VideoX.Provider,
+            options: [VideoX.Option: Any] = [:],
+            instructions: [CompositionInstruction]
+        ) throws -> VideoX.ExportTask {
+            try KakaposEntryPointFactory.exportTask(provider: provider, options: options, instructions: instructions)
+        }
+    }
+
+    public struct PreviewBoard: Sendable {
+        public var board: KakaposCapabilityBoard { .preview }
+        public var displayName: String { board.displayName }
+        public var summary: String { board.summary }
+        public var primaryTypes: [String] { board.primaryTypes }
+        public var starterTypes: [String] { board.starterTypes }
+
+        public func preview(
+            source: MediaSource,
+            processors: [FrameProcessor] = [],
+            callbackQueue: DispatchQueue = .main,
+            handler: @escaping PreviewSink.Handler
+        ) -> PreviewPipeline {
+            KakaposEntryPointFactory.preview(
+                source: source,
+                processors: processors,
+                callbackQueue: callbackQueue,
+                handler: handler
+            )
+        }
+
+    #if canImport(UIKit)
+        public func preview(
+            player: AVPlayer,
+            preferredFramesPerSecond: Int = 30,
+            processors: [FrameProcessor] = [],
+            callbackQueue: DispatchQueue = .main,
+            handler: @escaping PreviewSink.Handler
+        ) -> PreviewPipeline {
+            KakaposEntryPointFactory.preview(
+                player: player,
+                preferredFramesPerSecond: preferredFramesPerSecond,
+                processors: processors,
+                callbackQueue: callbackQueue,
+                handler: handler
+            )
+        }
+
+        public func preview(
+            asset: AVAsset,
+            preferredFramesPerSecond: Int = 30,
+            processors: [FrameProcessor] = [],
+            callbackQueue: DispatchQueue = .main,
+            handler: @escaping PreviewSink.Handler
+        ) -> PreviewPipeline {
+            KakaposEntryPointFactory.preview(
+                asset: asset,
+                preferredFramesPerSecond: preferredFramesPerSecond,
+                processors: processors,
+                callbackQueue: callbackQueue,
+                handler: handler
+            )
+        }
+    #endif
+    }
+
+    public struct RecordBoard: Sendable {
+        public var board: KakaposCapabilityBoard { .record }
+        public var displayName: String { board.displayName }
+        public var summary: String { board.summary }
+        public var primaryTypes: [String] { board.primaryTypes }
+        public var starterTypes: [String] { board.starterTypes }
+
+        public func record(
+            source: MediaSource,
+            outputURL: URL,
+            fileType: AVFileType = .mp4,
+            processors: [FrameProcessor] = []
+        ) throws -> RecordingPipeline {
+            try KakaposEntryPointFactory.record(
+                source: source,
+                outputURL: outputURL,
+                fileType: fileType,
+                processors: processors
+            )
+        }
+
+    #if canImport(UIKit) && !os(watchOS)
+        public func record(
+            configuration: CameraSourceConfiguration = .init(),
+            outputURL: URL,
+            fileType: AVFileType = .mp4,
+            processors: [FrameProcessor] = []
+        ) throws -> RecordingPipeline {
+            try KakaposEntryPointFactory.record(
+                configuration: configuration,
+                outputURL: outputURL,
+                fileType: fileType,
+                processors: processors
+            )
+        }
+    #endif
+    }
+
+    public struct TimelineBoard: Sendable {
+        public var board: KakaposCapabilityBoard { .timeline }
+        public var displayName: String { board.displayName }
+        public var summary: String { board.summary }
+        public var primaryTypes: [String] { board.primaryTypes }
+        public var starterTypes: [String] { board.starterTypes }
+
+        public func timeline(
+            renderSize: CGSize = CGSize(width: 720, height: 1280),
+            frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+            layers: [TimelineLayer] = [],
+            transitions: [Transition] = []
+        ) -> TimelinePipeline {
+            KakaposEntryPointFactory.timeline(
+                renderSize: renderSize,
+                frameDuration: frameDuration,
+                layers: layers,
+                transitions: transitions
+            )
+        }
+
+        public func timelineExportTask(
+            renderSize: CGSize = CGSize(width: 720, height: 1280),
+            frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+            layers: [TimelineLayer] = [],
+            transitions: [Transition] = [],
+            outputURL: URL,
+            fileType: AVFileType = .mp4,
+            shouldOptimizeForNetworkUse: Bool = true,
+            metadata: [AVMetadataItem] = [],
+            videoProcessors: [FrameProcessor] = []
+        ) -> TimelineExportTask {
+            KakaposEntryPointFactory.timelineExportTask(
+                renderSize: renderSize,
+                frameDuration: frameDuration,
+                layers: layers,
+                transitions: transitions,
+                outputURL: outputURL,
+                fileType: fileType,
+                shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+                metadata: metadata,
+                videoProcessors: videoProcessors
+            )
+        }
     }
 }
