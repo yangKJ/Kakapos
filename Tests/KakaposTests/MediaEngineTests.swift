@@ -1358,9 +1358,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.summary.lastImageWidth, 10)
         XCTAssertEqual(sink.summary.lastPresentationTime, .zero)
         XCTAssertEqual(sink.summary.lastSourceTime, .zero)
+        XCTAssertNil(sink.summary.lastFrameRequestReason)
         XCTAssertEqual(
             sink.summary.summaryText,
-            "state active · frame 1 · presentation 0.00s · sourceTime 0.00s · image 10x8 · pending no"
+            "state active · frame 1 · presentation 0.00s · sourceTime 0.00s · reason n/a · image 10x8 · pending no"
         )
 
         sink.pause()
@@ -1375,7 +1376,30 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.summary.lastFrameIndex, 1)
         XCTAssertEqual(
             sink.summary.summaryText,
-            "state paused · frame 1 · presentation 0.00s · sourceTime 0.00s · image 10x8 · pending yes"
+            "state paused · frame 1 · presentation 0.00s · sourceTime 0.00s · reason n/a · image 10x8 · pending yes"
+        )
+    }
+
+    func testPreviewSinkSummaryCapturesFrameRequestReasonFromMetadata() throws {
+        let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
+        let metadata = FrameMetadata(
+            presentationTime: CMTime(value: 5, timescale: 30),
+            sourceTime: CMTime(value: 4, timescale: 30),
+            frameIndex: 3,
+            userInfo: ["kakapos.player-frame-request-reason": "seek"]
+        )
+        let sink = PreviewSink { _, _ in }
+
+        sink.consume(MediaFrame(pixelBuffer: pixelBuffer, metadata: metadata)) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected preview sink failure: \(error)")
+            }
+        }
+
+        XCTAssertEqual(sink.summary.lastFrameRequestReason, "seek")
+        XCTAssertEqual(
+            sink.summary.summaryText,
+            "state active · frame 3 · presentation 0.17s · sourceTime 0.13s · reason seek · image 12x10 · pending no"
         )
     }
 

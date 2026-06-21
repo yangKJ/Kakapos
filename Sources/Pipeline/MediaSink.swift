@@ -46,11 +46,16 @@ public final class PixelBufferSink: MediaSink {
 public final class PreviewSink: MediaSink {
     public typealias Handler = (CGImage, FrameMetadata) -> Void
 
+    private enum MetadataKey {
+        static let frameRequestReason = "kakapos.player-frame-request-reason"
+    }
+
     public struct Summary {
         public let state: State
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
         public let lastSourceTime: CMTime?
+        public let lastFrameRequestReason: String?
         public let lastImageWidth: Int?
         public let lastImageHeight: Int?
         public let hasPendingFrame: Bool
@@ -59,13 +64,14 @@ public final class PreviewSink: MediaSink {
             let frameText = lastFrameIndex.map(String.init) ?? "n/a"
             let presentationText = lastPresentationTime.map { String(format: "%.2fs", $0.seconds) } ?? "n/a"
             let sourceTimeText = lastSourceTime.map { String(format: "%.2fs", $0.seconds) } ?? "n/a"
+            let reasonText = lastFrameRequestReason ?? "n/a"
             let sizeText: String
             if let lastImageWidth, let lastImageHeight {
                 sizeText = "\(lastImageWidth)x\(lastImageHeight)"
             } else {
                 sizeText = "n/a"
             }
-            return "state \(state) · frame \(frameText) · presentation \(presentationText) · sourceTime \(sourceTimeText) · image \(sizeText) · pending \(hasPendingFrame ? "yes" : "no")"
+            return "state \(state) · frame \(frameText) · presentation \(presentationText) · sourceTime \(sourceTimeText) · reason \(reasonText) · image \(sizeText) · pending \(hasPendingFrame ? "yes" : "no")"
         }
     }
 
@@ -89,11 +95,13 @@ public final class PreviewSink: MediaSink {
 
     public var summary: Summary {
         lock.lock()
+        let lastFrameRequestReason = lastFrame?.metadata.userInfo[MetadataKey.frameRequestReason] as? String
         let summary = Summary(
             state: state,
             lastFrameIndex: lastFrame?.metadata.frameIndex,
             lastPresentationTime: lastFrame?.metadata.presentationTime,
             lastSourceTime: lastFrame?.metadata.sourceTime ?? lastFrame?.metadata.presentationTime,
+            lastFrameRequestReason: lastFrameRequestReason,
             lastImageWidth: lastImage?.width,
             lastImageHeight: lastImage?.height,
             hasPendingFrame: pendingFrame != nil
