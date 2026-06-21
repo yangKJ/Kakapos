@@ -1126,7 +1126,8 @@ final class MediaEngineTests: XCTestCase {
                 audioProgress: 0.8,
                 hasVideo: true,
                 hasAudio: true,
-                finishWritingProgress: 0.2
+                finishWritingProgress: 0.2,
+                phase: .finishing
             )
         )
 
@@ -1136,7 +1137,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(job.summary.status, .exporting)
         XCTAssertEqual(
             job.summary.summaryText,
-            "state exporting · tracks 1/1 · processors 1 · progress 58% · video 40% · audio 80% · finish 20%"
+            "state exporting · tracks 1/1 · processors 1 · progress 58% · phase finishing · video 40% · audio 80% · finish 20%"
         )
     }
 
@@ -1554,7 +1555,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNotNil(exportTask.readerWriterJob)
         XCTAssertTrue(exportTask.supportsPauseResume)
         XCTAssertEqual(exportTask.status, .idle)
-        XCTAssertEqual(exportTask.summaryText, "state idle · tracks 1/1 · processors 1 · progress n/a")
+        XCTAssertEqual(exportTask.summaryText, "state idle · tracks 1/1 · processors 1 · progress n/a · phase idle")
 
         exportTask.pause()
         XCTAssertEqual(exportTask.status, .idle)
