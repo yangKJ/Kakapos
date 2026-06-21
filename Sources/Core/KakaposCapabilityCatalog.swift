@@ -31,7 +31,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
         case .export:
             return "Offline export and compatibility entry points for VideoX, Provider, and instructions."
         case .preview:
-            return "Player frame sourcing and preview routing through MediaPipeline and PreviewSink."
+            return "Player frame sourcing and preview routing through PreviewPipeline, MediaPipeline, and PreviewSink."
         case .record:
             return "Camera capture, recording, and sink lifecycle through CameraSource and RecorderSink."
         case .timeline:
@@ -44,7 +44,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
         case .export:
             return ["VideoX", "Provider", "Instruction", "FilterInstruction", "RotateInstruction", "WatermarkInstruction", "ReaderWriterExportJob"]
         case .preview:
-            return ["PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"]
+            return ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"]
         case .record:
             return ["CameraSource", "RecorderSink", "RecordingSession"]
         case .timeline:

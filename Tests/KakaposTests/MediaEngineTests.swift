@@ -11,7 +11,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(boards.count, 4)
         XCTAssertEqual(boards.map(\.board), [.export, .preview, .record, .timeline])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.displayName, "Export")
-        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
         XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
     }
 
@@ -1465,6 +1465,39 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.state, PreviewSink.State.active)
         XCTAssertEqual(sink.lastFrame?.metadata.frameIndex, 2)
         XCTAssertEqual(sink.lastImage?.width, 14)
+    }
+
+    func testPreviewPipelineRoutesFramesThroughPreviewSinkAndSummarizesBoardState() throws {
+        let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
+        let frame = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
+        )
+        let source = TestSource(frames: [frame])
+        let completion = expectation(description: "preview pipeline completion")
+        let previewFrames = expectation(description: "preview frame delivered")
+        var receivedPreviewMetadata: FrameMetadata?
+        let pipeline = PreviewPipeline(source: source) { _, metadata in
+            receivedPreviewMetadata = metadata
+            previewFrames.fulfill()
+        }
+
+        pipeline.pipeline.completionHandler = {
+            completion.fulfill()
+        }
+
+        pipeline.start()
+
+        wait(for: [previewFrames, completion], timeout: 1)
+
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(pipeline.previewSink.state, .finished)
+        XCTAssertEqual(pipeline.summary.sourceTypeName, "TestSource")
+        XCTAssertEqual(pipeline.summary.processorCount, 0)
+        XCTAssertEqual(pipeline.summary.previewState, .finished)
+        XCTAssertEqual(pipeline.summary.lastFrameIndex, 1)
+        XCTAssertEqual(receivedPreviewMetadata?.frameIndex, 1)
+        XCTAssertTrue(pipeline.summary.summaryText.contains("preview finished"))
     }
 
     #if canImport(UIKit)
