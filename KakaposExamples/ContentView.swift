@@ -547,6 +547,7 @@ private struct CameraRecordView: View {
 private struct TimelineExportView: View {
     @State private var player: AVPlayer?
     @State private var message = "Compile a timeline from bundled clips"
+    @State private var transitionEnabled = true
 
     var body: some View {
         VStack(spacing: 18) {
@@ -554,6 +555,7 @@ private struct TimelineExportView: View {
                 .frame(maxHeight: 280)
                 .background(Color.black.opacity(0.08))
                 .cornerRadius(8)
+            Toggle("Cross Dissolve", isOn: $transitionEnabled)
             Button("Compile Timeline") { compileTimeline() }
                 .buttonStyle(.borderedProminent)
             Text(message).font(.footnote).foregroundColor(.secondary)
@@ -569,15 +571,34 @@ private struct TimelineExportView: View {
             return
         }
         let timeline = TimelineComposition(renderSize: CGSize(width: 720, height: 1280), frameDuration: CMTime(value: 1, timescale: 30))
-        timeline.addLayer(ClipLayer(asset: AVAsset(url: firstURL), timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 3, preferredTimescale: 600))))
-        timeline.addLayer(ClipLayer(asset: AVAsset(url: secondURL), timeRange: CMTimeRange(start: CMTime(seconds: 3, preferredTimescale: 600), duration: CMTime(seconds: 3, preferredTimescale: 600))))
+        let firstClip = ClipLayer(
+            asset: AVAsset(url: firstURL),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 3.2, preferredTimescale: 600)),
+            layerLevel: 0
+        )
+        let secondClip = ClipLayer(
+            asset: AVAsset(url: secondURL),
+            timeRange: CMTimeRange(start: CMTime(seconds: 2.8, preferredTimescale: 600), duration: CMTime(seconds: 3.2, preferredTimescale: 600)),
+            layerLevel: 1
+        )
+        timeline.addLayer(firstClip)
+        timeline.addLayer(secondClip)
+        if transitionEnabled {
+            timeline.addTransition(
+                Transition(
+                    timeRange: CMTimeRange(start: CMTime(seconds: 2.8, preferredTimescale: 600), duration: CMTime(seconds: 0.4, preferredTimescale: 600)),
+                    sourceLayerLevel: 0,
+                    destinationLayerLevel: 1
+                )
+            )
+        }
         let compiled = timeline.compile()
         let item = AVPlayerItem(asset: compiled.composition)
         item.videoComposition = compiled.videoComposition
         item.audioMix = compiled.audioMix
         player = AVPlayer(playerItem: item)
         player?.play()
-        message = "Timeline compiled with \(compiled.composition.tracks.count) tracks"
+        message = "Timeline compiled with \(compiled.composition.tracks.count) tracks, \(compiled.renderInstructions.count) intervals"
     }
 }
 
