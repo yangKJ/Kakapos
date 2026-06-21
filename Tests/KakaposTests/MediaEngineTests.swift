@@ -1225,6 +1225,50 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.cancelCount, 1)
     }
 
+    func testMediaPipelineTracksRunningPausedFinishedAndFailedStates() {
+        let successSource = TestSource(frames: [])
+        let successPipeline = MediaPipeline(source: successSource, processors: [], sinks: [])
+        let successExpectation = expectation(description: "success state callbacks")
+        successExpectation.expectedFulfillmentCount = 2
+        var successStates: [MediaPipeline.State] = []
+        successPipeline.stateHandler = { state in
+            successStates.append(state)
+            successExpectation.fulfill()
+        }
+
+        successPipeline.start()
+        wait(for: [successExpectation], timeout: 1)
+
+        XCTAssertEqual(successStates, [.running, .finished])
+        XCTAssertEqual(successPipeline.state, .finished)
+
+        let failureSource = FailingSource(error: NSError(domain: "MediaPipelineTests", code: 11))
+        let failurePipeline = MediaPipeline(source: failureSource, processors: [], sinks: [])
+        let failureExpectation = expectation(description: "failure state callbacks")
+        failureExpectation.expectedFulfillmentCount = 2
+        let errorExpectation = expectation(description: "failure error callback")
+        var failureStates: [MediaPipeline.State] = []
+        var receivedError: NSError?
+
+        failurePipeline.stateHandler = { state in
+            failureStates.append(state)
+            failureExpectation.fulfill()
+        }
+        failurePipeline.errorHandler = { error in
+            receivedError = error as NSError
+            errorExpectation.fulfill()
+        }
+
+        failurePipeline.start()
+
+        wait(for: [failureExpectation, errorExpectation], timeout: 1)
+
+        XCTAssertEqual(failureStates, [.running, .failed])
+        XCTAssertEqual(receivedError?.domain, "MediaPipelineTests")
+        XCTAssertEqual(receivedError?.code, 11)
+        XCTAssertEqual(failurePipeline.state, .failed)
+    }
+
     func testPlayerFrameCoordinatorResetsFrameIndexWhenCurrentItemChanges() {
         final class Token: NSObject {}
 
@@ -1892,6 +1936,24 @@ private final class LifecycleAwareSink: MediaSink {
     func cancel() {
         cancelCount += 1
     }
+}
+
+private final class FailingSource: MediaSource {
+    weak var delegate: MediaSourceDelegate?
+    let error: Error
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    func start() {
+        delegate?.mediaSource(self, didFail: error)
+    }
+
+    func pause() {}
+    func resume() {}
+    func stop() {}
+    func cancel() {}
 }
 
 private final class TestConsumerNode: MediaFrameConsumerNode {

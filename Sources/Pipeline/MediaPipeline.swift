@@ -58,8 +58,20 @@ public final class MediaProcessorChain: MediaSink {
 }
 
 public final class MediaPipeline {
+    public enum State: Equatable {
+        case idle
+        case running
+        case paused
+        case finished
+        case cancelled
+        case failed
+    }
+
     public let source: MediaSource
     public let chain: MediaProcessorChain
+    public private(set) var state: State = .idle
+
+    public var stateHandler: ((State) -> Void)?
 
     public var processors: [FrameProcessor] {
         get { chain.processors }
@@ -73,10 +85,7 @@ public final class MediaPipeline {
 
     public var errorHandler: ((Error) -> Void)? {
         get { chain.errorHandler }
-        set {
-            chain.errorHandler = newValue
-            sourceAdapter.errorHandler = newValue
-        }
+        set { chain.errorHandler = newValue }
     }
 
     public var completionHandler: (() -> Void)? {
@@ -101,6 +110,9 @@ public final class MediaPipeline {
         self.sourceAdapter.finishHandler = { [weak self] in
             self?.finishChain()
         }
+        self.sourceAdapter.errorHandler = { [weak self] error in
+            self?.failChain(with: error)
+        }
     }
 
     public convenience init(source: MediaSource, branch: MediaGraphBranch) {
@@ -108,17 +120,20 @@ public final class MediaPipeline {
     }
 
     public func start() {
+        transitionIfNeeded(from: [.idle], to: .running)
         source.start()
     }
 
     public func pause() {
         source.pause()
         chain.pause()
+        transitionIfNeeded(from: [.running], to: .paused)
     }
 
     public func resume() {
         source.resume()
         chain.resume()
+        transitionIfNeeded(from: [.paused], to: .running)
     }
 
     public func stop() {
@@ -127,11 +142,13 @@ public final class MediaPipeline {
     }
 
     public func cancel() {
+        transitionIfNeeded(from: [.idle, .running, .paused], to: .cancelled)
         source.cancel()
         chain.cancel()
     }
 
     private func finishChain() {
+        guard transitionIfNeeded(from: [.running, .paused, .idle], to: .finished) else { return }
         let shouldFinish = stateQueue.sync { () -> Bool in
             guard !hasFinished else { return false }
             hasFinished = true
@@ -141,9 +158,34 @@ public final class MediaPipeline {
 
         chain.finish { [weak self] result in
             if case .failure(let error) = result {
-                self?.errorHandler?(error)
+                self?.failChain(with: error)
             }
         }
+    }
+
+    private func failChain(with error: Error) {
+        guard transitionIfNeeded(from: [.running, .paused, .idle], to: .failed) else { return }
+        chain.cancel()
+        DispatchQueue.main.async {
+            self.errorHandler?(error)
+        }
+    }
+
+    @discardableResult
+    private func transitionIfNeeded(from allowedStates: [State]?, to newState: State) -> Bool {
+        let didChange = stateQueue.sync { () -> Bool in
+            if let allowedStates, !allowedStates.contains(state) {
+                return false
+            }
+            guard state != newState else { return false }
+            state = newState
+            return true
+        }
+        guard didChange else { return false }
+        DispatchQueue.main.async {
+            self.stateHandler?(newState)
+        }
+        return true
     }
 }
 
