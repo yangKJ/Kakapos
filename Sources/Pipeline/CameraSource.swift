@@ -14,6 +14,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
         public static let mediaType = "kakapos.camera.media-type"
         public static let cameraPosition = "kakapos.camera.position"
         public static let sessionState = "kakapos.camera.session-state"
+        public static let deviceOrientation = "kakapos.camera.device-orientation"
+        public static let mirrored = "kakapos.camera.mirrored"
     }
 
     public weak var delegate: MediaSourceDelegate?
@@ -22,7 +24,11 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     public private(set) var isPaused: Bool = false
     public private(set) var state: CameraSessionState = .idle
     public private(set) var currentPosition: CameraPosition
+    public private(set) var authorizationStatus: CameraAuthorizationStatus
+    public private(set) var configuration: CameraSourceConfiguration
     public var sessionEventHandler: ((CameraSessionEvent) -> Void)?
+    public var photoCaptureHandler: ((CameraPhotoCaptureResult) -> Void)?
+    public var authorizationStatusChangedHandler: ((CameraAuthorizationStatus) -> Void)?
 
     private let queue = DispatchQueue(label: "com.condy.kakapos.camera-source")
     private let realtime: KakaposRealtime
@@ -30,16 +36,46 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     private let outputNode = MediaOutputNode()
     private var lifecycle: CameraSessionLifecycle
     private var frameIndex: Int64 = 0
+    private var currentOrientation: AVCaptureVideoOrientation = .portrait
 
-    public init(sessionPreset: AVCaptureSession.Preset = .high, position: AVCaptureDevice.Position = .back) throws {
+    public init(configuration: CameraSourceConfiguration = CameraSourceConfiguration()) throws {
         self.realtime = KakaposRealtime()
-        self.currentPosition = Self.cameraPosition(from: position)
-        self.lifecycle = CameraSessionLifecycle(position: Self.cameraPosition(from: position))
+        self.configuration = configuration
+        self.currentPosition = configuration.preferredPosition
+        self.authorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
+        self.lifecycle = CameraSessionLifecycle(position: configuration.preferredPosition, authorizationStatus: Self.authorizationStatus(for: configuration.captureMode))
         super.init()
-        configure(position: position, sessionPreset: sessionPreset)
+        configure()
+    }
+
+    public convenience init(sessionPreset: AVCaptureSession.Preset = .high, position: AVCaptureDevice.Position = .back) throws {
+        try self.init(
+            configuration: CameraSourceConfiguration(
+                preferredPosition: Self.cameraPosition(from: position),
+                video: CameraVideoConfiguration(sessionPreset: sessionPreset)
+            )
+        )
     }
 
     public func start() {
+        let status = Self.authorizationStatus(for: configuration.captureMode)
+        authorizationStatus = status
+        publish(.authorizationChanged(status))
+        if status != .authorized {
+            guard configuration.automaticallyRequestsAuthorization, status == .notDetermined else {
+                notifyAuthorizationFailure()
+                return
+            }
+            requestRequiredAuthorizations { [weak self] granted in
+                guard let self else { return }
+                if granted {
+                    self.start()
+                } else {
+                    self.notifyAuthorizationFailure()
+                }
+            }
+            return
+        }
         publish(.startRequested)
         queue.async {
             do {
@@ -55,10 +91,12 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
 
     public func pause() {
         isPaused = true
+        publish(.pauseRequested)
     }
 
     public func resume() {
         isPaused = false
+        publish(.resumeRequested)
     }
 
     public func stop() {
@@ -73,25 +111,80 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
 
     @discardableResult
     public func switchCameraPosition() -> Bool {
-        realtime.flipCaptureDevicePosition()
         let nextPosition: CameraPosition = currentPosition == .back ? .front : .back
-        publish(.positionChanged(nextPosition))
+        return switchCameraPosition(to: nextPosition)
+    }
+
+    @discardableResult
+    public func switchCameraPosition(to position: CameraPosition) -> Bool {
+        guard position != .unspecified else { return false }
+        publish(.positionSwitchRequested(position))
+        realtime.flipCaptureDevicePosition()
+        applyMirroring(for: position)
+        publish(.positionChanged(position))
         return true
     }
 
-    private func configure(position: AVCaptureDevice.Position, sessionPreset: AVCaptureSession.Preset) {
+    public func capturePhoto() {
+        realtime.capturePhoto()
+    }
+
+    public func capturePhotoFromCurrentFrame() {
+        realtime.capturePhotoFromVideo()
+    }
+
+    public static func authorizationStatus(for captureMode: CameraCaptureMode) -> CameraAuthorizationStatus {
+        let statuses = captureMode.requestedMediaTypes.map { authorizationStatus(for: $0) }
+        if statuses.contains(.denied) {
+            return .denied
+        }
+        if statuses.allSatisfy({ $0 == .authorized }) {
+            return .authorized
+        }
+        return .notDetermined
+    }
+
+    public static func authorizationStatus(for mediaType: AVMediaType) -> CameraAuthorizationStatus {
+        switch KakaposRealtime.authorizationStatus(forMediaType: mediaType) {
+        case .authorized:
+            return .authorized
+        case .notAuthorized:
+            return .denied
+        case .notDetermined:
+            return .notDetermined
+        }
+    }
+
+    public static func requestAuthorization(for mediaType: AVMediaType, completion: @escaping (CameraAuthorizationStatus) -> Void) {
+        KakaposRealtime.requestAuthorization(forMediaType: mediaType) { _, status in
+            switch status {
+            case .authorized:
+                completion(.authorized)
+            case .notAuthorized:
+                completion(.denied)
+            case .notDetermined:
+                completion(.notDetermined)
+            }
+        }
+    }
+
+    private func configure() {
         realtime.delegate = self
         realtime.videoDelegate = self
-        realtime.captureMode = .video
-        realtime.devicePosition = position
-        realtime.previewLayer.videoGravity = .resizeAspectFill
-        realtime.videoConfiguration.preset = sessionPreset
+        realtime.deviceDelegate = self
+        realtime.photoDelegate = self
+        realtime.captureMode = realtimeCaptureMode(for: configuration.captureMode)
+        realtime.devicePosition = avDevicePosition(from: configuration.preferredPosition)
+        realtime.previewLayer.videoGravity = configuration.previewGravity
+        configuration.video.apply(to: realtime.videoConfiguration)
+        configuration.photo.apply(to: realtime.photoConfiguration)
         realtime.rawVideoSampleBufferHandler = { [weak self] sampleBuffer, _ in
             self?.emit(sampleBuffer: sampleBuffer, mediaType: .video)
         }
         realtime.rawAudioSampleBufferHandler = { [weak self] sampleBuffer, _ in
             self?.emit(sampleBuffer: sampleBuffer, mediaType: .audio)
         }
+        applyMirroring(for: configuration.preferredPosition)
     }
 
     private func emit(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
@@ -109,7 +202,9 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
                 userInfo: [
                     MetadataKey.mediaType: mediaType.rawValue,
                     MetadataKey.cameraPosition: String(describing: currentPosition),
-                    MetadataKey.sessionState: String(describing: state)
+                    MetadataKey.sessionState: String(describing: state),
+                    MetadataKey.deviceOrientation: String(describing: currentOrientation),
+                    MetadataKey.mirrored: configuration.effectiveMirroringValue(for: currentPosition)
                 ]
             )
         )
@@ -124,8 +219,12 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
         guard let event = lifecycle.handle(action) else { return }
         state = lifecycle.state
         currentPosition = lifecycle.position
+        authorizationStatus = lifecycle.authorizationStatus
         DispatchQueue.main.async {
             self.sessionEventHandler?(event)
+            if case .authorizationChanged(let status) = event {
+                self.authorizationStatusChangedHandler?(status)
+            }
         }
     }
 
@@ -137,6 +236,85 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
             return .back
         default:
             return .unspecified
+        }
+    }
+
+    private func avDevicePosition(from position: CameraPosition) -> AVCaptureDevice.Position {
+        switch position {
+        case .front:
+            return .front
+        case .back:
+            return .back
+        case .unspecified:
+            return .unspecified
+        }
+    }
+
+    private func realtimeCaptureMode(for captureMode: CameraCaptureMode) -> KakaposRealtimeCaptureMode {
+        switch captureMode {
+        case .video:
+            return .video
+        case .videoWithoutAudio:
+            return .videoWithoutAudio
+        case .photo:
+            return .photo
+        }
+    }
+
+    private func requestRequiredAuthorizations(completion: @escaping (Bool) -> Void) {
+        let mediaTypes = configuration.requestedMediaTypes
+        guard !mediaTypes.isEmpty else {
+            completion(true)
+            return
+        }
+        let group = DispatchGroup()
+        var allGranted = true
+        for mediaType in mediaTypes {
+            let status = Self.authorizationStatus(for: mediaType)
+            if status == .authorized {
+                continue
+            }
+            group.enter()
+            Self.requestAuthorization(for: mediaType) { status in
+                if status != .authorized {
+                    allGranted = false
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            completion(allGranted)
+        }
+    }
+
+    private func notifyAuthorizationFailure() {
+        publish(.authorizationChanged(Self.authorizationStatus(for: configuration.captureMode)))
+        let error = KakaposRealtimeError.authorization
+        DispatchQueue.main.async {
+            self.delegate?.mediaSource(self, didFail: error)
+        }
+    }
+
+    private func applyMirroring(for position: CameraPosition) {
+        switch configuration.mirroringMode {
+        case .off:
+            realtime.mirroringMode = .off
+        case .on:
+            realtime.mirroringMode = .on
+        case .automatic:
+            realtime.mirroringMode = position == .front ? .auto : .off
+        }
+    }
+
+    private func emitPhotoResult(photoDictionary: [String: Any], isFromCurrentFrame: Bool) {
+        let data =
+            photoDictionary[KakaposRealtimePhotoFileDataKey] as? Data ??
+            photoDictionary[KakaposRealtimePhotoJPEGKey] as? Data ??
+            photoDictionary[KakaposRealtimePhotoCroppedJPEGKey] as? Data
+        let metadata = photoDictionary[KakaposRealtimePhotoMetadataKey] as? [String: Any] ?? [:]
+        let result = CameraPhotoCaptureResult(data: data, metadata: metadata, isFromCurrentFrame: isFromCurrentFrame)
+        DispatchQueue.main.async {
+            self.photoCaptureHandler?(result)
         }
     }
 
@@ -218,6 +396,65 @@ extension CameraSource: KakaposRealtimeVideoDelegate {
 
     public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didCompleteSession session: KakaposRealtimeSession) {}
 
-    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didCompletePhotoCaptureFromVideoFrame photoDict: [String : Any]?) {}
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didCompletePhotoCaptureFromVideoFrame photoDict: [String : Any]?) {
+        guard let photoDict else { return }
+        emitPhotoResult(photoDictionary: photoDict, isFromCurrentFrame: true)
+    }
+}
+
+extension CameraSource: KakaposRealtimeDeviceDelegate {
+    public var kakaposRealtimeCurrentDeviceOrientation: (() -> AVCaptureVideoOrientation)? {
+        { [weak self] in
+            self?.currentOrientation ?? .portrait
+        }
+    }
+
+    public func kakaposRealtimeDevicePositionWillChange(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtimeDevicePositionDidChange(_ kakaposRealtime: KakaposRealtime) {
+        let position = Self.cameraPosition(from: kakaposRealtime.devicePosition)
+        applyMirroring(for: position)
+        publish(.positionChanged(position))
+    }
+
+    public func kakaposRealtimeDeviceOrientationWillChange(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didChangeDeviceOrientation deviceOrientation: KakaposRealtimeDeviceOrientation) {
+        currentOrientation = deviceOrientation
+    }
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didChangeDeviceFormat deviceFormat: AVCaptureDevice.Format) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didChangeCleanAperture cleanAperture: CGRect) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didChangeLensPosition lensPosition: Float) {}
+
+    public func kakaposRealtimeWillStartFocus(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtimeDidStopFocus(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtimeWillChangeExposure(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtimeDidChangeExposure(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didChangeExposureDuration exposureDuration: CMTime) {}
+
+    public func kakaposRealtimeWillChangeWhiteBalance(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtimeDidChangeWhiteBalance(_ kakaposRealtime: KakaposRealtime) {}
+}
+
+extension CameraSource: KakaposRealtimePhotoDelegate {
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, output: AVCapturePhotoOutput, willBeginCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, photoConfiguration: KakaposRealtimePhotoConfiguration) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, output: AVCapturePhotoOutput, willCapturePhotoFor resolvedSettings: AVCaptureResolvedPhotoSettings, photoConfiguration: KakaposRealtimePhotoConfiguration) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, output: AVCapturePhotoOutput, didCapturePhotoFor resolvedSettings: AVCaptureResolvedPhotoSettings, photoConfiguration: KakaposRealtimePhotoConfiguration) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didFinishProcessingPhoto photo: AVCapturePhoto, photoDict: [String : Any], photoConfiguration: KakaposRealtimePhotoConfiguration) {
+        emitPhotoResult(photoDictionary: photoDict, isFromCurrentFrame: false)
+    }
+
+    public func kakaposRealtimeDidCompletePhotoCapture(_ kakaposRealtime: KakaposRealtime) {}
 }
 #endif
