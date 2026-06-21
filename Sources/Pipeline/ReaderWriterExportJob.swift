@@ -8,6 +8,17 @@
 import Foundation
 import AVFoundation
 
+protocol ReaderWriterExportSession {
+    func export(
+        progress: ((VideoAssetExportSession.ExportProgress) -> Void)?,
+        status: ((VideoAssetExportSession.Status) -> Void)?,
+        completion: @escaping (Error?) -> Void
+    )
+    func pause()
+    func resume()
+    func cancel()
+}
+
 public final class ReaderWriterExportJob {
     public enum Status: Equatable {
         case idle
@@ -123,14 +134,15 @@ public final class ReaderWriterExportJob {
     private let videoProcessors: [FrameProcessor]
     private let shouldOptimizeForNetworkUse: Bool
     private let metadata: [AVMetadataItem]
+    private let sessionFactory: (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.reader-writer-export.state")
     private var _status: Status = .idle
     private var _lastProgressInfo: ProgressInfo?
     private var _lastErrorDescription: String?
     private var _didDeliverCompletion = false
-    private var exportSession: VideoAssetExportSession?
+    private var exportSession: ReaderWriterExportSession?
 
-    public init(
+    public convenience init(
         asset: AVAsset,
         outputURL: URL,
         fileType: AVFileType = .mp4,
@@ -141,6 +153,32 @@ public final class ReaderWriterExportJob {
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = []
     ) {
+        self.init(
+            asset: asset,
+            outputURL: outputURL,
+            fileType: fileType,
+            timeRange: timeRange,
+            videoComposition: videoComposition,
+            audioMix: audioMix,
+            videoProcessors: videoProcessors,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            sessionFactory: Self.defaultSessionFactory
+        )
+    }
+
+    init(
+        asset: AVAsset,
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        timeRange: CMTimeRange? = nil,
+        videoComposition: AVVideoComposition? = nil,
+        audioMix: AVAudioMix? = nil,
+        videoProcessors: [FrameProcessor] = [],
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        sessionFactory: @escaping (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession
+    ) {
         self.asset = asset
         self.outputURL = outputURL
         self.fileType = fileType
@@ -150,6 +188,7 @@ public final class ReaderWriterExportJob {
         self.videoProcessors = videoProcessors
         self.shouldOptimizeForNetworkUse = shouldOptimizeForNetworkUse
         self.metadata = metadata
+        self.sessionFactory = sessionFactory
     }
 
     public func export(completion: @escaping (Result<URL, Error>) -> Void) {
@@ -164,7 +203,7 @@ public final class ReaderWriterExportJob {
 
         do {
             let configuration = try makeConfiguration()
-            let session = try VideoAssetExportSession(asset: asset, outputURL: outputURL, configuration: configuration)
+            let session = try sessionFactory(asset, outputURL, configuration)
             exportSession = session
             session.export(
                 progress: { [weak self] progress in
@@ -391,6 +430,10 @@ public final class ReaderWriterExportJob {
             _didDeliverCompletion = true
             return true
         }
+    }
+
+    private static let defaultSessionFactory: (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession = { asset, outputURL, configuration in
+        try VideoAssetExportSession(asset: asset, outputURL: outputURL, configuration: configuration)
     }
 
     private static func isCancelledError(_ error: Error) -> Bool {

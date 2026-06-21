@@ -329,24 +329,41 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
             completion(true)
             return
         }
-        let group = DispatchGroup()
+        let lock = NSLock()
         var allGranted = true
+        var remainingRequests = 0
+
+        func finishIfNeeded() {
+            lock.lock()
+            let shouldComplete = remainingRequests == 0
+            let granted = allGranted
+            lock.unlock()
+            if shouldComplete {
+                completion(granted)
+            }
+        }
+
         for mediaType in mediaTypes {
             let status = Self.authorizationStatus(for: mediaType)
             if status == .authorized {
                 continue
             }
-            group.enter()
+            lock.lock()
+            remainingRequests += 1
+            lock.unlock()
             Self.requestAuthorization(for: mediaType) { status in
+                lock.lock()
                 if status != .authorized {
                     allGranted = false
                 }
-                group.leave()
+                if remainingRequests > 0 {
+                    remainingRequests -= 1
+                }
+                lock.unlock()
+                finishIfNeeded()
             }
         }
-        group.notify(queue: .main) {
-            completion(allGranted)
-        }
+        finishIfNeeded()
     }
 
     private func notifyAuthorizationFailure() {

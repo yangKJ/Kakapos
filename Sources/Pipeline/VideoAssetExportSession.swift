@@ -483,3 +483,5 @@ final class VideoAssetExportSession {
         }
     }
 }
+
+extension VideoAssetExportSession: ReaderWriterExportSession {}

@@ -107,19 +107,44 @@ open class MediaOutputNode: MediaFrameSourceNode {
             return
         }
 
-        let group = DispatchGroup()
-        let state = MediaNodeResultState()
+        let lock = NSLock()
+        var remainingConsumers = consumers.count
+        var capturedError: Error?
+        var didComplete = false
 
-        for consumer in consumers {
-            group.enter()
-            consumer.consume(frame, from: self) { result in
-                state.capture(result)
-                group.leave()
+        func finishIfNeeded() {
+            lock.lock()
+            guard !didComplete else {
+                lock.unlock()
+                return
             }
+            let result: Result<Void, Error>
+            if let capturedError {
+                result = .failure(capturedError)
+            } else {
+                result = .success(())
+            }
+            didComplete = true
+            lock.unlock()
+            completion(result)
         }
 
-        group.notify(queue: .main) {
-            completion(state.result)
+        for consumer in consumers {
+            consumer.consume(frame, from: self) { result in
+                lock.lock()
+                if case .failure(let error) = result, capturedError == nil {
+                    capturedError = error
+                }
+                if remainingConsumers > 0 {
+                    remainingConsumers -= 1
+                }
+                let shouldComplete = remainingConsumers == 0
+                lock.unlock()
+
+                if shouldComplete {
+                    finishIfNeeded()
+                }
+            }
         }
     }
 }
@@ -172,6 +197,8 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     public var errorHandler: ((Error) -> Void)?
     public var finishHandler: (() -> Void)?
     public var frameHandler: ((MediaFrame) -> Void)?
+    public var frameTransmissionStartedHandler: (() -> Void)?
+    public var frameTransmissionCompletedHandler: ((Result<Void, Error>) -> Void)?
     public var shouldAcceptSourceCallbacks: (() -> Bool)?
 
     private let outputNode = MediaOutputNode()
@@ -201,8 +228,10 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
 
     public func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
         guard shouldAcceptSourceCallbacks?() ?? true else { return }
+        frameTransmissionStartedHandler?()
         frameHandler?(frame)
         outputNode.transmit(frame) { [weak self] result in
+            self?.frameTransmissionCompletedHandler?(result)
             if case .failure(let error) = result {
                 self?.errorHandler?(error)
             }
@@ -272,19 +301,44 @@ public final class MediaConsumerChainNode: MediaOutputNode, MediaFrameConsumerNo
             return
         }
 
-        let group = DispatchGroup()
-        let state = MediaNodeResultState()
+        let lock = NSLock()
+        var remainingSinks = sinks.count
+        var capturedError: Error?
+        var didComplete = false
 
-        for sink in sinks {
-            group.enter()
-            sink.finish { result in
-                state.capture(result)
-                group.leave()
+        func finishIfNeeded() {
+            lock.lock()
+            guard !didComplete else {
+                lock.unlock()
+                return
             }
+            let result: Result<Void, Error>
+            if let capturedError {
+                result = .failure(capturedError)
+            } else {
+                result = .success(())
+            }
+            didComplete = true
+            lock.unlock()
+            completion(result)
         }
 
-        group.notify(queue: .main) {
-            completion(state.result)
+        for sink in sinks {
+            sink.finish { result in
+                lock.lock()
+                if case .failure(let error) = result, capturedError == nil {
+                    capturedError = error
+                }
+                if remainingSinks > 0 {
+                    remainingSinks -= 1
+                }
+                let shouldComplete = remainingSinks == 0
+                lock.unlock()
+
+                if shouldComplete {
+                    finishIfNeeded()
+                }
+            }
         }
     }
 
