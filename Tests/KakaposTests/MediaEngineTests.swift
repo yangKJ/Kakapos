@@ -247,7 +247,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(compiled.renderInstructions.count, 0)
         XCTAssertEqual(compiled.summary.renderSize, CGSize(width: 1920, height: 1080))
         XCTAssertEqual(compiled.summary.frameDuration, CMTime(value: 1, timescale: 30))
-        XCTAssertEqual(compiled.summary.summaryText, "video 0 · image 0 · text 0 · effect 0 · transitions 0 · tracks 0/0")
+        XCTAssertEqual(
+            compiled.summary.summaryText,
+            "size 1920x1080 · frame 30fps · video 0 · image 0 · text 0 · effect 0 · transitions 0 · intervals 0 · segments 0/0/0 · audio 0/0 · transitionSegments 0 · tracks 0/0 · sources 0 · processors 0"
+        )
     }
 
     func testTimelineCompositionProducesCompilationSummaryForMixedLayers() throws {
@@ -295,12 +298,19 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(compiled.summary.transitionCount, 1)
         XCTAssertEqual(compiled.summary.visualIntervalCount, 1)
         XCTAssertEqual(compiled.summary.assetSegmentCount, 2)
+        XCTAssertEqual(compiled.summary.imageSegmentCount, 1)
+        XCTAssertEqual(compiled.summary.textSegmentCount, 0)
         XCTAssertEqual(compiled.summary.audioSegmentCount, 2)
         XCTAssertEqual(compiled.summary.audioMixSegmentCount, 2)
+        XCTAssertEqual(compiled.summary.transitionSegmentCount, 1)
         XCTAssertEqual(compiled.summary.videoTrackCount, 2)
         XCTAssertEqual(compiled.summary.audioTrackCount, 2)
-        XCTAssertGreaterThanOrEqual(compiled.summary.sourceTrackIDCount, 2)
+        XCTAssertEqual(compiled.summary.sourceTrackIDCount, 4)
         XCTAssertEqual(compiled.summary.processorCount, 1)
+        XCTAssertEqual(
+            compiled.summary.summaryText,
+            "size 1280x720 · frame 30fps · video 2 · image 1 · text 0 · effect 1 · transitions 1 · intervals 1 · segments 2/1/0 · audio 2/2 · transitionSegments 1 · tracks 2/2 · sources 4 · processors 1"
+        )
     }
 
     func testTimelineCompositionFlattensGroupLayerIntoResolvedLayers() throws {
