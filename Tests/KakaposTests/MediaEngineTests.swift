@@ -1301,6 +1301,39 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(statuses, [.cancelled])
     }
 
+    func testReaderWriterExportJobCancelWhileExportingUpdatesStatusImmediately() throws {
+        let session = FakeReaderWriterExportSession()
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4"),
+            sessionFactory: { _, _, _ in session }
+        )
+        let statusExpectation = expectation(description: "cancel status")
+        var receivedStatuses: [ReaderWriterExportJob.Status] = []
+        job.statusHandler = { status in
+            receivedStatuses.append(status)
+            if status == .cancelled {
+                statusExpectation.fulfill()
+            }
+        }
+
+        job.export { _ in }
+        session.emitStatus(.exporting)
+
+        XCTAssertEqual(job.status, .exporting)
+
+        job.cancel()
+
+        XCTAssertEqual(job.status, .cancelled)
+        XCTAssertEqual(session.cancelCallCount, 1)
+
+        wait(for: [statusExpectation], timeout: 1)
+        XCTAssertEqual(receivedStatuses, [.exporting, .cancelled])
+    }
+
     func testVideoXExportPipelineDefaultsToAssetExportSession() {
         XCTAssertEqual(VideoX.Option.setupExportPipeline(options: [:]), .assetExportSession)
     }
@@ -3574,6 +3607,7 @@ private final class FakeReaderWriterExportSession: ReaderWriterExportSession {
     private var progressHandler: ((VideoAssetExportSession.ExportProgress) -> Void)?
     private var statusHandler: ((VideoAssetExportSession.Status) -> Void)?
     private var completionHandler: ((Error?) -> Void)?
+    private(set) var cancelCallCount = 0
 
     func export(
         progress: ((VideoAssetExportSession.ExportProgress) -> Void)?,
@@ -3587,7 +3621,9 @@ private final class FakeReaderWriterExportSession: ReaderWriterExportSession {
 
     func pause() {}
     func resume() {}
-    func cancel() {}
+    func cancel() {
+        cancelCallCount += 1
+    }
 
     func emitStatus(_ status: VideoAssetExportSession.Status) {
         statusHandler?(status)

@@ -260,7 +260,11 @@ public final class ReaderWriterExportJob {
     }
 
     public func cancel() {
+        if status.isTerminal {
+            return
+        }
         if let exportSession {
+            setStatus(.cancelled)
             exportSession.cancel()
             return
         }
