@@ -839,8 +839,61 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertNotNil(exportJob)
         XCTAssertEqual(exportJob?.status, .idle)
+        XCTAssertEqual(exportJob?._videoProcessorCountForTesting, 1)
         XCTAssertEqual(try exporter.makeReaderWriterExportJob(instructions: [instruction]).status, .idle)
         XCTAssertEqual(outputURL.pathExtension.lowercased(), "mp4")
+    }
+
+    func testVideoXReaderWriterExportKeepsUnsupportedInstructionsInVideoComposition() throws {
+        let exporter = try makeSampleExporter()
+        let filter = FilterInstruction(processor: PassthroughFrameProcessor())
+        let rotate = RotateInstruction(rotationAngle: .angle90)
+
+        let exportJob = try XCTUnwrap(
+            exporter.makeExportJob(
+                options: [.ExportPipeline: VideoX.ExportPipeline.readerWriter],
+                instructions: [filter, rotate]
+            )
+        )
+
+        XCTAssertEqual(exportJob._videoProcessorCountForTesting, 1)
+    }
+
+    func testReaderWriterExportJobInvokesFrameProcessorDuringExport() throws {
+        let exporter = try makeSampleExporter()
+        let callbackExpectation = expectation(description: "frame processor invoked")
+        let exportExpectation = expectation(description: "reader writer export finished")
+        callbackExpectation.assertForOverFulfill = false
+        var invocationCount = 0
+
+        let instruction = FilterInstruction(processor: ClosureFrameProcessor { frame, completion in
+            invocationCount += 1
+            callbackExpectation.fulfill()
+            completion(.success(frame))
+        })
+
+        let exportJob = try XCTUnwrap(
+            exporter.makeExportJob(
+                options: [
+                    .ExportPipeline: VideoX.ExportPipeline.readerWriter,
+                    .ExportSessionTimeRange: TimeRangeType.range(0...0.2)
+                ],
+                instructions: [instruction]
+            )
+        )
+
+        exportJob.export { result in
+            switch result {
+            case .success(let outputURL):
+                XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+            case .failure(let error):
+                XCTFail("Unexpected reader/writer export failure: \(error)")
+            }
+            exportExpectation.fulfill()
+        }
+
+        wait(for: [callbackExpectation, exportExpectation], timeout: 15)
+        XCTAssertGreaterThan(invocationCount, 0)
     }
 
     func testVideoXMakeExportTaskReturnsAssetSessionTaskByDefault() throws {

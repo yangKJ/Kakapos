@@ -232,3 +232,28 @@ public final class WatermarkInstruction: CompositionInstruction, @unchecked Send
     }
     #endif
 }
+
+extension WatermarkInstruction: FrameProcessorProvidingInstruction {
+    var kakaposFrameProcessor: FrameProcessor? {
+        ClosureFrameProcessor { [weak self] frame, completion in
+            guard let self else {
+                completion(.success(frame))
+                return
+            }
+            guard let pixelBuffer = frame.pixelBuffer else {
+                completion(.success(frame))
+                return
+            }
+            #if canImport(Harbeth)
+            if let filter = self.createHarbethWatermarkFilter(buffer: pixelBuffer) {
+                let processor = HarbethFrameProcessor(filters: [filter])
+                processor.process(frame) { result in
+                    completion(result)
+                }
+                return
+            }
+            #endif
+            completion(.success(frame))
+        }
+    }
+}
