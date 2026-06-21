@@ -25,6 +25,9 @@ public final class RecordingPipeline {
             let totalText = String(format: "%.2fs", totalDuration.seconds)
             let currentText = String(format: "%.2fs", currentClipDuration.seconds)
             var text = "source \(sourceTypeName) · processors \(processorCount) · pipeline \(pipelineState) · recorder \(recorderState) · clips \(clipCount) · total \(totalText) · clip \(currentText) · recorded \(hasRecordedClip ? "yes" : "no")"
+            if let sourceSnapshot {
+                text += " · sourceSnapshot \(sourceSnapshot.summaryText)"
+            }
             if let lastErrorDescription {
                 text += " · error \(lastErrorDescription)"
             }

@@ -188,6 +188,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.sinks.count, 1)
         XCTAssertNotNil(pipeline.summary.sourceSnapshot)
         XCTAssertEqual(pipeline.summary.sourceSnapshot?.details["generation"], "0")
+        XCTAssertTrue(pipeline.summary.summaryText.contains("sourceSnapshot state idle"))
+        XCTAssertTrue(pipeline.summary.summaryText.contains("generation 0"))
     }
     #endif
 
@@ -1837,6 +1839,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.summary.sourceSnapshot?.stateDescription, "primed")
         XCTAssertEqual(pipeline.summary.sourceSnapshot?.details["board"], "preview")
         XCTAssertEqual(receivedPreviewMetadata?.frameIndex, 1)
+        XCTAssertTrue(pipeline.summary.summaryText.contains("sourceSnapshot state primed"))
+        XCTAssertTrue(pipeline.summary.summaryText.contains("board preview"))
         XCTAssertTrue(pipeline.summary.summaryText.contains("preview finished"))
     }
 
@@ -3283,6 +3287,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.summary.sourceSnapshot?.stateDescription, "primed")
         XCTAssertEqual(pipeline.summary.sourceSnapshot?.details["board"], "record")
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertTrue(pipeline.summaryText.contains("sourceSnapshot state primed"))
+        XCTAssertTrue(pipeline.summaryText.contains("board record"))
         XCTAssertTrue(pipeline.summaryText.contains("recorder finished"))
     }
 

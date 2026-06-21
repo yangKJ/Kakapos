@@ -21,6 +21,9 @@ public struct MediaPipelineSummary {
 
     public var summaryText: String {
         var text = "source \(sourceTypeName) · processors \(processorTypeNames.count) · sinks \(sinkTypeNames.count) · state \(state)"
+        if let sourceSnapshot {
+            text += " · sourceSnapshot \(sourceSnapshot.summaryText)"
+        }
         if let lastFrameIndex {
             text += " · frame \(lastFrameIndex)"
         }
