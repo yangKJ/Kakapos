@@ -88,7 +88,19 @@ public final class WatermarkInstruction: CompositionInstruction, @unchecked Send
     public func operationPixelBuffer(_ buffer: CVPixelBuffer, block: @escaping BufferBlock, for request: AVAsynchronousVideoCompositionRequest) {
         #if canImport(Harbeth)
         if let filter = createHarbethWatermarkFilter(buffer: buffer) {
-            buffer.kaka.filtering(with: [filter], callback: block)
+            let processor = HarbethFrameProcessor(filters: [filter])
+            let frame = MediaFrame(
+                pixelBuffer: buffer,
+                metadata: FrameMetadata(presentationTime: request.compositionTime, sourceTime: request.compositionTime)
+            )
+            processor.process(frame) { result in
+                switch result {
+                case .success(let output):
+                    block(output.pixelBuffer ?? buffer)
+                case .failure:
+                    block(buffer)
+                }
+            }
             return
         }
         #endif

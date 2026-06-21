@@ -30,6 +30,23 @@ public final class FilterInstruction: CompositionInstruction, @unchecked Sendabl
         self.callback = callback
         super.init()
     }
+
+    public convenience init(processor: FrameProcessor) {
+        self.init(callback: { buffer, time, block in
+            let metadata = FrameMetadata(
+                presentationTime: CMTime(value: time, timescale: 1),
+                sourceTime: CMTime(value: time, timescale: 1)
+            )
+            processor.process(MediaFrame(pixelBuffer: buffer, metadata: metadata)) { result in
+                switch result {
+                case .success(let frame):
+                    block(frame.pixelBuffer ?? buffer)
+                case .failure:
+                    block(buffer)
+                }
+            }
+        })
+    }
     
     public required init?(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")

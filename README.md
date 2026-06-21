@@ -10,43 +10,39 @@
 
 ## 📖 Overview
 
-**Kakapos** is a high-performance, flexible video editing and exporting framework designed for iOS, macOS, watchOS, and tvOS. It provides a powerful set of tools for adding filters, watermarks, rotations, and other effects to videos from various sources including network URLs, local files, and album videos.
+**Kakapos** is a media orchestration engine for Apple platforms. It organizes local assets, player frames, camera frames, images, recordings, and timeline clips into a predictable media pipeline, then passes each frame through pluggable `FrameProcessor` objects.
+
+Kakapos is not a filter-kernel library. It owns media lifecycle, frame sourcing, preview routing, recording, offline export, and timeline composition. When paired with [Harbeth](https://github.com/yangKJ/Harbeth), Kakapos handles the media engine layer while Harbeth handles high-quality GPU rendering for each frame.
 
 ### ✨ Key Features
 
-- **Multi-source Support**: Process videos from network URLs, local files, and album assets
-- **Filter Integration**: Compatible with multiple filter frameworks:
-  - [CoreImage](https://developer.apple.com/documentation/coreimage)
-  - [Harbeth](https://github.com/yangKJ/Harbeth) (Metal-based filter framework)
-  - [GPUImage](https://github.com/BradLarson/GPUImage)
-  - [MetalPetal](https://github.com/MetalPetal/MetalPetal)
-  - [BBMetalImage](https://github.com/Silence-GitHub/BBMetalImage)
-  - Any custom filter framework that converts CVPixelBuffer
-- **Comprehensive Instructions**: Built-in support for:
-  - Filter application with time-based control
-  - Text and image watermarks with customizable positioning
-  - Video rotation (90°, 180°, 270°)
-  - Custom instruction creation for extended functionality
-- **High Performance**: Optimized for speed and efficiency using Metal where available
-- **Flexible Export Options**: Customizable export settings including time range, quality, and network optimization
-
-### 🎯 Why Choose Kakapos?
-
-- **Easy to Use**: Simple API with clear instruction-based architecture
-- **Extensible**: Create custom instructions for your specific video processing needs
-- **Performance Focused**: Leverages hardware acceleration for fast processing
-- **Versatile**: Supports a wide range of video sources and filter frameworks
-- **Well Documented**: Comprehensive documentation and example code
+- **Processor-neutral frame pipeline**: Connect any processor that can transform `CVPixelBuffer`, `CMSampleBuffer`, or `MTLTexture` through `FrameProcessor`.
+- **Harbeth integration**: Use `HarbethFrameProcessor` when you want the official Kakapos + Harbeth render path.
+- **Media sources**: Build pipelines from assets, player frames, camera frames, and image-backed timeline layers.
+- **Media sinks**: Route processed frames to preview callbacks, recorders, offline exporters, or custom pixel-buffer consumers.
+- **Offline compatibility**: Existing `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, and `WatermarkInstruction` APIs remain available.
+- **Timeline foundation**: Compose clip, image, audio, effect, group, transition, and keyframe-driven media models.
 
 ### 🔧 How It Works
 
-Kakapos uses an instruction-based architecture where you define a series of processing steps (instructions) that are applied to each video frame. These instructions are processed in sequence, allowing for complex video transformations with minimal code.
+Kakapos uses a `source -> processor chain -> sink` model:
 
-The framework handles the heavy lifting of video frame processing, leaving you free to focus on creating the desired visual effects.
+```swift
+let source = PlayerFrameSource(player: player)
+let processor = HarbethFrameProcessor(filters: filters)
+let sink = PixelBufferSink { frame in
+    // Preview, inspect, record, or forward the processed frame.
+}
+
+let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [sink])
+pipeline.start()
+```
+
+For existing offline export users, the instruction-based API still works:
 
 ---
 
-### Used
+### VideoX Compatibility
 
 - Create the video exporter provider.
 
@@ -58,7 +54,7 @@ Or
 let exporter = VideoX.init(provider: .init(with: ``AVAsset``))
 ```
 
-- Create filter instruction and add filters.
+- Create filter instruction and add Harbeth filters.
 
 ```
 let filters1: [C7FilterProtocol] = [
@@ -81,6 +77,13 @@ let filtering = FilterInstruction { buffer, time, callback in
         dest.transmitOutput(success: callback)
     }
 }
+```
+
+Or bridge the new processor API into the old instruction API:
+
+```swift
+let processor = HarbethFrameProcessor(filters: [C7LookupTable(name: "lut_abao")])
+let filtering = FilterInstruction(processor: processor)
 ```
 
 - Create a watermark instruction.
@@ -160,22 +163,36 @@ public class BrightnessInstruction: CompositionInstruction {
 
 By following this pattern, you can create any custom video processing instructions you need.
  
-Such as:
-- Color adjustment instructions
-- Special effects instructions
-- Text overlay instructions
-- Audio processing instructions
-- And more!
+Custom instructions remain useful for export-only workflows. For new media engine work, prefer `FrameProcessor`, `MediaSource`, `MediaSink`, and `MediaPipeline`.
+
+### Timeline Foundation
+
+```swift
+let timeline = TimelineComposition(renderSize: CGSize(width: 720, height: 1280))
+timeline.addLayer(ClipLayer(asset: firstAsset, timeRange: CMTimeRange(start: .zero, duration: firstDuration)))
+timeline.addLayer(ClipLayer(asset: secondAsset, timeRange: CMTimeRange(start: firstDuration, duration: secondDuration)))
+
+let compiled = timeline.compile()
+let item = AVPlayerItem(asset: compiled.composition)
+item.videoComposition = compiled.videoComposition
+item.audioMix = compiled.audioMix
+```
+
+### Commercial Boundary
+
+The open-source Kakapos package provides the media engine foundation: processor-neutral frame routing, offline export compatibility, Harbeth wiring, player frame sourcing, recording primitives, and timeline models.
+
+Private Kakapos Pro / Visual Engine work can extend this base with production camera UX, template systems, advanced timeline effects, performance tuning, private processor adapters, and complete starter kits.
 
 ### CocoaPods
 
-- If you want to import [**video exporter**](https://github.com/yangKJ/Kakapos) module, you need in your Podfile: 
+- If you want to import [**media engine**](https://github.com/yangKJ/Kakapos) module, you need in your Podfile:
 
 ```
 pod 'Kakapos'
 ```
 
-- If you want to import [**metal filter**](https://github.com/yangKJ/Harbeth) module, you need in your Podfile: 
+- If you want to import [**render engine**](https://github.com/yangKJ/Harbeth) module, you need in your Podfile:
 
 ```
 pod 'Harbeth'
@@ -187,7 +204,7 @@ pod 'Harbeth'
 
 > Xcode 11+ is required to build [Kakapos](https://github.com/yangKJ/Kakapos) using Swift Package Manager.
 
-To integrate Harbeth into your Xcode project using Swift Package Manager, add it to the dependencies value of your `Package.swift`:
+To integrate Kakapos into your Xcode project using Swift Package Manager, add it to the dependencies value of your `Package.swift`:
 
 ```swift
 dependencies: [
@@ -225,6 +242,6 @@ Alipay or WeChat. Thanks.
 -----
 
 ### License
-Harbeth is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE) file for more info.
+Kakapos is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE) file for more info.
 
 -----
