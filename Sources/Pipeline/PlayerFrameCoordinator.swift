@@ -22,8 +22,13 @@ struct PlayerFrameCoordinator {
     private(set) var generation: Int64 = 0
 
     mutating func start(with item: AnyObject?) -> Bool {
+        let didChange = updateCurrentItem(item)
+        if !didChange {
+            frameIndex = 0
+            generation += 1
+        }
         playbackState = .running
-        return updateCurrentItem(item)
+        return true
     }
 
     mutating func pause() {

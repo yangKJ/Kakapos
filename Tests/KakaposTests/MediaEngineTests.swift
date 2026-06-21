@@ -1401,6 +1401,23 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(coordinator.markFrameOutput(), 1)
     }
 
+    func testPlayerFrameCoordinatorResetsFrameIndexWhenRestartingSameItem() {
+        final class Token: NSObject {}
+
+        var coordinator = PlayerFrameCoordinator()
+        let token = Token()
+
+        XCTAssertTrue(coordinator.start(with: token))
+        XCTAssertEqual(coordinator.generation, 1)
+        XCTAssertEqual(coordinator.markFrameOutput(), 1)
+        XCTAssertEqual(coordinator.markFrameOutput(), 2)
+
+        XCTAssertTrue(coordinator.start(with: token))
+        XCTAssertEqual(coordinator.frameIndex, 0)
+        XCTAssertEqual(coordinator.generation, 2)
+        XCTAssertEqual(coordinator.markFrameOutput(), 1)
+    }
+
     func testPlayerFrameCoordinatorWaitsForMediaDataAndRecovers() {
         final class Token: NSObject {}
 
@@ -1660,6 +1677,72 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(observedItems.compactMap { $0 }, [firstItem, secondItem])
         XCTAssertNil(source.lastSeekTargetTime)
         XCTAssertNil(source.lastFrame)
+    }
+
+    func testPlayerFrameSourceRestartClearsStaleFrameAndStartsNewGeneration() throws {
+        let item = AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL()))
+        let player = AVPlayer(playerItem: item)
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let firstBuffer = try makePixelBuffer(width: 18, height: 12)
+        let secondBuffer = try makePixelBuffer(width: 24, height: 16)
+        let firstFrameExpectation = expectation(description: "first frame emitted")
+        let secondFrameExpectation = expectation(description: "second frame emitted after restart")
+        var receivedGenerationValues: [Int64] = []
+
+        source.frameHandler = { frame in
+            if let generation = frame.metadata.userInfo[PlayerFrameSource.MetadataKey.generation] as? Int64 {
+                receivedGenerationValues.append(generation)
+            }
+            if receivedGenerationValues.count == 1 {
+                firstFrameExpectation.fulfill()
+            } else if receivedGenerationValues.count == 2 {
+                secondFrameExpectation.fulfill()
+            }
+        }
+
+        source.start()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: .zero,
+                playerTimestamp: .zero,
+                requestTimestamp: .zero,
+                pixelBuffer: firstBuffer
+            )
+        )
+
+        wait(for: [firstFrameExpectation], timeout: 1)
+        XCTAssertEqual(source.lastFrame?.metadata.frameIndex, 1)
+        XCTAssertEqual(receivedGenerationValues, [1])
+
+        source.stop()
+        XCTAssertEqual(source.state, .finished)
+
+        source.start()
+        XCTAssertNil(source.lastFrame)
+        XCTAssertEqual(source.state, .active)
+
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 1, timescale: 30),
+                playerTimestamp: CMTime(value: 1, timescale: 30),
+                requestTimestamp: CMTime(value: 1, timescale: 30),
+                pixelBuffer: secondBuffer
+            )
+        )
+
+        wait(for: [secondFrameExpectation], timeout: 1)
+        XCTAssertEqual(source.lastFrame?.metadata.frameIndex, 1)
+        XCTAssertEqual(receivedGenerationValues, [1, 2])
     }
     #endif
 
