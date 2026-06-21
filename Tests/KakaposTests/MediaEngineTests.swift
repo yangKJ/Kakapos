@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import CoreGraphics
 @testable import Kakapos
 
 final class MediaEngineTests: XCTestCase {
@@ -96,6 +97,37 @@ final class MediaEngineTests: XCTestCase {
         ]
 
         XCTAssertEqual(VideoX.Option.setupExportPipeline(options: options), .readerWriter)
+    }
+
+    func testPreviewSinkBuildsPreviewImageAndPreservesMetadata() throws {
+        let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
+        let metadata = FrameMetadata(
+            presentationTime: CMTime(value: 5, timescale: 30),
+            sourceTime: CMTime(value: 4, timescale: 30),
+            frameIndex: 9
+        )
+        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: metadata)
+        let expectation = self.expectation(description: "preview sink callback")
+        var receivedImage: CGImage?
+        var receivedMetadata: FrameMetadata?
+
+        let sink = PreviewSink { image, previewMetadata in
+            receivedImage = image
+            receivedMetadata = previewMetadata
+            expectation.fulfill()
+        }
+
+        sink.consume(frame) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected preview sink failure: \(error)")
+            }
+        }
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(receivedImage?.width, 12)
+        XCTAssertEqual(receivedImage?.height, 10)
+        XCTAssertEqual(receivedMetadata?.frameIndex, metadata.frameIndex)
+        XCTAssertEqual(receivedMetadata?.presentationTime, metadata.presentationTime)
     }
 }
 
