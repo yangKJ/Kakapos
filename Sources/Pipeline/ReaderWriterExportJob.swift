@@ -205,6 +205,7 @@ public final class ReaderWriterExportJob {
             let configuration = try makeConfiguration()
             let session = try sessionFactory(asset, outputURL, configuration)
             exportSession = session
+            setStatus(.exporting)
             session.export(
                 progress: { [weak self] progress in
                     self?.handleProgress(progress)

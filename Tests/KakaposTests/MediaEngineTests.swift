@@ -13,11 +13,11 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.displayName, "Export")
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.primaryTypes, ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"])
-        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.primaryTypes, ["TimelinePipeline", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.primaryTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.starterTypes, ["VideoX", "ReaderWriterExportJob"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.starterTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.starterTypes, ["RecordingPipeline", "CameraSource", "RecorderSink"])
-        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.starterTypes, ["TimelinePipeline", "TimelineComposition"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.starterTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition"])
         XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
     }
 
@@ -3034,6 +3034,110 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(exportJob.summary.videoTrackCount, 1)
         XCTAssertTrue(exportJob.summary.summaryText.contains("state idle"))
         XCTAssertTrue(exportJob.summary.summaryText.contains("tracks"))
+    }
+
+    func testTimelinePipelineBuildsTimelineExportTaskFromCompiledComposition() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let pipeline = TimelinePipeline(
+            renderSize: CGSize(width: 1280, height: 720),
+            frameDuration: CMTime(value: 1, timescale: 30),
+            layers: [clip]
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+
+        let task = pipeline.makeExportTask(outputURL: outputURL)
+
+        XCTAssertEqual(task.status, .idle)
+        XCTAssertEqual(task.summary.layerCount, 1)
+        XCTAssertEqual(task.summary.transitionCount, 0)
+        XCTAssertEqual(task.summary.processorCount, 0)
+        XCTAssertTrue(task.summaryText.contains("export idle"))
+        XCTAssertEqual(task.compiledComposition.summary.renderSize, CGSize(width: 1280, height: 720))
+    }
+
+    func testTimelineExportTaskForwardsProgressAndCompletion() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let pipeline = TimelinePipeline(
+            renderSize: CGSize(width: 1280, height: 720),
+            frameDuration: CMTime(value: 1, timescale: 30),
+            layers: [clip]
+        )
+        let compiled = pipeline.compile()
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let fakeSession = FakeReaderWriterExportSession()
+        let job = ReaderWriterExportJob(
+            asset: compiled.composition,
+            outputURL: outputURL,
+            fileType: .mp4,
+            timeRange: CMTimeRange(start: .zero, duration: compiled.composition.duration),
+            videoComposition: compiled.videoComposition,
+            audioMix: compiled.audioMix,
+            videoProcessors: [],
+            shouldOptimizeForNetworkUse: true,
+            metadata: [],
+            sessionFactory: { _, _, _ in fakeSession }
+        )
+        let task = TimelineExportTask(compiledComposition: compiled, readerWriterJob: job)
+        let progressExpectation = expectation(description: "forward progress")
+        let completionExpectation = expectation(description: "export complete")
+        var receivedProgress: [Float] = []
+        var receivedInfo: ReaderWriterExportJob.ProgressInfo?
+
+        task.start(
+            complete: { result in
+                switch result {
+                case .success(let url):
+                    XCTAssertEqual(url, outputURL)
+                case .failure(let error):
+                    XCTFail("Unexpected export failure: \(error)")
+                }
+                completionExpectation.fulfill()
+            },
+            progress: { progress in
+                receivedProgress.append(progress)
+                if progress == 0 {
+                    progressExpectation.fulfill()
+                }
+            },
+            progressInfo: { info in
+                receivedInfo = info
+            }
+        )
+
+        fakeSession.emitStatus(.exporting)
+        fakeSession.emitProgress(
+            ReaderWriterExportSessionProgress(
+                videoProgress: 0.5,
+                audioProgress: 0.25,
+                hasVideo: true,
+                hasAudio: true,
+                finishWritingProgress: 0.4
+            )
+        )
+        fakeSession.finish(with: nil)
+
+        wait(for: [progressExpectation, completionExpectation], timeout: 2)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertEqual(task.status, .completed)
+        XCTAssertEqual(receivedProgress.first, 0)
+        XCTAssertEqual(receivedProgress.last ?? 0, 0.37625, accuracy: 0.0001)
+        XCTAssertNotNil(receivedInfo)
+        XCTAssertTrue(task.summaryText.contains("export completed"))
     }
 
     func testTimelineExportJobDefaultsToCompiledEffectProcessors() throws {

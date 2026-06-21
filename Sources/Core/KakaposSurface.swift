@@ -124,4 +124,29 @@ public enum KakaposSurface {
             transitions: transitions
         )
     }
+
+    public static func timelineExportTask(
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        layers: [TimelineLayer] = [],
+        transitions: [Transition] = [],
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = []
+    ) -> TimelineExportTask {
+        timeline(
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            layers: layers,
+            transitions: transitions
+        ).makeExportTask(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors
+        )
+    }
 }

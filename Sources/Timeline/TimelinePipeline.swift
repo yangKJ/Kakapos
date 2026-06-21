@@ -129,6 +129,49 @@ public final class TimelinePipeline {
             videoProcessors: videoProcessors
         )
     }
+
+    public func makeExportTask(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = []
+    ) -> TimelineExportTask {
+        TimelineExportTask(
+            compiledComposition: compile(),
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors
+        )
+    }
+
+    @discardableResult
+    public func export(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = [],
+        complete: @escaping (Result<URL, VideoX.Error>) -> Void,
+        progress: ((Float) -> Void)? = nil,
+        progressInfo: ((ReaderWriterExportJob.ProgressInfo) -> Void)? = nil
+    ) -> TimelineExportTask {
+        let exportTask = makeExportTask(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors
+        )
+        exportTask.start(
+            complete: complete,
+            progress: progress,
+            progressInfo: progressInfo
+        )
+        return exportTask
+    }
 }
 
 #if canImport(UIKit)
