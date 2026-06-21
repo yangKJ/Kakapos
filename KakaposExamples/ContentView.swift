@@ -265,6 +265,12 @@ private struct CameraRecordView: View {
                             message = "Camera session interrupted"
                         case .interruptionEnded:
                             message = "Camera interruption ended"
+                        case .runtimeError(let isRecoverable, let description):
+                            if isRecoverable {
+                                message = "Camera runtime error, attempting recovery: \(description ?? "unknown")"
+                            } else {
+                                message = "Camera runtime error: \(description ?? "unknown")"
+                            }
                         case .positionChanged(let position):
                             message = "Switched camera: \(String(describing: position))"
                         }

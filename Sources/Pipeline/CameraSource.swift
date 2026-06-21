@@ -122,6 +122,30 @@ public final class CameraSource: NSObject, MediaSource {
         publish(.interruptionEnded)
     }
 
+    @objc private func handleSessionRuntimeError(_ notification: Notification) {
+        let nsError = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
+        let avError = nsError.flatMap { AVError(_nsError: $0) }
+        let isRecoverable = avError?.code == .mediaServicesWereReset
+        let description = avError?.localizedDescription ?? nsError?.localizedDescription
+        publish(.runtimeError(isRecoverable: isRecoverable, description: description))
+        if let avError {
+            DispatchQueue.main.async {
+                self.delegate?.mediaSource(self, didFail: avError)
+            }
+        } else if let nsError {
+            DispatchQueue.main.async {
+                self.delegate?.mediaSource(self, didFail: nsError)
+            }
+        }
+        guard isRecoverable, lifecycle.shouldAttemptRecovery else { return }
+        queue.async {
+            guard !self.session.isRunning else { return }
+            self.publish(.startRequested)
+            self.session.startRunning()
+            self.publish(.didStartRunning)
+        }
+    }
+
     private func addObservers() {
         NotificationCenter.default.addObserver(
             self,
@@ -133,6 +157,12 @@ public final class CameraSource: NSObject, MediaSource {
             self,
             selector: #selector(handleSessionInterruptionEnded(_:)),
             name: AVCaptureSession.interruptionEndedNotification,
+            object: session
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSessionRuntimeError(_:)),
+            name: AVCaptureSession.runtimeErrorNotification,
             object: session
         )
     }
