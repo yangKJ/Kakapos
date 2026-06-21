@@ -2247,6 +2247,78 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.lastFrame?.metadata.frameIndex, 1)
         XCTAssertEqual(receivedGenerationValues, [1, 2])
     }
+
+    func testPlayerFrameSourceIgnoresLateFramesAfterStopAndCancel() throws {
+        let item = AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL()))
+        let player = AVPlayer(playerItem: item)
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let firstBuffer = try makePixelBuffer(width: 18, height: 12)
+        let secondBuffer = try makePixelBuffer(width: 24, height: 16)
+        var receivedFrames: [MediaFrame] = []
+
+        source.frameHandler = { frame in
+            receivedFrames.append(frame)
+        }
+
+        source.start()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: .zero,
+                playerTimestamp: .zero,
+                requestTimestamp: .zero,
+                pixelBuffer: firstBuffer
+            )
+        )
+
+        XCTAssertEqual(receivedFrames.count, 1)
+        XCTAssertEqual(receivedFrames[0].metadata.frameIndex, 1)
+
+        source.stop()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 1, timescale: 30),
+                playerTimestamp: CMTime(value: 1, timescale: 30),
+                requestTimestamp: CMTime(value: 1, timescale: 30),
+                pixelBuffer: secondBuffer
+            )
+        )
+        XCTAssertEqual(receivedFrames.count, 1)
+
+        source.start()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 2, timescale: 30),
+                playerTimestamp: CMTime(value: 2, timescale: 30),
+                requestTimestamp: CMTime(value: 2, timescale: 30),
+                pixelBuffer: secondBuffer
+            )
+        )
+        XCTAssertEqual(receivedFrames.count, 2)
+        XCTAssertEqual(receivedFrames[1].metadata.frameIndex, 1)
+
+        source.cancel()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 3, timescale: 30),
+                playerTimestamp: CMTime(value: 3, timescale: 30),
+                requestTimestamp: CMTime(value: 3, timescale: 30),
+                pixelBuffer: secondBuffer
+            )
+        )
+        XCTAssertEqual(receivedFrames.count, 2)
+    }
     #endif
 
     func testRecorderSinkFinishRecordingReturnsRecordedClip() throws {
