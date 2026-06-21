@@ -227,6 +227,62 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(compiled.composition.tracks.count, 0)
         XCTAssertEqual(compiled.audioMix.inputParameters.count, 0)
         XCTAssertEqual(compiled.renderInstructions.count, 0)
+        XCTAssertEqual(compiled.summary.renderSize, CGSize(width: 1920, height: 1080))
+        XCTAssertEqual(compiled.summary.frameDuration, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(compiled.summary.summaryText, "video 0 · image 0 · text 0 · effect 0 · transitions 0 · tracks 0/0")
+    }
+
+    func testTimelineCompositionProducesCompilationSummaryForMixedLayers() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let image = ImageLayer(
+            image: try makeImage(width: 32, height: 18),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            layerLevel: 1
+        )
+        let effect = EffectLayer(
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            source: EffectSource(processor: PassthroughFrameProcessor(), intensity: 0.6),
+            layerLevel: 2
+        )
+        let firstClip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            layerLevel: 0
+        )
+        let secondClip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            layerLevel: 3
+        )
+        let transitionRange = CMTimeRange(start: .zero, duration: CMTime(value: 15, timescale: 30))
+        let timeline = TimelineComposition(
+            renderSize: CGSize(width: 1280, height: 720),
+            frameDuration: CMTime(value: 1, timescale: 30),
+            layers: [firstClip, secondClip, image, effect],
+            transitions: [
+                Transition(timeRange: transitionRange, sourceLayerLevel: 0, destinationLayerLevel: 3)
+            ]
+        )
+
+        let compiled = timeline.compile()
+
+        XCTAssertEqual(compiled.summary.renderSize, CGSize(width: 1280, height: 720))
+        XCTAssertEqual(compiled.summary.frameDuration, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(compiled.summary.videoLayerCount, 2)
+        XCTAssertEqual(compiled.summary.imageLayerCount, 1)
+        XCTAssertEqual(compiled.summary.textLayerCount, 0)
+        XCTAssertEqual(compiled.summary.effectLayerCount, 1)
+        XCTAssertEqual(compiled.summary.transitionCount, 1)
+        XCTAssertEqual(compiled.summary.visualIntervalCount, 1)
+        XCTAssertEqual(compiled.summary.assetSegmentCount, 2)
+        XCTAssertEqual(compiled.summary.audioSegmentCount, 2)
+        XCTAssertEqual(compiled.summary.audioMixSegmentCount, 2)
+        XCTAssertEqual(compiled.summary.videoTrackCount, 2)
+        XCTAssertEqual(compiled.summary.audioTrackCount, 2)
+        XCTAssertGreaterThanOrEqual(compiled.summary.sourceTrackIDCount, 2)
+        XCTAssertEqual(compiled.summary.processorCount, 1)
     }
 
     func testTimelineCompositionFlattensGroupLayerIntoResolvedLayers() throws {

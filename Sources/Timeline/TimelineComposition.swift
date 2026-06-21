@@ -54,6 +54,28 @@ public struct CompiledTimelineComposition {
     public let overlayLayer: CALayer?
 }
 
+public struct TimelineCompilationSummary {
+    public let renderSize: CGSize
+    public let frameDuration: CMTime
+    public let videoLayerCount: Int
+    public let imageLayerCount: Int
+    public let textLayerCount: Int
+    public let effectLayerCount: Int
+    public let transitionCount: Int
+    public let visualIntervalCount: Int
+    public let assetSegmentCount: Int
+    public let audioSegmentCount: Int
+    public let audioMixSegmentCount: Int
+    public let videoTrackCount: Int
+    public let audioTrackCount: Int
+    public let sourceTrackIDCount: Int
+    public let processorCount: Int
+
+    public var summaryText: String {
+        "video \(videoLayerCount) · image \(imageLayerCount) · text \(textLayerCount) · effect \(effectLayerCount) · transitions \(transitionCount) · tracks \(videoTrackCount)/\(audioTrackCount)"
+    }
+}
+
 public final class TimelineComposition {
     public var renderSize: CGSize
     public var frameDuration: CMTime
@@ -82,5 +104,29 @@ public final class TimelineComposition {
 
     public func compile() -> CompiledTimelineComposition {
         TimelineCompiler(composition: self).compile()
+    }
+}
+
+public extension CompiledTimelineComposition {
+    var summary: TimelineCompilationSummary {
+        let videoTrackIDs = Set(renderPlan.assetSegments.compactMap(\.compositionTrackID))
+        let audioTrackIDs = Set(renderPlan.audioSegments.compactMap(\.compositionTrackID))
+        return TimelineCompilationSummary(
+            renderSize: videoComposition.renderSize,
+            frameDuration: videoComposition.frameDuration,
+            videoLayerCount: resolvedLayers.videoLayers.count,
+            imageLayerCount: resolvedLayers.imageLayers.count,
+            textLayerCount: resolvedLayers.textLayers.count,
+            effectLayerCount: resolvedLayers.effectLayers.count,
+            transitionCount: renderPlan.transitions.count,
+            visualIntervalCount: renderPlan.visualIntervals.count,
+            assetSegmentCount: renderPlan.assetSegments.count,
+            audioSegmentCount: renderPlan.audioSegments.count,
+            audioMixSegmentCount: renderPlan.audioMixSegments.count,
+            videoTrackCount: composition.tracks(withMediaType: .video).count,
+            audioTrackCount: composition.tracks(withMediaType: .audio).count,
+            sourceTrackIDCount: videoTrackIDs.count + audioTrackIDs.count,
+            processorCount: renderPlan.processorSegments.count
+        )
     }
 }
