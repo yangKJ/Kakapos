@@ -16,6 +16,14 @@ public struct KakaposSurfaceManifest: Sendable, Hashable, Codable {
     public let starterBoards: [KakaposSurfaceSection]
     public let guide: KakaposSurfaceGuide
 
+    public var boardCount: Int {
+        boards.count
+    }
+
+    public var starterBoardCount: Int {
+        starterBoards.count
+    }
+
     public var boardNames: [String] {
         boards.map(\.displayName)
     }
