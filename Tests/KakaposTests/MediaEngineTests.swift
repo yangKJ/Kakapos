@@ -3075,6 +3075,37 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.summary.lastPresentationTime, CMTime(value: 2, timescale: 30))
         XCTAssertEqual(source.summary.lastMediaType, AVMediaType.video.rawValue)
     }
+
+    func testCameraSourceIgnoresLateFramesAfterStopAndCancel() throws {
+        let configuration = CameraSourceConfiguration(captureMode: .videoWithoutAudio)
+        let source = try CameraSource(configuration: configuration)
+        let firstBuffer = try makeSampleBuffer(width: 20, height: 12, presentationTime: CMTime(value: 1, timescale: 30))
+        let secondBuffer = try makeSampleBuffer(width: 28, height: 18, presentationTime: CMTime(value: 2, timescale: 30))
+        var receivedFrames: [MediaFrame] = []
+
+        source._setStateForTesting(.running)
+        source.frameHandler = { frame in
+            receivedFrames.append(frame)
+        }
+
+        source._emitForTesting(sampleBuffer: firstBuffer, mediaType: .video)
+        XCTAssertEqual(receivedFrames.count, 1)
+        XCTAssertEqual(receivedFrames[0].metadata.frameIndex, 1)
+
+        source.stop()
+        source._emitForTesting(sampleBuffer: secondBuffer, mediaType: .video)
+        XCTAssertEqual(receivedFrames.count, 1)
+
+        source.start()
+        source._setStateForTesting(.running)
+        source._emitForTesting(sampleBuffer: secondBuffer, mediaType: .video)
+        XCTAssertEqual(receivedFrames.count, 2)
+        XCTAssertEqual(receivedFrames[1].metadata.frameIndex, 1)
+
+        source.cancel()
+        source._emitForTesting(sampleBuffer: secondBuffer, mediaType: .video)
+        XCTAssertEqual(receivedFrames.count, 2)
+    }
     #endif
 }
 
