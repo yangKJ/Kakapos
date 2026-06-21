@@ -124,7 +124,14 @@ public final class PreviewSink: MediaSink {
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
         lock.lock()
-        let isPaused = state == .paused
+        let currentState = state
+        let isPaused = currentState == .paused
+        let isTerminal = currentState == .finished || currentState == .cancelled
+        if isTerminal {
+            lock.unlock()
+            completion(.success(()))
+            return
+        }
         if isPaused {
             pendingFrame = frame
             lock.unlock()
@@ -159,6 +166,10 @@ public final class PreviewSink: MediaSink {
     }
 
     public func resume() {
+        lock.lock()
+        let isTerminal = state == .finished || state == .cancelled
+        lock.unlock()
+        guard isTerminal == false else { return }
         let frameToFlush: MediaFrame?
         lock.lock()
         frameToFlush = pendingFrame
@@ -177,12 +188,19 @@ public final class PreviewSink: MediaSink {
     }
 
     public func finish(completion: @escaping (Result<Void, Error>) -> Void) {
+        lock.lock()
+        pendingFrame = nil
+        lock.unlock()
         updateState(.finished)
         completion(.success(()))
     }
 
     private func updateState(_ newState: State) {
         lock.lock()
+        if state == .finished || state == .cancelled {
+            lock.unlock()
+            return
+        }
         guard state != newState else {
             lock.unlock()
             return

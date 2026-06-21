@@ -1527,6 +1527,52 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.lastImage?.width, 14)
     }
 
+    func testPreviewSinkIgnoresLateFramesAfterCancelAndFinish() throws {
+        let firstBuffer = try makePixelBuffer(width: 10, height: 8)
+        let secondBuffer = try makePixelBuffer(width: 14, height: 12)
+        let first = MediaFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let second = MediaFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
+        let sink = PreviewSink { _, _ in }
+        var completionResults: [Bool] = []
+
+        sink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected preview sink failure: \(error)")
+            }
+        }
+        XCTAssertEqual(sink.state, .active)
+
+        sink.cancel()
+        XCTAssertEqual(sink.state, .cancelled)
+
+        sink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected cancelled preview sink failure: \(error)")
+            }
+            completionResults.append(true)
+        }
+
+        XCTAssertEqual(sink.lastFrame?.metadata.frameIndex, 1)
+        XCTAssertEqual(sink.lastImage?.width, 10)
+        XCTAssertEqual(sink.summary.state, .cancelled)
+        XCTAssertFalse(sink.summary.hasPendingFrame)
+
+        sink.resume()
+        XCTAssertEqual(sink.state, .cancelled)
+
+        sink.finish { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected preview sink finish failure: \(error)")
+            }
+            completionResults.append(true)
+        }
+
+        XCTAssertEqual(sink.state, .cancelled)
+        XCTAssertEqual(completionResults.count, 2)
+        XCTAssertEqual(sink.lastFrame?.metadata.frameIndex, 1)
+        XCTAssertEqual(sink.lastImage?.width, 10)
+    }
+
     func testPreviewPipelineRoutesFramesThroughPreviewSinkAndSummarizesBoardState() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
         let frame = MediaFrame(
