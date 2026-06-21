@@ -418,6 +418,10 @@ private struct CameraRecordView: View {
                             message = "Starting camera session"
                         case .didStart:
                             message = "Recording camera frames"
+                        case .didPause:
+                            message = "Camera session paused"
+                        case .didResume:
+                            message = "Camera session resumed"
                         case .didStop:
                             message = "Camera session stopped"
                         case .wasInterrupted:
@@ -434,8 +438,12 @@ private struct CameraRecordView: View {
                             } else {
                                 message = "Camera runtime error: \(description ?? "unknown")"
                             }
+                        case .willSwitchPosition(let position):
+                            message = "Switching camera: \(String(describing: position))"
                         case .positionChanged(let position):
                             message = "Switched camera: \(String(describing: position))"
+                        case .authorizationChanged(let status):
+                            message = "Camera authorization: \(status.description)"
                         }
                     }
                     recorder.durationChangedHandler = { duration in

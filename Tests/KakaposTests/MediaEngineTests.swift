@@ -1677,6 +1677,28 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lifecycle.state, .stopped)
     }
 
+    func testCameraSessionLifecycleTracksPauseResumeAuthorizationAndPositionSwitch() {
+        var lifecycle = CameraSessionLifecycle(position: .back, authorizationStatus: .notDetermined)
+
+        XCTAssertEqual(lifecycle.handle(.startRequested), .authorizationChanged(.notDetermined))
+        XCTAssertEqual(lifecycle.state, .unauthorized)
+
+        XCTAssertEqual(lifecycle.handle(.authorizationChanged(.authorized)), .authorizationChanged(.authorized))
+        XCTAssertEqual(lifecycle.state, .idle)
+
+        XCTAssertEqual(lifecycle.handle(.startRequested), .willStart)
+        XCTAssertEqual(lifecycle.handle(.didStartRunning), .didStart)
+        XCTAssertEqual(lifecycle.handle(.pauseRequested), .didPause)
+        XCTAssertEqual(lifecycle.state, .paused)
+        XCTAssertEqual(lifecycle.handle(.resumeRequested), .didResume)
+        XCTAssertEqual(lifecycle.state, .running)
+        XCTAssertEqual(lifecycle.handle(.positionSwitchRequested(.front)), .willSwitchPosition(.front))
+        XCTAssertEqual(lifecycle.state, .switchingPosition)
+        XCTAssertEqual(lifecycle.handle(.positionChanged(.front)), .positionChanged(.front))
+        XCTAssertEqual(lifecycle.state, .running)
+        XCTAssertEqual(lifecycle.position, .front)
+    }
+
     func testCameraSessionLifecycleTracksCameraPositionChanges() {
         var lifecycle = CameraSessionLifecycle(position: .back)
 
@@ -1712,6 +1734,26 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lifecycle.handle(.startRequested), .willStart)
         XCTAssertEqual(lifecycle.handle(.didStartRunning), .didStart)
         XCTAssertEqual(lifecycle.state, .running)
+    }
+
+    func testCameraSourceConfigurationRequestedMediaTypesMatchCaptureMode() {
+        XCTAssertEqual(CameraSourceConfiguration(captureMode: .video).requestedMediaTypes, [.video, .audio])
+        XCTAssertEqual(CameraSourceConfiguration(captureMode: .videoWithoutAudio).requestedMediaTypes, [.video])
+        XCTAssertEqual(CameraSourceConfiguration(captureMode: .photo).requestedMediaTypes, [.video])
+    }
+
+    func testCameraSourceConfigurationMirroringAndAuthorizationHelpers() {
+        let configuration = CameraSourceConfiguration(
+            captureMode: .video,
+            preferredPosition: .front,
+            mirroringMode: .automatic
+        )
+
+        XCTAssertTrue(configuration.requiresAuthorization(for: .video))
+        XCTAssertTrue(configuration.requiresAuthorization(for: .audio))
+        XCTAssertFalse(configuration.requiresAuthorization(for: .metadata))
+        XCTAssertTrue(configuration.effectiveMirroringValue(for: .front))
+        XCTAssertFalse(configuration.effectiveMirroringValue(for: .back))
     }
 }
 
