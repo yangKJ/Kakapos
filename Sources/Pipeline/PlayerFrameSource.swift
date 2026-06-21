@@ -18,10 +18,23 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         public let frameIndex: Int64
         public let hasLastFrame: Bool
         public let hasSeekTarget: Bool
+        public let lastFrameRequestReason: String?
+        public let lastPresentationTime: CMTime?
+        public let lastPlayerItemTime: CMTime?
         public let preferredFramesPerSecond: Int
 
         public var summaryText: String {
-            "state \(state) · generation \(generation) · frame \(frameIndex) · lastFrame \(hasLastFrame ? "yes" : "no") · seekTarget \(hasSeekTarget ? "yes" : "no") · fps \(preferredFramesPerSecond)"
+            var text = "state \(state) · generation \(generation) · frame \(frameIndex) · lastFrame \(hasLastFrame ? "yes" : "no") · seekTarget \(hasSeekTarget ? "yes" : "no") · fps \(preferredFramesPerSecond)"
+            if let lastFrameRequestReason {
+                text += " · reason \(lastFrameRequestReason)"
+            }
+            if let lastPresentationTime {
+                text += " · presentation \(String(format: "%.2fs", lastPresentationTime.seconds))"
+            }
+            if let lastPlayerItemTime {
+                text += " · itemTime \(String(format: "%.2fs", lastPlayerItemTime.seconds))"
+            }
+            return text
         }
     }
 
@@ -47,6 +60,9 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     public private(set) var state: State = .idle
     public private(set) var lastFrame: MediaFrame?
     public private(set) var lastSeekTargetTime: CMTime?
+    public private(set) var lastFrameRequestReason: String?
+    public private(set) var lastPresentationTime: CMTime?
+    public private(set) var lastPlayerItemTime: CMTime?
     public var frameHandler: ((MediaFrame) -> Void)?
     public var stateChangedHandler: ((State) -> Void)?
     public var itemChangedHandler: ((AVPlayerItem?) -> Void)?
@@ -63,6 +79,9 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             frameIndex: coordinator.frameIndex,
             hasLastFrame: lastFrame != nil,
             hasSeekTarget: lastSeekTargetTime != nil,
+            lastFrameRequestReason: lastFrameRequestReason,
+            lastPresentationTime: lastPresentationTime,
+            lastPlayerItemTime: lastPlayerItemTime,
             preferredFramesPerSecond: preferredFramesPerSecond
         )
     }
@@ -107,6 +126,9 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         observePlayerIfNeeded()
         lastSeekTargetTime = nil
         lastFrame = nil
+        lastFrameRequestReason = nil
+        lastPresentationTime = nil
+        lastPlayerItemTime = nil
         _ = coordinator.start(with: player.currentItem)
         updateState(from: coordinator.playbackState)
         observeAttachedItem(player.currentItem)
@@ -129,6 +151,9 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         coordinator.stop()
         updateState(from: coordinator.playbackState)
         lastSeekTargetTime = nil
+        lastFrameRequestReason = nil
+        lastPresentationTime = nil
+        lastPlayerItemTime = nil
         invalidateObservers()
         delegate?.mediaSourceDidFinish(self)
     }
@@ -153,6 +178,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     ) {
         lastSeekTargetTime = time
         lastFrame = nil
+        lastFrameRequestReason = nil
         player.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter) { [weak self] finished in
             guard let self else {
                 completion?(finished)
@@ -202,6 +228,8 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         let frameIndex = coordinator.markFrameOutput()
         updateState(from: coordinator.playbackState)
         let seekTargetTime = lastSeekTargetTime
+        let presentationTime = frame.presentationTimestamp
+        let playerItemTime = frame.playerTimestamp
         var userInfo: [String: Any] = [
             MetadataKey.playerItemTime: frame.requestTimestamp,
             MetadataKey.playerRate: player.rate,
@@ -212,14 +240,19 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             userInfo[MetadataKey.seekTargetTime] = seekTargetTime
             userInfo[MetadataKey.frameRequestReason] = "seek"
             lastSeekTargetTime = nil
+            lastFrameRequestReason = "seek"
         } else if player.rate == 0 {
             userInfo[MetadataKey.frameRequestReason] = "manual"
+            lastFrameRequestReason = "manual"
         } else {
             userInfo[MetadataKey.frameRequestReason] = "playback"
+            lastFrameRequestReason = "playback"
         }
+        lastPresentationTime = presentationTime
+        lastPlayerItemTime = frame.requestTimestamp
         let metadata = FrameMetadata(
-            presentationTime: frame.presentationTimestamp,
-            sourceTime: frame.playerTimestamp,
+            presentationTime: presentationTime,
+            sourceTime: playerItemTime,
             trackTransform: frame.preferredTrackTransform,
             frameIndex: frameIndex,
             userInfo: userInfo
@@ -243,6 +276,9 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         if didChange {
             lastSeekTargetTime = nil
             lastFrame = nil
+            lastFrameRequestReason = nil
+            lastPresentationTime = nil
+            lastPlayerItemTime = nil
         }
         itemChangedHandler?(item)
         observeAttachedItem(item)
