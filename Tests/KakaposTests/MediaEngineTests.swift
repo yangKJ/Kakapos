@@ -928,6 +928,85 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedMetadata?.presentationTime, metadata.presentationTime)
     }
 
+    func testPreviewSinkCachesLatestFrameWhilePausedAndFlushesOnResume() throws {
+        let firstBuffer = try makePixelBuffer(width: 10, height: 8)
+        let secondBuffer = try makePixelBuffer(width: 14, height: 12)
+        let first = MediaFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let second = MediaFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
+        let expectation = expectation(description: "flush cached preview frame")
+        expectation.expectedFulfillmentCount = 2
+        var receivedFrameIndices: [Int64] = []
+
+        let sink = PreviewSink { _, metadata in
+            receivedFrameIndices.append(metadata.frameIndex ?? -1)
+            expectation.fulfill()
+        }
+
+        sink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected preview sink failure: \(error)")
+            }
+        }
+
+        sink.pause()
+        XCTAssertEqual(sink.state, PreviewSink.State.paused)
+
+        sink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected paused preview sink failure: \(error)")
+            }
+        }
+
+        XCTAssertEqual(sink.lastFrame?.metadata.frameIndex, 1)
+        XCTAssertEqual(sink.lastImage?.width, 10)
+
+        sink.resume()
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(receivedFrameIndices, [1, 2])
+        XCTAssertEqual(sink.state, PreviewSink.State.active)
+        XCTAssertEqual(sink.lastFrame?.metadata.frameIndex, 2)
+        XCTAssertEqual(sink.lastImage?.width, 14)
+    }
+
+    func testMediaGraphAppendReconnectsNewBranchToSourceAdapter() throws {
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let source = TestSource(frames: [input])
+        let firstSink = TestSink()
+        let secondSink = TestSink()
+        let graph = MediaGraph(source: source, branches: [
+            MediaGraphBranch(
+                processors: [
+                    ClosureFrameProcessor { frame, completion in
+                        var output = frame
+                        output.metadata.frameIndex = 10
+                        completion(.success(output))
+                    }
+                ],
+                sinks: [firstSink]
+            )
+        ])
+
+        graph.append(
+            MediaGraphBranch(
+                processors: [
+                    ClosureFrameProcessor { frame, completion in
+                        var output = frame
+                        output.metadata.frameIndex = 20
+                        completion(.success(output))
+                    }
+                ],
+                sinks: [secondSink]
+            )
+        )
+
+        graph.start()
+
+        XCTAssertEqual(firstSink.frames.first?.metadata.frameIndex, 10)
+        XCTAssertEqual(secondSink.frames.first?.metadata.frameIndex, 20)
+    }
+
     func testMediaPipelineStopFinishesSinksOnlyOnceWhenSourceAlsoFinishes() {
         let source = StopAwareSource()
         let sink = CountingSink()
