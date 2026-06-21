@@ -63,9 +63,7 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testMediaPipelineSummaryDescribesSourceProcessorsSinksAndState() throws {
-        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
-        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
-        let source = TestSource(frames: [input])
+        let source = TestSource(frames: [])
         let sink = TestSink()
         let processor = ClosureFrameProcessor { frame, completion in
             completion(.success(frame))
@@ -76,8 +74,36 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.summary.processorTypeNames, ["ClosureFrameProcessor"])
         XCTAssertEqual(pipeline.summary.sinkTypeNames, ["TestSink"])
         XCTAssertEqual(pipeline.summary.state, .idle)
+        XCTAssertNil(pipeline.summary.lastFrameIndex)
+        XCTAssertNil(pipeline.summary.lastPresentationTime)
+        XCTAssertNil(pipeline.summary.lastSourceTime)
         XCTAssertEqual(pipeline.summary.summaryText, "source TestSource · processors 1 · sinks 1 · state idle")
         XCTAssertEqual(pipeline.chain.summary.summaryText, "processors 1 · sinks 1")
+    }
+
+    func testMediaPipelineSummaryTracksLastFrameMetadataAfterStart() throws {
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+        let input = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(
+                presentationTime: CMTime(value: 12, timescale: 30),
+                sourceTime: CMTime(value: 10, timescale: 30),
+                frameIndex: 3
+            )
+        )
+        let source = TestSource(frames: [input])
+        let sink = TestSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+
+        pipeline.start()
+
+        XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 3)
+        XCTAssertEqual(pipeline.lastFrameMetadata?.presentationTime, CMTime(value: 12, timescale: 30))
+        XCTAssertEqual(pipeline.lastFrameMetadata?.sourceTime, CMTime(value: 10, timescale: 30))
+        XCTAssertEqual(
+            pipeline.summary.summaryText,
+            "source TestSource · processors 0 · sinks 1 · state finished · frame 3 · presentation 0.40s · sourceTime 0.33s"
+        )
     }
 
     #if canImport(UIKit)
