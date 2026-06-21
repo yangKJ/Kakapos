@@ -127,6 +127,7 @@ public final class ReaderWriterExportJob {
     private var _status: Status = .idle
     private var _lastProgressInfo: ProgressInfo?
     private var _lastErrorDescription: String?
+    private var _didDeliverCompletion = false
     private var exportSession: VideoAssetExportSession?
 
     public init(
@@ -174,10 +175,13 @@ public final class ReaderWriterExportJob {
                 },
                 completion: { [weak self] error in
                     guard let self else { return }
+                    guard self.markCompletionDelivered() else { return }
                     self.exportSession = nil
                     if let error {
                         let mappedError = Self.mapError(error)
-                        self.storeError(mappedError)
+                        if !Self.isCancelledError(mappedError) {
+                            self.storeError(mappedError)
+                        }
                         if case VideoX.Error.exportCancelled = VideoX.Error.toError(mappedError) {
                             self.setStatus(.cancelled)
                         } else {
@@ -281,6 +285,7 @@ public final class ReaderWriterExportJob {
     }
 
     private func handleProgress(_ progress: VideoAssetExportSession.ExportProgress) {
+        guard status == .exporting else { return }
         let info = ProgressInfo(
             videoProgress: progress.videoProgress?.fractionCompleted ?? 0,
             audioProgress: progress.audioProgress?.fractionCompleted ?? 0,
@@ -299,6 +304,7 @@ public final class ReaderWriterExportJob {
     }
 
     private func storeProgress(_ info: ProgressInfo) {
+        guard status == .exporting else { return }
         stateQueue.sync {
             _lastProgressInfo = info
         }
@@ -313,6 +319,9 @@ public final class ReaderWriterExportJob {
 
     private func setStatus(_ status: Status) {
         let didChange = stateQueue.sync { () -> Bool in
+            if _status.isTerminal, _status != status {
+                return false
+            }
             guard _status != status else { return false }
             _status = status
             return true
@@ -325,6 +334,9 @@ public final class ReaderWriterExportJob {
 
     private func transitionStatusIfNeeded(from expectedStatus: Status, to newStatus: Status) {
         let didChange = stateQueue.sync { () -> Bool in
+            if _status.isTerminal, _status != newStatus {
+                return false
+            }
             guard _status == expectedStatus else { return false }
             _status = newStatus
             return true
@@ -371,5 +383,31 @@ public final class ReaderWriterExportJob {
             return "\(nsError.domain)#\(nsError.code)"
         }
         return nsError.localizedDescription
+    }
+
+    private func markCompletionDelivered() -> Bool {
+        stateQueue.sync {
+            guard _didDeliverCompletion == false else { return false }
+            _didDeliverCompletion = true
+            return true
+        }
+    }
+
+    private static func isCancelledError(_ error: Error) -> Bool {
+        if case VideoX.Error.exportCancelled = VideoX.Error.toError(error) {
+            return true
+        }
+        return false
+    }
+}
+
+private extension ReaderWriterExportJob.Status {
+    var isTerminal: Bool {
+        switch self {
+        case .completed, .cancelled, .failed:
+            return true
+        case .idle, .exporting, .paused:
+            return false
+        }
     }
 }

@@ -1006,6 +1006,7 @@ final class MediaEngineTests: XCTestCase {
             finishWritingProgress: 0.5
         )
 
+        job._setStatusForTesting(.exporting)
         job._setProgressInfoForTesting(progress)
 
         XCTAssertNotNil(job.lastProgressInfo)
@@ -1030,6 +1031,7 @@ final class MediaEngineTests: XCTestCase {
                 .appendingPathExtension("mp4"),
             videoProcessors: [PassthroughFrameProcessor()]
         )
+        job._setStatusForTesting(.exporting)
         job._setProgressInfoForTesting(
             ReaderWriterExportJob.ProgressInfo(
                 videoProgress: 0.4,
@@ -1039,7 +1041,6 @@ final class MediaEngineTests: XCTestCase {
                 finishWritingProgress: 0.2
             )
         )
-        job._setStatusForTesting(.exporting)
 
         XCTAssertEqual(job.summary.videoTrackCount, 1)
         XCTAssertEqual(job.summary.audioTrackCount, 1)
@@ -1127,6 +1128,42 @@ final class MediaEngineTests: XCTestCase {
 
         job.resume()
         XCTAssertEqual(job.status, .cancelled)
+    }
+
+    func testReaderWriterExportJobIgnoresLateProgressAndStatusAfterCompletion() {
+        let job = ReaderWriterExportJob(
+            asset: AVMutableComposition(),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+        )
+        let initialProgress = ReaderWriterExportJob.ProgressInfo(
+            videoProgress: 0.25,
+            audioProgress: 0.5,
+            hasVideo: true,
+            hasAudio: true,
+            finishWritingProgress: 0.1
+        )
+        let lateProgress = ReaderWriterExportJob.ProgressInfo(
+            videoProgress: 0.9,
+            audioProgress: 0.9,
+            hasVideo: true,
+            hasAudio: true,
+            finishWritingProgress: 0.9
+        )
+
+        job._setStatusForTesting(.exporting)
+        job._setProgressInfoForTesting(initialProgress)
+        XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted, initialProgress.overallFractionCompleted)
+
+        job._setStatusForTesting(.completed)
+        job._setProgressInfoForTesting(lateProgress)
+        job._setStatusForTesting(.failed)
+
+        XCTAssertEqual(job.status, .completed)
+        XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted, initialProgress.overallFractionCompleted)
+        XCTAssertTrue(job.summary.summaryText.contains("state completed"))
+        XCTAssertFalse(job.summary.summaryText.contains("error"))
     }
 
     func testReaderWriterExportJobPauseAndResumeTransitionFromExportingState() {
@@ -1313,9 +1350,9 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(task.status, .exporting)
         job._setStatusForTesting(.paused)
         XCTAssertEqual(task.status, .paused)
-        job._setStatusForTesting(.failed)
-        XCTAssertEqual(task.status, .failed)
         job._setStatusForTesting(.completed)
+        XCTAssertEqual(task.status, .completed)
+        job._setStatusForTesting(.failed)
         XCTAssertEqual(task.status, .completed)
     }
 
