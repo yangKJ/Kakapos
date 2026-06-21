@@ -197,6 +197,7 @@ public final class ReaderWriterExportJob {
     private var _lastErrorDescription: String?
     private var _didDeliverCompletion = false
     private var exportSession: ReaderWriterExportSession?
+    private var exportCompletion: ((Result<URL, Error>) -> Void)?
 
     public convenience init(
         asset: AVAsset,
@@ -262,6 +263,7 @@ public final class ReaderWriterExportJob {
             let configuration = try makeConfiguration()
             let session = try sessionFactory(asset, outputURL, configuration)
             exportSession = session
+            exportCompletion = completion
             setStatus(.exporting)
             session.export(
                 progress: { [weak self] progress in
@@ -272,8 +274,6 @@ public final class ReaderWriterExportJob {
                 },
                 completion: { [weak self] error in
                     guard let self else { return }
-                    guard self.markCompletionDelivered() else { return }
-                    self.exportSession = nil
                     if let error {
                         let mappedError = Self.mapError(error)
                         if !Self.isCancelledError(mappedError) {
@@ -285,10 +285,10 @@ public final class ReaderWriterExportJob {
                             self.setStatus(.failed)
                         }
                         self.removePartialOutputIfNeeded()
-                        completion(.failure(mappedError))
+                        self.deliverCompletion(.failure(mappedError))
                     } else {
                         self.setStatus(.completed)
-                        completion(.success(self.outputURL))
+                        self.deliverCompletion(.success(self.outputURL))
                     }
                 }
             )
@@ -296,6 +296,7 @@ public final class ReaderWriterExportJob {
             storeError(error)
             setStatus(.failed)
             removePartialOutputIfNeeded()
+            exportCompletion = nil
             completion(.failure(Self.mapError(error)))
         }
     }
@@ -322,18 +323,14 @@ public final class ReaderWriterExportJob {
         }
         if let exportSession {
             setStatus(.cancelled)
-            stateQueue.sync {
-                _didDeliverCompletion = true
-            }
             removePartialOutputIfNeeded()
-            self.exportSession = nil
+            deliverCompletion(.failure(VideoX.Error.exportCancelled))
             exportSession.cancel()
             return
         }
         let shouldCancel = stateQueue.sync { () -> Bool in
             guard _status != .completed && _status != .cancelled && _status != .failed else { return false }
             _status = .cancelled
-            _didDeliverCompletion = true
             return true
         }
         guard shouldCancel else { return }
@@ -501,12 +498,16 @@ public final class ReaderWriterExportJob {
         return nsError.localizedDescription
     }
 
-    private func markCompletionDelivered() -> Bool {
-        stateQueue.sync {
-            guard _didDeliverCompletion == false else { return false }
+    private func deliverCompletion(_ result: Result<URL, Error>) {
+        let completion = stateQueue.sync { () -> ((Result<URL, Error>) -> Void)? in
+            guard _didDeliverCompletion == false else { return nil }
             _didDeliverCompletion = true
-            return true
+            let completion = exportCompletion
+            exportCompletion = nil
+            exportSession = nil
+            return completion
         }
+        completion?(result)
     }
 
     private static let defaultSessionFactory: (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession = { asset, outputURL, configuration in
