@@ -30,7 +30,7 @@ private struct BoardHeaderView: View {
     let board: KakaposCapabilityBoard
 
     private var info: KakaposCapabilityBoardInfo? {
-        KakaposCapabilityCatalog.board(named: board.rawValue)
+        KakaposSurface.board(named: board.rawValue)
     }
 
     var body: some View {
@@ -132,9 +132,9 @@ private struct OfflineExportView: View {
         if selectedRotation != .angle0 {
             instructions.insert(RotateInstruction(rotationAngle: selectedRotation), at: 0)
         }
-        let exporter = VideoX(provider: .init(with: videoURL))
         do {
-            let task = try exporter.makeExportTask(
+            let task = try KakaposSurface.exportTask(
+                provider: .init(with: videoURL),
                 options: [
                     .OptimizeForNetworkUse: true,
                     .ExportPipeline: VideoX.ExportPipeline.readerWriter
@@ -264,9 +264,7 @@ private struct PlayerPreviewView: View {
     @State private var previewStateText = "idle"
     @State private var previewGeneration: Int64 = 0
     #if canImport(UIKit)
-    @State private var frameSource: PlayerFrameSource?
-    @State private var previewSink: PreviewSink?
-    @State private var pipeline: MediaPipeline?
+    @State private var previewPipeline: PreviewPipeline?
     #endif
 
     var body: some View {
@@ -298,13 +296,13 @@ private struct PlayerPreviewView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             #if canImport(UIKit)
-            Text(frameSource?.summaryText ?? "state idle · generation 0 · frame 0 · lastFrame no · seekTarget no · fps 30")
+            Text(previewPipeline?.playerSource?.summaryText ?? "state idle · generation 0 · frame 0 · lastFrame no · seekTarget no · fps 30")
                 .font(.footnote)
                 .foregroundColor(.secondary)
-            Text(previewSink?.summaryText ?? "state idle · frame n/a · image n/a · pending no")
+            Text(previewPipeline?.previewSink.summaryText ?? "state idle · frame n/a · image n/a · pending no")
                 .font(.footnote)
                 .foregroundColor(.secondary)
-            Text(pipeline?.summary.summaryText ?? "source unavailable · processors 0 · sinks 0 · state idle")
+            Text(previewPipeline?.summary.summaryText ?? "source unavailable · processors 0 · sinks 0 · state idle")
                 .font(.footnote)
                 .foregroundColor(.secondary)
             #else
@@ -348,7 +346,10 @@ private struct PlayerPreviewView: View {
         previewStateText = "starting"
         previewGeneration = 0
         #if canImport(UIKit)
-        let sink = PreviewSink { image, metadata in
+        let pipeline = KakaposSurface.preview(
+            player: player,
+            processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.15)])]
+        ) { image, metadata in
             let generation = metadata.userInfo[PlayerFrameSource.MetadataKey.generation] as? Int64 ?? 0
             guard generation >= previewGeneration else { return }
             previewGeneration = generation
@@ -357,14 +358,7 @@ private struct PlayerPreviewView: View {
             currentTimeText = String(format: "%.2fs", metadata.presentationTime.seconds)
             previewStateText = metadata.userInfo[PlayerFrameSource.MetadataKey.playbackState] as? String ?? "running"
         }
-        let pipeline = MediaPipeline(
-            player: player,
-            processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.15)])],
-            sinks: [sink]
-        )
-        self.frameSource = pipeline.source as? PlayerFrameSource
-        self.previewSink = sink
-        self.pipeline = pipeline
+        self.previewPipeline = pipeline
         pipeline.start()
         player.play()
         message = "Previewing processed player frames"
@@ -377,7 +371,7 @@ private struct PlayerPreviewView: View {
     private func pausePreview() {
         player?.pause()
         #if canImport(UIKit)
-        pipeline?.pause()
+        previewPipeline?.pause()
         #endif
         previewStateText = "paused"
         message = "Preview paused"
@@ -385,7 +379,7 @@ private struct PlayerPreviewView: View {
 
     private func resumePreview() {
         #if canImport(UIKit)
-        pipeline?.resume()
+        previewPipeline?.resume()
         #endif
         player?.play()
         previewStateText = "running"
@@ -398,7 +392,7 @@ private struct PlayerPreviewView: View {
 
     private func seekPreview(to time: CMTime, message: String = "Preview seeked") {
         #if canImport(UIKit)
-        frameSource?.seek(to: time) { finished in
+        previewPipeline?.seek(to: time) { finished in
             guard finished else { return }
             DispatchQueue.main.async {
                 self.player?.play()
@@ -407,7 +401,7 @@ private struct PlayerPreviewView: View {
                 self.message = message
             }
         }
-        if frameSource == nil {
+        if previewPipeline == nil {
             player?.seek(to: time)
             player?.play()
             currentTimeText = String(format: "%.2fs", time.seconds)
@@ -426,10 +420,8 @@ private struct PlayerPreviewView: View {
     private func stopPreview() {
         player?.pause()
         #if canImport(UIKit)
-        pipeline?.stop()
-        pipeline = nil
-        frameSource = nil
-        previewSink = nil
+        previewPipeline?.stop()
+        previewPipeline = nil
         #endif
         previewImage = nil
         previewStateText = "stopped"
@@ -450,9 +442,7 @@ private struct CameraRecordView: View {
     @State private var lastOutputText = "none"
     @State private var message = "Camera recording requires device camera permission"
     #if canImport(UIKit) && !os(watchOS)
-    @State private var pipeline: MediaPipeline?
-    @State private var cameraSource: CameraSource?
-    @State private var recorder: RecorderSink?
+    @State private var recordingPipeline: RecordingPipeline?
     @State private var previewSink: PreviewSink?
     #endif
 
@@ -478,24 +468,24 @@ private struct CameraRecordView: View {
             Text("Preview State: \(previewStateText)").font(.subheadline).foregroundColor(.secondary)
             Text("Recorder Snapshot: \(recorderSnapshotText)").font(.footnote).foregroundColor(.secondary)
             #if canImport(UIKit) && !os(watchOS)
-            Text(cameraSource?.summaryText ?? "state idle · position unspecified · auth notDetermined · paused no · mode video")
+            Text(recordingPipeline?.cameraSource?.summaryText ?? "state idle · position unspecified · auth notDetermined · paused no · mode video")
                 .font(.footnote)
                 .foregroundColor(.secondary)
             Text(previewSink?.summaryText ?? "state idle · frame n/a · presentation n/a · sourceTime n/a · reason n/a · image n/a · pending no")
                 .font(.footnote)
                 .foregroundColor(.secondary)
-            Text(recorder?.summaryText ?? "state idle · clips 0 · total 0.00s · clip 0.00s · recorded no")
+            Text(recordingPipeline?.recorderSink.summaryText ?? "state idle · clips 0 · total 0.00s · clip 0.00s · recorded no")
                 .font(.footnote)
                 .foregroundColor(.secondary)
             HStack {
                 Button("Start Camera") { startCamera() }
                 Button("Pause Record") { pauseRecording() }
-                    .disabled(recorder == nil)
+                    .disabled(recordingPipeline == nil)
                 Button("Resume Record") { resumeRecording() }
-                    .disabled(recorder == nil)
+                    .disabled(recordingPipeline == nil)
                 Button("Stop") { stopCamera() }
                 Button("Flip Camera") { flipCamera() }
-                    .disabled(cameraSource == nil)
+                    .disabled(recordingPipeline?.cameraSource == nil)
             }
             .buttonStyle(.borderedProminent)
             #endif
@@ -520,9 +510,23 @@ private struct CameraRecordView: View {
                     return
                 }
                 do {
-                    let source = try CameraSource()
                     let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
-                    let recorder = try RecorderSink(outputURL: outputURL)
+                    let recording = try KakaposSurface.record(
+                        configuration: .init(),
+                        outputURL: outputURL,
+                        processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05)])]
+                    )
+                    guard let source = recording.cameraSource else {
+                        message = "CameraSource unavailable"
+                        return
+                    }
+                    let recorder = recording.recorderSink
+                    let preview = PreviewSink(callbackQueue: .main) { image, metadata in
+                        frameCount += 1
+                        livePreviewImage = image
+                        lastOutputText = "video @ \(String(format: "%.2fs", metadata.presentationTime.seconds))"
+                        previewStateText = "active"
+                    }
                     source.sessionEventHandler = { event in
                         sessionStateText = String(describing: source.state)
                         switch event {
@@ -568,24 +572,14 @@ private struct CameraRecordView: View {
                         recorderStateText = String(describing: state)
                         recorderSnapshotText = snapshotText(for: recorder.snapshot)
                     }
-                    let preview = PreviewSink(callbackQueue: .main) { image, metadata in
-                        frameCount += 1
-                        livePreviewImage = image
-                        lastOutputText = "video @ \(String(format: "%.2fs", metadata.presentationTime.seconds))"
-                        previewStateText = "active"
-                    }
                     preview.stateChangedHandler = { state in
                         previewStateText = String(describing: state)
                     }
-                    let pipeline = MediaPipeline(
-                        source: source,
-                        processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05)])],
-                        sinks: [preview, recorder]
-                    )
-                    pipeline.errorHandler = { error in
+                    recording.pipeline.sinks = [preview, recorder]
+                    recording.pipeline.errorHandler = { error in
                         message = "Pipeline error: \(error.localizedDescription)"
                     }
-                    pipeline.completionHandler = {
+                    recording.pipeline.completionHandler = {
                         let clip = recorder.recordedClip ?? RecordedClip(outputURL: outputURL, duration: .zero, startedAt: nil, endedAt: nil)
                         guard let clipURL = clip.outputURL else {
                             message = "Recording finished without output URL"
@@ -600,10 +594,8 @@ private struct CameraRecordView: View {
                         lastOutputText = clipURL.lastPathComponent
                         message = "Recorded: \(clipURL.lastPathComponent)"
                     }
-                    self.cameraSource = source
-                    self.recorder = recorder
+                    self.recordingPipeline = recording
                     self.previewSink = preview
-                    self.pipeline = pipeline
                     self.player = nil
                     self.livePreviewImage = nil
                     frameCount = 0
@@ -613,7 +605,7 @@ private struct CameraRecordView: View {
                     previewStateText = String(describing: preview.state)
                     recorderSnapshotText = snapshotText(for: recorder.snapshot)
                     lastOutputText = "awaiting frames"
-                    pipeline.start()
+                    recording.pipeline.start()
                     message = "Starting camera session"
                 } catch {
                     message = error.localizedDescription
@@ -627,19 +619,14 @@ private struct CameraRecordView: View {
 
     private func stopCamera() {
         #if canImport(UIKit) && !os(watchOS)
-        pipeline?.stop()
-        cameraSource = nil
-        recorder = nil
-        previewSink = nil
+        recordingPipeline?.stop()
         livePreviewImage = nil
         sessionStateText = "stopped"
         recorderStateText = "finished"
         previewStateText = "finished"
         recorderSnapshotText = "segments: 0 · duration: 0.00s"
-        cameraSource = nil
-        recorder = nil
+        recordingPipeline = nil
         previewSink = nil
-        pipeline = nil
         #else
         message = "CameraSource is unavailable here"
         #endif
@@ -647,11 +634,10 @@ private struct CameraRecordView: View {
 
     private func pauseRecording() {
         #if canImport(UIKit) && !os(watchOS)
-        cameraSource?.pause()
-        recorder?.pauseRecording()
+        recordingPipeline?.pause()
         recorderStateText = "paused"
         previewStateText = "paused"
-        if let recorder {
+        if let recorder = recordingPipeline?.recorderSink {
             recorderSnapshotText = snapshotText(for: recorder.snapshot)
         }
         message = "Recording paused"
@@ -660,11 +646,10 @@ private struct CameraRecordView: View {
 
     private func resumeRecording() {
         #if canImport(UIKit) && !os(watchOS)
-        cameraSource?.resume()
-        recorder?.resumeRecording()
+        recordingPipeline?.resume()
         recorderStateText = "recording"
         previewStateText = "active"
-        if let recorder {
+        if let recorder = recordingPipeline?.recorderSink {
             recorderSnapshotText = snapshotText(for: recorder.snapshot)
         }
         message = "Recording resumed"
@@ -673,7 +658,7 @@ private struct CameraRecordView: View {
 
     private func flipCamera() {
         #if canImport(UIKit) && !os(watchOS)
-        guard let cameraSource else { return }
+        guard let cameraSource = recordingPipeline?.cameraSource else { return }
         let didSwitch = cameraSource.switchCameraPosition()
         if !didSwitch {
             message = "Failed to switch camera"
@@ -716,7 +701,7 @@ private struct TimelineExportView: View {
             message = "Timeline assets missing"
             return
         }
-        let timeline = TimelineComposition(renderSize: CGSize(width: 720, height: 1280), frameDuration: CMTime(value: 1, timescale: 30))
+        let timeline = KakaposSurface.timeline(renderSize: CGSize(width: 720, height: 1280), frameDuration: CMTime(value: 1, timescale: 30))
         let firstClip = ClipLayer(
             asset: AVAsset(url: firstURL),
             timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 3.2, preferredTimescale: 600)),
