@@ -18,6 +18,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.starterTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.starterTypes, ["RecordingPipeline", "CameraSource", "RecorderSink"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.starterTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition"])
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.usageHint, "Start with VideoX when you already have an asset and need offline export compatibility.")
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.usageHint, "Start with PreviewPipeline when you want player frames or a custom source routed to preview.")
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.usageHint, "Start with RecordingPipeline when you want camera capture or a source recorded to a file.")
+        XCTAssertEqual(KakaposCapabilityCatalog.board(named: "timeline")?.usageHint, "Start with TimelinePipeline when you need layered composition, keyframes, and export planning.")
         XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
     }
 
@@ -31,6 +35,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposSurface.previewBoard.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
         XCTAssertEqual(KakaposSurface.recordBoard.primaryTypes, ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"])
         XCTAssertEqual(KakaposSurface.timelineBoard.starterTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition"])
+        XCTAssertEqual(KakaposSurface.exportBoard.usageHint, KakaposCapabilityCatalog.board(named: "export")?.usageHint)
+        XCTAssertEqual(KakaposSurface.previewBoard.usageHint, KakaposCapabilityCatalog.board(named: "preview")?.usageHint)
+        XCTAssertEqual(KakaposSurface.recordBoard.usageHint, KakaposCapabilityCatalog.board(named: "record")?.usageHint)
+        XCTAssertEqual(KakaposSurface.timelineBoard.usageHint, KakaposCapabilityCatalog.board(named: "timeline")?.usageHint)
 
         XCTAssertEqual(KakaposSurface.exportBoard.summary, KakaposCapabilityCatalog.board(named: "export")?.summary)
         XCTAssertEqual(KakaposSurface.previewBoard.summary, KakaposCapabilityCatalog.board(named: "preview")?.summary)
@@ -195,7 +203,8 @@ final class MediaEngineTests: XCTestCase {
 
     func testImageSourceCanBroadcastFramesDirectlyToConsumerNode() throws {
         let frame = StillImageFrame(image: try makeImage(width: 16, height: 16))
-        let source = ImageSource(frames: [frame], callbackQueue: .main)
+        let callbackQueue = DispatchQueue(label: "com.condy.kakapos.tests.image-source.direct")
+        let source = ImageSource(frames: [frame], callbackQueue: callbackQueue)
         let consumer = TestConsumerNode()
         let completion = expectation(description: "direct source-consumer delivery")
 
@@ -317,7 +326,8 @@ final class MediaEngineTests: XCTestCase {
             StillImageFrame(image: try makeImage(width: 10, height: 10), duration: CMTime(value: 1, timescale: 30)),
             StillImageFrame(image: try makeImage(width: 20, height: 12), duration: CMTime(value: 2, timescale: 30))
         ]
-        let source = ImageSource(frames: frames, renderSize: CGSize(width: 40, height: 24), callbackQueue: .main)
+        let callbackQueue = DispatchQueue(label: "com.condy.kakapos.tests.image-source.pipeline")
+        let source = ImageSource(frames: frames, renderSize: CGSize(width: 40, height: 24), callbackQueue: callbackQueue)
         let sink = TestSink()
         let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
         let completion = expectation(description: "image source finished")
@@ -974,7 +984,8 @@ final class MediaEngineTests: XCTestCase {
         let timeline = TimelineComposition(layers: [image, effect])
         let compiled = timeline.compile()
 
-        let imageSource = try XCTUnwrap(compiled.makeImageSource())
+        let callbackQueue = DispatchQueue(label: "com.condy.kakapos.tests.timeline.image-source")
+        let imageSource = try XCTUnwrap(compiled.makeImageSource(callbackQueue: callbackQueue))
         let chain = compiled.makeProcessorChain()
         let sink = TestSink()
         chain.sinks = [sink]
