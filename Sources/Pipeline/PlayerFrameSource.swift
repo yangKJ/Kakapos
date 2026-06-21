@@ -93,7 +93,9 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     }
 
     public var summaryText: String {
-        summary.summaryText
+        var text = summary.summaryText
+        text += " · sourceSnapshot \(sourceSnapshot.summaryText)"
+        return text
     }
 
     public var sourceSnapshot: MediaSourceSnapshot {

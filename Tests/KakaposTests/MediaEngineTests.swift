@@ -1943,7 +1943,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.sourceSnapshot.details["generation"], "1")
         XCTAssertEqual(source.sourceSnapshot.details["reason"], "playback")
         XCTAssertEqual(source.summary.hasLastFrame, false)
-        XCTAssertEqual(source.summary.summaryText, "state active · generation 1 · frame 0 · lastFrame no · seekTarget no · fps 30")
+        XCTAssertTrue(source.summary.summaryText.contains("state active · generation 1 · frame 0 · lastFrame no · seekTarget no · fps 30"))
+        XCTAssertTrue(source.summary.summaryText.contains("sourceSnapshot state active · fps 30 · generation 1 · lastFrame no · reason playback · seekTarget no"))
 
         source.pause()
         XCTAssertEqual(source.summary.state, .paused)
@@ -1963,10 +1964,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.summary.lastFrameRequestReason, "manual")
         XCTAssertEqual(source.summary.lastPresentationTime, .zero)
         XCTAssertEqual(source.summary.lastPlayerItemTime, .zero)
-        XCTAssertEqual(
-            source.summary.summaryText,
-            "state paused · generation 1 · frame 1 · lastFrame yes · seekTarget no · fps 30 · reason manual · presentation 0.00s · itemTime 0.00s"
-        )
+        XCTAssertTrue(source.summary.summaryText.contains("state paused · generation 1 · frame 1 · lastFrame yes · seekTarget no · fps 30 · reason manual · presentation 0.00s · itemTime 0.00s"))
+        XCTAssertTrue(source.summary.summaryText.contains("sourceSnapshot state paused · frame 1 · presentation 0.00s · sourceTime 0.00s · fps 30 · generation 1 · lastFrame yes · reason manual · seekTarget no"))
     }
     #endif
 
