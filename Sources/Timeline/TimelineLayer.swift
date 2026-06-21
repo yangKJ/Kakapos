@@ -36,6 +36,26 @@ open class TimelineLayer {
     }
 }
 
+internal struct TimelineLayerInheritance {
+    let opacity: Float
+    let transform: CGAffineTransform
+    let keyframes: [KeyframeAnimation]
+
+    static let identity = TimelineLayerInheritance(
+        opacity: 1,
+        transform: .identity,
+        keyframes: []
+    )
+
+    func appending(layer: TimelineLayer) -> TimelineLayerInheritance {
+        TimelineLayerInheritance(
+            opacity: opacity * layer.opacity,
+            transform: transform.concatenating(layer.transform),
+            keyframes: keyframes + layer.keyframes
+        )
+    }
+}
+
 public final class ClipLayer: TimelineLayer {
     public let asset: AVAsset
     public var sourceTimeRange: CMTimeRange?
@@ -163,7 +183,9 @@ public final class GroupLayer: TimelineLayer {
     }
 
     public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
-        let shiftedChildren = layers.map { $0.applyingOffset(offset + timeRange.start, inheritedLevel: layerLevel + inheritedLevel) }
+        let shiftedChildren = layers.map { child in
+            child.applyingOffset(offset + timeRange.start, inheritedLevel: layerLevel + inheritedLevel)
+        }
         let shifted = GroupLayer(
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
             layers: shiftedChildren,
@@ -173,6 +195,31 @@ public final class GroupLayer: TimelineLayer {
         shifted.transform = transform
         shifted.keyframes = keyframes
         return shifted
+    }
+
+    internal func flattenedLayers(
+        offset: CMTime = .zero,
+        inheritedLevel: Int = 0,
+        inheritedState: TimelineLayerInheritance = .identity
+    ) -> [TimelineLayer] {
+        let shiftedStart = offset + timeRange.start
+        let combinedState = inheritedState.appending(layer: self)
+
+        return layers.flatMap { child -> [TimelineLayer] in
+            if let group = child as? GroupLayer {
+                return group.flattenedLayers(
+                    offset: shiftedStart,
+                    inheritedLevel: layerLevel + inheritedLevel,
+                    inheritedState: combinedState
+                )
+            }
+
+            let shifted = child.applyingOffset(shiftedStart, inheritedLevel: layerLevel + inheritedLevel)
+            shifted.opacity *= combinedState.opacity
+            shifted.transform = combinedState.transform.concatenating(shifted.transform)
+            shifted.keyframes = combinedState.keyframes + shifted.keyframes
+            return [shifted]
+        }
     }
 }
 
