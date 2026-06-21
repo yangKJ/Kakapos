@@ -75,6 +75,16 @@ public final class MediaPipeline {
         case failed
     }
 
+    public struct Snapshot {
+        public let sourceTypeName: String
+        public let processorTypeNames: [String]
+        public let sinkTypeNames: [String]
+        public let state: State
+        public let sourceSnapshot: MediaSourceSnapshot?
+        public let lastFrameMetadata: FrameMetadata?
+        public let lastErrorDescription: String?
+    }
+
     public let source: MediaSource
     public let chain: MediaProcessorChain
     public private(set) var state: State = .idle
@@ -91,18 +101,30 @@ public final class MediaPipeline {
         set { chain.sinks = newValue }
     }
 
-    public var summary: MediaPipelineSummary {
-        let sourceSnapshot = (source as? MediaSourceSnapshotProviding)?.sourceSnapshot
-        return MediaPipelineSummary(
+    public var snapshot: Snapshot {
+        Snapshot(
             sourceTypeName: String(describing: type(of: source)),
             processorTypeNames: processors.map { String(describing: type(of: $0)) },
             sinkTypeNames: sinks.map { String(describing: type(of: $0)) },
             state: state,
-            sourceSnapshot: sourceSnapshot,
-            lastFrameIndex: lastFrameMetadata?.frameIndex,
-            lastPresentationTime: lastFrameMetadata?.presentationTime,
-            lastSourceTime: lastFrameMetadata?.sourceTime,
+            sourceSnapshot: (source as? MediaSourceSnapshotProviding)?.sourceSnapshot,
+            lastFrameMetadata: lastFrameMetadata,
             lastErrorDescription: lastErrorDescription
+        )
+    }
+
+    public var summary: MediaPipelineSummary {
+        let currentSnapshot = snapshot
+        return MediaPipelineSummary(
+            sourceTypeName: currentSnapshot.sourceTypeName,
+            processorTypeNames: currentSnapshot.processorTypeNames,
+            sinkTypeNames: currentSnapshot.sinkTypeNames,
+            state: currentSnapshot.state,
+            sourceSnapshot: currentSnapshot.sourceSnapshot,
+            lastFrameIndex: currentSnapshot.lastFrameMetadata?.frameIndex,
+            lastPresentationTime: currentSnapshot.lastFrameMetadata?.presentationTime,
+            lastSourceTime: currentSnapshot.lastFrameMetadata?.sourceTime,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
         )
     }
 
