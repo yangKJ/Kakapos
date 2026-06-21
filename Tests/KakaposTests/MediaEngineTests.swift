@@ -1278,6 +1278,37 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedMetadata?.presentationTime, metadata.presentationTime)
     }
 
+    func testPreviewSinkSummaryReflectsPauseResumeAndBufferedFrameState() throws {
+        let firstBuffer = try makePixelBuffer(width: 10, height: 8)
+        let secondBuffer = try makePixelBuffer(width: 14, height: 12)
+        let first = MediaFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let second = MediaFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
+        let sink = PreviewSink { _, _ in }
+
+        sink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected preview sink failure: \(error)")
+            }
+        }
+
+        XCTAssertEqual(sink.summary.state, .active)
+        XCTAssertEqual(sink.summary.lastFrameIndex, 1)
+        XCTAssertEqual(sink.summary.lastImageWidth, 10)
+        XCTAssertEqual(sink.summary.summaryText, "state active · frame 1 · image 10x8 · pending no")
+
+        sink.pause()
+        sink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected paused preview sink failure: \(error)")
+            }
+        }
+
+        XCTAssertEqual(sink.summary.state, .paused)
+        XCTAssertEqual(sink.summary.hasPendingFrame, true)
+        XCTAssertEqual(sink.summary.lastFrameIndex, 1)
+        XCTAssertEqual(sink.summary.summaryText, "state paused · frame 1 · image 10x8 · pending yes")
+    }
+
     func testPreviewSinkCachesLatestFrameWhilePausedAndFlushesOnResume() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
@@ -1318,6 +1349,46 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.lastFrame?.metadata.frameIndex, 2)
         XCTAssertEqual(sink.lastImage?.width, 14)
     }
+
+    #if canImport(UIKit)
+    func testPlayerFrameSourceSummaryReflectsPlaybackAndFrameProgress() throws {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let pixelBuffer = try makePixelBuffer(width: 18, height: 12)
+
+        source.start()
+        XCTAssertEqual(source.summary.state, .active)
+        XCTAssertEqual(source.summary.generation, 1)
+        XCTAssertEqual(source.summary.frameIndex, 0)
+        XCTAssertEqual(source.summary.hasLastFrame, false)
+        XCTAssertEqual(source.summary.summaryText, "state active · generation 1 · frame 0 · lastFrame no · seekTarget no · fps 30")
+
+        source.pause()
+        XCTAssertEqual(source.summary.state, .paused)
+
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: .zero,
+                playerTimestamp: .zero,
+                requestTimestamp: .zero,
+                pixelBuffer: pixelBuffer
+            )
+        )
+
+        XCTAssertEqual(source.summary.frameIndex, 1)
+        XCTAssertEqual(source.summary.hasLastFrame, true)
+        XCTAssertEqual(source.summary.summaryText, "state paused · generation 1 · frame 1 · lastFrame yes · seekTarget no · fps 30")
+    }
+    #endif
 
     func testMediaGraphAppendReconnectsNewBranchToSourceAdapter() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)

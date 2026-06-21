@@ -46,6 +46,25 @@ public final class PixelBufferSink: MediaSink {
 public final class PreviewSink: MediaSink {
     public typealias Handler = (CGImage, FrameMetadata) -> Void
 
+    public struct Summary {
+        public let state: State
+        public let lastFrameIndex: Int64?
+        public let lastImageWidth: Int?
+        public let lastImageHeight: Int?
+        public let hasPendingFrame: Bool
+
+        public var summaryText: String {
+            let frameText = lastFrameIndex.map(String.init) ?? "n/a"
+            let sizeText: String
+            if let lastImageWidth, let lastImageHeight {
+                sizeText = "\(lastImageWidth)x\(lastImageHeight)"
+            } else {
+                sizeText = "n/a"
+            }
+            return "state \(state) · frame \(frameText) · image \(sizeText) · pending \(hasPendingFrame ? "yes" : "no")"
+        }
+    }
+
     public enum State: Equatable {
         case idle
         case active
@@ -63,6 +82,23 @@ public final class PreviewSink: MediaSink {
     public private(set) var lastFrame: MediaFrame?
     public private(set) var lastImage: CGImage?
     public var stateChangedHandler: ((State) -> Void)?
+
+    public var summary: Summary {
+        lock.lock()
+        let summary = Summary(
+            state: state,
+            lastFrameIndex: lastFrame?.metadata.frameIndex,
+            lastImageWidth: lastImage?.width,
+            lastImageHeight: lastImage?.height,
+            hasPendingFrame: pendingFrame != nil
+        )
+        lock.unlock()
+        return summary
+    }
+
+    public var summaryText: String {
+        summary.summaryText
+    }
 
     public init(
         callbackQueue: DispatchQueue = .main,
