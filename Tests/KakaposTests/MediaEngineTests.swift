@@ -23,12 +23,12 @@ final class MediaEngineTests: XCTestCase {
 
     func testKakaposBoardsBuildLightweightEntryPoints() throws {
         let source = TestSource(frames: [])
-        let preview = KakaposBoards.preview(source: source) { _, _ in }
+        let preview = KakaposSurface.preview(source: source) { _, _ in }
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("mp4")
-        let recording = try KakaposBoards.record(source: source, outputURL: outputURL)
-        let timeline = KakaposBoards.timeline()
+        let recording = try KakaposSurface.record(source: source, outputURL: outputURL)
+        let timeline = KakaposSurface.timeline()
 
         XCTAssertEqual(preview.summary.sourceTypeName, "TestSource")
         XCTAssertEqual(preview.summary.processorCount, 0)
@@ -36,6 +36,11 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recording.summary.processorCount, 0)
         XCTAssertEqual(timeline.summary.layerCount, 0)
         XCTAssertEqual(timeline.summary.transitionCount, 0)
+    }
+
+    func testKakaposSurfaceExposesTheSameBoardCatalogAsTheLegacyAlias() {
+        XCTAssertEqual(KakaposSurface.boards.map(\.board), KakaposCapabilityCatalog.boards.map(\.board))
+        XCTAssertEqual(KakaposSurface.board(named: "export")?.starterTypes, ["VideoX", "ReaderWriterExportJob"])
     }
 
     func testPassthroughFrameProcessorPreservesPixelBufferMetadata() throws {
