@@ -8,7 +8,6 @@
 import SwiftUI
 import AVFoundation
 import AVKit
-import VideoToolbox
 import Harbeth
 import Photos
 
@@ -434,6 +433,7 @@ private struct CameraRecordView: View {
     @State private var recordedDurationText = "0.00s"
     @State private var sessionStateText = "idle"
     @State private var recorderStateText = "idle"
+    @State private var previewStateText = "idle"
     @State private var recorderSnapshotText = "segments: 0 · duration: 0.00s"
     @State private var lastOutputText = "none"
     @State private var message = "Camera recording requires device camera permission"
@@ -441,6 +441,7 @@ private struct CameraRecordView: View {
     @State private var pipeline: MediaPipeline?
     @State private var cameraSource: CameraSource?
     @State private var recorder: RecorderSink?
+    @State private var previewSink: PreviewSink?
     #endif
 
     var body: some View {
@@ -462,9 +463,13 @@ private struct CameraRecordView: View {
             Text("Recorded Duration: \(recordedDurationText)").font(.subheadline).foregroundColor(.secondary)
             Text("Session State: \(sessionStateText)").font(.subheadline).foregroundColor(.secondary)
             Text("Recorder State: \(recorderStateText)").font(.subheadline).foregroundColor(.secondary)
+            Text("Preview State: \(previewStateText)").font(.subheadline).foregroundColor(.secondary)
             Text("Recorder Snapshot: \(recorderSnapshotText)").font(.footnote).foregroundColor(.secondary)
             #if canImport(UIKit) && !os(watchOS)
             Text(cameraSource?.summaryText ?? "state idle · position unspecified · auth notDetermined · paused no · mode video")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            Text(previewSink?.summaryText ?? "state idle · frame n/a · presentation n/a · sourceTime n/a · reason n/a · image n/a · pending no")
                 .font(.footnote)
                 .foregroundColor(.secondary)
             Text(recorder?.summaryText ?? "state idle · clips 0 · total 0.00s · clip 0.00s · recorded no")
@@ -546,24 +551,19 @@ private struct CameraRecordView: View {
                         recorderStateText = String(describing: state)
                         recorderSnapshotText = snapshotText(for: recorder.snapshot)
                     }
-                    let counter = PixelBufferSink { _ in frameCount += 1 }
-                    let preview = PixelBufferSink { frame in
-                        guard let pixelBuffer = frame.pixelBuffer,
-                              frame.metadata.userInfo[CameraSource.MetadataKey.mediaType] as? String == AVMediaType.video.rawValue else {
-                            return
-                        }
-                        var previewImage: CGImage?
-                        let status = VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &previewImage)
-                        guard status == noErr, let previewImage else { return }
-                        DispatchQueue.main.async {
-                            livePreviewImage = previewImage
-                            lastOutputText = "video @ \(String(format: "%.2fs", frame.metadata.presentationTime.seconds))"
-                        }
+                    let preview = PreviewSink(callbackQueue: .main) { image, metadata in
+                        frameCount += 1
+                        livePreviewImage = image
+                        lastOutputText = "video @ \(String(format: "%.2fs", metadata.presentationTime.seconds))"
+                        previewStateText = "active"
+                    }
+                    preview.stateChangedHandler = { state in
+                        previewStateText = String(describing: state)
                     }
                     let pipeline = MediaPipeline(
                         source: source,
                         processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05)])],
-                        sinks: [preview, counter, recorder]
+                        sinks: [preview, recorder]
                     )
                     pipeline.errorHandler = { error in
                         message = "Pipeline error: \(error.localizedDescription)"
@@ -585,6 +585,7 @@ private struct CameraRecordView: View {
                     }
                     self.cameraSource = source
                     self.recorder = recorder
+                    self.previewSink = preview
                     self.pipeline = pipeline
                     self.player = nil
                     self.livePreviewImage = nil
@@ -592,6 +593,7 @@ private struct CameraRecordView: View {
                     recordedDurationText = "0.00s"
                     sessionStateText = String(describing: source.state)
                     recorderStateText = String(describing: recorder.state)
+                    previewStateText = String(describing: preview.state)
                     recorderSnapshotText = snapshotText(for: recorder.snapshot)
                     lastOutputText = "awaiting frames"
                     pipeline.start()
@@ -611,12 +613,15 @@ private struct CameraRecordView: View {
         pipeline?.stop()
         cameraSource = nil
         recorder = nil
+        previewSink = nil
         livePreviewImage = nil
         sessionStateText = "stopped"
         recorderStateText = "finished"
+        previewStateText = "finished"
         recorderSnapshotText = "segments: 0 · duration: 0.00s"
         cameraSource = nil
         recorder = nil
+        previewSink = nil
         pipeline = nil
         #else
         message = "CameraSource is unavailable here"
@@ -628,6 +633,7 @@ private struct CameraRecordView: View {
         cameraSource?.pause()
         recorder?.pauseRecording()
         recorderStateText = "paused"
+        previewStateText = "paused"
         if let recorder {
             recorderSnapshotText = snapshotText(for: recorder.snapshot)
         }
@@ -640,6 +646,7 @@ private struct CameraRecordView: View {
         cameraSource?.resume()
         recorder?.resumeRecording()
         recorderStateText = "recording"
+        previewStateText = "active"
         if let recorder {
             recorderSnapshotText = snapshotText(for: recorder.snapshot)
         }
