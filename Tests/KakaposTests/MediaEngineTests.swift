@@ -21,6 +21,23 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
     }
 
+    func testKakaposSurfaceBoardFacadesMirrorTheCapabilityCatalog() {
+        XCTAssertEqual(KakaposSurface.exportBoard.displayName, "Export")
+        XCTAssertEqual(KakaposSurface.previewBoard.displayName, "Preview")
+        XCTAssertEqual(KakaposSurface.recordBoard.displayName, "Record")
+        XCTAssertEqual(KakaposSurface.timelineBoard.displayName, "Timeline")
+
+        XCTAssertEqual(KakaposSurface.exportBoard.starterTypes, ["VideoX", "ReaderWriterExportJob"])
+        XCTAssertEqual(KakaposSurface.previewBoard.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
+        XCTAssertEqual(KakaposSurface.recordBoard.primaryTypes, ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"])
+        XCTAssertEqual(KakaposSurface.timelineBoard.starterTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition"])
+
+        XCTAssertEqual(KakaposSurface.exportBoard.summary, KakaposCapabilityCatalog.board(named: "export")?.summary)
+        XCTAssertEqual(KakaposSurface.previewBoard.summary, KakaposCapabilityCatalog.board(named: "preview")?.summary)
+        XCTAssertEqual(KakaposSurface.recordBoard.summary, KakaposCapabilityCatalog.board(named: "record")?.summary)
+        XCTAssertEqual(KakaposSurface.timelineBoard.summary, KakaposCapabilityCatalog.board(named: "timeline")?.summary)
+    }
+
     func testKakaposBoardsBuildLightweightEntryPoints() throws {
         let source = TestSource(frames: [])
         let preview = KakaposSurface.preview(source: source) { _, _ in }
@@ -58,7 +75,7 @@ final class MediaEngineTests: XCTestCase {
             layers: [clip],
             outputURL: outputURL
         )
-        let boardsTask = KakaposBoards.timelineExportTask(
+        let boardsTask = KakaposSurface.timelineBoard.timelineExportTask(
             layers: [clip],
             outputURL: outputURL
         )

@@ -15,8 +15,24 @@ import AVFoundation
 /// begin from a smaller surface area.
 @available(*, deprecated, message: "Use KakaposSurface as the recommended lightweight entry point.")
 public enum KakaposBoards {
+    public static var exportBoard: KakaposSurface.ExportBoard {
+        KakaposSurface.exportBoard
+    }
+
+    public static var previewBoard: KakaposSurface.PreviewBoard {
+        KakaposSurface.previewBoard
+    }
+
+    public static var recordBoard: KakaposSurface.RecordBoard {
+        KakaposSurface.recordBoard
+    }
+
+    public static var timelineBoard: KakaposSurface.TimelineBoard {
+        KakaposSurface.timelineBoard
+    }
+
     public static func export(provider: VideoX.Provider) -> VideoX {
-        KakaposEntryPointFactory.export(provider: provider)
+        exportBoard.export(provider: provider)
     }
 
     public static func exportTask(
@@ -24,7 +40,7 @@ public enum KakaposBoards {
         options: [VideoX.Option: Any] = [:],
         instructions: [CompositionInstruction]
     ) throws -> VideoX.ExportTask {
-        try KakaposEntryPointFactory.exportTask(provider: provider, options: options, instructions: instructions)
+        try exportBoard.exportTask(provider: provider, options: options, instructions: instructions)
     }
 
     public static func preview(
@@ -33,7 +49,7 @@ public enum KakaposBoards {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        previewBoard.preview(
             source: source,
             processors: processors,
             callbackQueue: callbackQueue,
@@ -49,7 +65,7 @@ public enum KakaposBoards {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        previewBoard.preview(
             player: player,
             preferredFramesPerSecond: preferredFramesPerSecond,
             processors: processors,
@@ -65,7 +81,7 @@ public enum KakaposBoards {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposEntryPointFactory.preview(
+        previewBoard.preview(
             asset: asset,
             preferredFramesPerSecond: preferredFramesPerSecond,
             processors: processors,
@@ -81,7 +97,7 @@ public enum KakaposBoards {
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> RecordingPipeline {
-        try KakaposEntryPointFactory.record(
+        try recordBoard.record(
             source: source,
             outputURL: outputURL,
             fileType: fileType,
@@ -96,7 +112,7 @@ public enum KakaposBoards {
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> RecordingPipeline {
-        try KakaposEntryPointFactory.record(
+        try recordBoard.record(
             configuration: configuration,
             outputURL: outputURL,
             fileType: fileType,
@@ -111,7 +127,7 @@ public enum KakaposBoards {
         layers: [TimelineLayer] = [],
         transitions: [Transition] = []
     ) -> TimelinePipeline {
-        KakaposEntryPointFactory.timeline(
+        timelineBoard.timeline(
             renderSize: renderSize,
             frameDuration: frameDuration,
             layers: layers,
@@ -130,7 +146,7 @@ public enum KakaposBoards {
         metadata: [AVMetadataItem] = [],
         videoProcessors: [FrameProcessor] = []
     ) -> TimelineExportTask {
-        KakaposEntryPointFactory.timelineExportTask(
+        timelineBoard.timelineExportTask(
             renderSize: renderSize,
             frameDuration: frameDuration,
             layers: layers,
