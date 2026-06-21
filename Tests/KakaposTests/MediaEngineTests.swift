@@ -1294,6 +1294,37 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(failurePipeline.state, .failed)
     }
 
+    func testMediaPipelineSurfacesSinkFinishFailuresAfterSourceCompletion() {
+        let source = TestSource(frames: [])
+        let sinkError = NSError(domain: "MediaPipelineTests", code: 29)
+        let sink = FailingFinishSink(error: sinkError)
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+
+        let stateExpectation = expectation(description: "terminal state callbacks")
+        stateExpectation.expectedFulfillmentCount = 3
+        let errorExpectation = expectation(description: "finish failure error callback")
+        var states: [MediaPipeline.State] = []
+        var receivedError: NSError?
+
+        pipeline.stateHandler = { state in
+            states.append(state)
+            stateExpectation.fulfill()
+        }
+        pipeline.errorHandler = { error in
+            receivedError = error as NSError
+            errorExpectation.fulfill()
+        }
+
+        pipeline.start()
+
+        wait(for: [stateExpectation, errorExpectation], timeout: 1)
+
+        XCTAssertEqual(states, [.running, .finished, .failed])
+        XCTAssertEqual(receivedError?.domain, "MediaPipelineTests")
+        XCTAssertEqual(receivedError?.code, 29)
+        XCTAssertEqual(pipeline.state, .failed)
+    }
+
     func testPlayerFrameCoordinatorResetsFrameIndexWhenCurrentItemChanges() {
         final class Token: NSObject {}
 
@@ -2008,6 +2039,22 @@ private final class LifecycleAwareSink: MediaSink {
 
     func cancel() {
         cancelCount += 1
+    }
+}
+
+private final class FailingFinishSink: MediaSink {
+    let error: Error
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        completion(.success(()))
+    }
+
+    func finish(completion: @escaping (Result<Void, Error>) -> Void) {
+        completion(.failure(error))
     }
 }
 
