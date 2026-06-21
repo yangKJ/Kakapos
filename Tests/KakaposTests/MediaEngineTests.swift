@@ -183,6 +183,13 @@ final class MediaEngineTests: XCTestCase {
         }
         let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [sink])
 
+        XCTAssertEqual(pipeline.snapshot.sourceTypeName, "TestSource")
+        XCTAssertEqual(pipeline.snapshot.processorTypeNames, ["ClosureFrameProcessor"])
+        XCTAssertEqual(pipeline.snapshot.sinkTypeNames, ["TestSink"])
+        XCTAssertEqual(pipeline.snapshot.state, .idle)
+        XCTAssertNil(pipeline.snapshot.sourceSnapshot)
+        XCTAssertNil(pipeline.snapshot.lastFrameMetadata)
+        XCTAssertNil(pipeline.snapshot.lastErrorDescription)
         XCTAssertEqual(pipeline.summary.sourceTypeName, "TestSource")
         XCTAssertEqual(pipeline.summary.processorTypeNames, ["ClosureFrameProcessor"])
         XCTAssertEqual(pipeline.summary.sinkTypeNames, ["TestSink"])
@@ -191,6 +198,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNil(pipeline.summary.lastFrameIndex)
         XCTAssertNil(pipeline.summary.lastPresentationTime)
         XCTAssertNil(pipeline.summary.lastSourceTime)
+        XCTAssertEqual(pipeline.summary.lastErrorDescription, nil)
         XCTAssertEqual(pipeline.summary.summaryText, "source TestSource · processors 1 · sinks 1 · state idle")
         XCTAssertEqual(pipeline.chain.summary.summaryText, "processors 1 · sinks 1")
     }
@@ -211,6 +219,10 @@ final class MediaEngineTests: XCTestCase {
 
         pipeline.start()
 
+        XCTAssertEqual(pipeline.snapshot.state, .finished)
+        XCTAssertEqual(pipeline.snapshot.lastFrameMetadata?.frameIndex, 3)
+        XCTAssertEqual(pipeline.snapshot.lastFrameMetadata?.presentationTime, CMTime(value: 12, timescale: 30))
+        XCTAssertEqual(pipeline.snapshot.lastFrameMetadata?.sourceTime, CMTime(value: 10, timescale: 30))
         XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 3)
         XCTAssertEqual(pipeline.lastFrameMetadata?.presentationTime, CMTime(value: 12, timescale: 30))
         XCTAssertEqual(pipeline.lastFrameMetadata?.sourceTime, CMTime(value: 10, timescale: 30))
@@ -218,6 +230,25 @@ final class MediaEngineTests: XCTestCase {
             pipeline.summary.summaryText,
             "source TestSource · processors 0 · sinks 1 · state finished · frame 3 · presentation 0.40s · sourceTime 0.33s"
         )
+    }
+
+    func testMediaPipelineSummaryIncludesSourceSnapshotWhenSourceProvidesOne() throws {
+        let source = SnapshotSource(
+            frames: [],
+            snapshot: MediaSourceSnapshot(
+                stateDescription: "primed",
+                details: ["board": "preview"]
+            )
+        )
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [])
+
+        pipeline.start()
+
+        XCTAssertEqual(pipeline.snapshot.state, .finished)
+        XCTAssertEqual(pipeline.snapshot.sourceSnapshot?.stateDescription, "primed")
+        XCTAssertEqual(pipeline.snapshot.sourceSnapshot?.details["board"], "preview")
+        XCTAssertEqual(pipeline.summary.sourceSnapshot?.stateDescription, "primed")
+        XCTAssertTrue(pipeline.summary.summaryText.contains("sourceSnapshot state primed"))
     }
 
     #if canImport(UIKit) || os(macOS)
@@ -228,8 +259,10 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertTrue(pipeline.source is PlayerFrameSource)
         XCTAssertEqual(pipeline.sinks.count, 1)
+        XCTAssertEqual(pipeline.snapshot.sourceTypeName, "PlayerFrameSource")
         XCTAssertNotNil(pipeline.summary.sourceSnapshot)
         XCTAssertEqual(pipeline.summary.sourceSnapshot?.details["generation"], "0")
+        XCTAssertEqual(pipeline.snapshot.sourceSnapshot?.details["generation"], "0")
         XCTAssertTrue(pipeline.summary.summaryText.contains("sourceSnapshot state idle"))
         XCTAssertTrue(pipeline.summary.summaryText.contains("generation 0"))
     }
