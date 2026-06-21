@@ -1577,6 +1577,47 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(exportTask.summaryText, "state idle · assetExportSession")
     }
 
+    func testVideoXExportTaskTracksLegacyAssetSessionProgressFraction() throws {
+        let exporter = try makeSampleExporter()
+        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
+        let exportTask = try exporter.makeExportTask(
+            options: [:],
+            instructions: [instruction]
+        )
+
+        let progressExpectation = expectation(description: "legacy asset export progress")
+        let completionExpectation = expectation(description: "legacy asset export completion")
+        let progressLock = NSLock()
+        var progressValues: [Float] = []
+
+        exportTask.start(
+            complete: { result in
+                if case .failure(let error) = result {
+                    XCTFail("Unexpected export failure: \(error)")
+                }
+                completionExpectation.fulfill()
+            },
+            progress: { value in
+                progressLock.lock()
+                progressValues.append(value)
+                progressLock.unlock()
+                if value >= 1 {
+                    progressExpectation.fulfill()
+                }
+            }
+        )
+
+        wait(for: [progressExpectation, completionExpectation], timeout: 30)
+
+        progressLock.lock()
+        let recordedProgressValues = progressValues
+        progressLock.unlock()
+        XCTAssertFalse(recordedProgressValues.isEmpty)
+        XCTAssertEqual(exportTask.progressFraction ?? 0, 1, accuracy: 0.0001)
+        XCTAssertEqual(exportTask.status, .completed)
+        XCTAssertEqual(exportTask.summaryText, "state completed · assetExportSession · progress 100%")
+    }
+
     func testVideoXMakeExportTaskReturnsReaderWriterTaskWhenConfigured() throws {
         let exporter = try makeSampleExporter()
         let instruction = FilterInstruction(processor: PassthroughFrameProcessor())

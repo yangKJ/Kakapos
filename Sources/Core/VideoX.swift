@@ -35,6 +35,7 @@ public struct VideoX {
 
         public let assetExportSession: AVAssetExportSession?
         public let readerWriterJob: ReaderWriterExportJob?
+        public private(set) var progressFraction: Float?
 
         public var supportsPauseResume: Bool {
             readerWriterJob != nil
@@ -51,7 +52,11 @@ public struct VideoX {
             guard assetExportSession != nil else {
                 return "state idle · pipeline unavailable"
             }
-            return "state \(status) · assetExportSession"
+            var text = "state \(status) · assetExportSession"
+            if let progressFraction {
+                text += " · progress \(Int((progressFraction * 100).rounded()))%"
+            }
+            return text
         }
 
         public var status: Status {
@@ -81,6 +86,7 @@ public struct VideoX {
         ) {
             if let readerWriterJob {
                 readerWriterJob.progressHandler = { info in
+                    self.progressFraction = Float(info.overallFractionCompleted)
                     progress?(Float(info.overallFractionCompleted))
                     progressInfo?(info)
                 }
@@ -88,6 +94,7 @@ public struct VideoX {
                     switch result {
                     case .success(let outputURL):
                         if let lastProgress = readerWriterJob.lastProgressInfo {
+                            self.progressFraction = Float(lastProgress.overallFractionCompleted)
                             progress?(Float(lastProgress.overallFractionCompleted))
                         }
                         complete(.success(outputURL))
@@ -107,7 +114,10 @@ public struct VideoX {
                 let progressObserver = ExportSessionProgressObserver(
                     session: assetExportSession,
                     keyPath: \.progress,
-                    handler: progress
+                    handler: { [weak self] value in
+                        self?.progressFraction = value
+                        progress(value)
+                    }
                 )
                 progressObserver.start()
                 assetExportSession.exportAsynchronously(completionHandler: { [weak assetExportSession] in
@@ -118,6 +128,7 @@ public struct VideoX {
                     }
                     switch session.status {
                     case .completed:
+                        self.progressFraction = 1.0
                         progress(1.0)
                         if let outputURL = session.outputURL {
                             complete(.success(outputURL))
