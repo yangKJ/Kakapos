@@ -186,6 +186,90 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(foundDestinationRamp)
     }
 
+    func testTimelineCompositionBuildsCrossDissolveAudioRamps() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let first = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            layerLevel: 0,
+            volume: 0.8
+        )
+        let second = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: CMTime(value: 90, timescale: 30), duration: CMTime(value: 120, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            layerLevel: 1,
+            volume: 0.6
+        )
+        let transitionRange = CMTimeRange(start: CMTime(value: 90, timescale: 30), duration: CMTime(value: 30, timescale: 30))
+        let timeline = TimelineComposition(
+            layers: [first, second],
+            transitions: [Transition(timeRange: transitionRange, sourceLayerLevel: 0, destinationLayerLevel: 1)]
+        )
+
+        let compiled = timeline.compile()
+        XCTAssertEqual(compiled.audioMix.inputParameters.count, 2)
+
+        var foundFadeOut = false
+        var foundFadeIn = false
+
+        for parameter in compiled.audioMix.inputParameters {
+            var startVolume: Float = 0
+            var endVolume: Float = 0
+            var rampRange = CMTimeRange.invalid
+            if parameter.getVolumeRamp(
+                for: transitionRange.start,
+                startVolume: &startVolume,
+                endVolume: &endVolume,
+                timeRange: &rampRange
+            ) {
+                XCTAssertEqual(rampRange, transitionRange)
+                if startVolume == 0.8, endVolume == 0 {
+                    foundFadeOut = true
+                }
+                if startVolume == 0, endVolume == 0.6 {
+                    foundFadeIn = true
+                }
+            }
+        }
+
+        XCTAssertTrue(foundFadeOut)
+        XCTAssertTrue(foundFadeIn)
+    }
+
+    func testTimelineCompositionAppliesBaseAudioVolumeAndRampToAudioLayer() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let rampRange = CMTimeRange(start: CMTime(value: 15, timescale: 30), duration: CMTime(value: 30, timescale: 30))
+        let audioLayer = AudioLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            volume: 0.5,
+            audioRamps: [
+                AudioVolumeRamp(startVolume: 0.2, endVolume: 1.0, timeRange: rampRange)
+            ]
+        )
+        let timeline = TimelineComposition(layers: [audioLayer])
+
+        let compiled = timeline.compile()
+        let parameter = try XCTUnwrap(compiled.audioMix.inputParameters.first)
+        var startVolume: Float = 0
+        var endVolume: Float = 0
+        var resolvedRange = CMTimeRange.invalid
+
+        XCTAssertTrue(
+            parameter.getVolumeRamp(
+                for: rampRange.start,
+                startVolume: &startVolume,
+                endVolume: &endVolume,
+                timeRange: &resolvedRange
+            )
+        )
+        XCTAssertEqual(resolvedRange, rampRange)
+        XCTAssertEqual(startVolume, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(endVolume, 0.5, accuracy: 0.0001)
+    }
+
     func testKeyframeAnimationAppliesEaseInOutInterpolation() throws {
         let animation = KeyframeAnimation(
             keyPath: "opacity",

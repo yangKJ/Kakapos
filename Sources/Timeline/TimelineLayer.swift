@@ -39,11 +39,20 @@ open class TimelineLayer {
 public final class ClipLayer: TimelineLayer {
     public let asset: AVAsset
     public var sourceTimeRange: CMTimeRange?
+    public var volume: Float
     public var audioRamps: [AudioVolumeRamp]
 
-    public init(asset: AVAsset, timeRange: CMTimeRange, sourceTimeRange: CMTimeRange? = nil, layerLevel: Int = 0, audioRamps: [AudioVolumeRamp] = []) {
+    public init(
+        asset: AVAsset,
+        timeRange: CMTimeRange,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0,
+        volume: Float = 1,
+        audioRamps: [AudioVolumeRamp] = []
+    ) {
         self.asset = asset
         self.sourceTimeRange = sourceTimeRange
+        self.volume = volume
         self.audioRamps = audioRamps
         super.init(timeRange: timeRange, layerLevel: layerLevel)
     }
@@ -54,6 +63,7 @@ public final class ClipLayer: TimelineLayer {
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
             sourceTimeRange: sourceTimeRange,
             layerLevel: layerLevel + inheritedLevel,
+            volume: volume,
             audioRamps: audioRamps.map { $0.applyingOffset(offset) }
         )
         shifted.opacity = opacity
@@ -87,11 +97,19 @@ public final class ImageLayer: TimelineLayer {
 public final class AudioLayer: TimelineLayer {
     public let asset: AVAsset
     public var sourceTimeRange: CMTimeRange?
+    public var volume: Float
     public var audioRamps: [AudioVolumeRamp]
 
-    public init(asset: AVAsset, timeRange: CMTimeRange, sourceTimeRange: CMTimeRange? = nil, audioRamps: [AudioVolumeRamp] = []) {
+    public init(
+        asset: AVAsset,
+        timeRange: CMTimeRange,
+        sourceTimeRange: CMTimeRange? = nil,
+        volume: Float = 1,
+        audioRamps: [AudioVolumeRamp] = []
+    ) {
         self.asset = asset
         self.sourceTimeRange = sourceTimeRange
+        self.volume = volume
         self.audioRamps = audioRamps
         super.init(timeRange: timeRange)
     }
@@ -101,6 +119,7 @@ public final class AudioLayer: TimelineLayer {
             asset: asset,
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
             sourceTimeRange: sourceTimeRange,
+            volume: volume,
             audioRamps: audioRamps.map { $0.applyingOffset(offset) }
         )
         shifted.opacity = opacity
