@@ -286,7 +286,7 @@ internal final class TimelineCompiler {
             }
         )
 
-        for transition in compositionModel.transitions where transition.kind == .crossDissolve {
+        for transition in compositionModel.transitions where transition.kind == .crossDissolve && transition.audioBehavior == .crossfade {
             guard let selectedLayers = layersForTransition(transition, activeLayers: layerByTrackID) else { continue }
             let overlap = CMTimeRangeGetIntersection(transition.timeRange, otherRange: selectedLayers.source.layer.timeRange)
             let transitionRange = CMTimeRangeGetIntersection(overlap, otherRange: selectedLayers.destination.layer.timeRange)

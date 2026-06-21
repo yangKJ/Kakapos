@@ -13,20 +13,31 @@ public struct Transition {
         case crossDissolve
     }
 
+    public enum AudioBehavior {
+        case none
+        case crossfade
+    }
+
     public var kind: Kind
     public var timeRange: CMTimeRange
     public var sourceLayerLevel: Int?
     public var destinationLayerLevel: Int?
+    public var audioBehavior: AudioBehavior
+    public var timingFunction: TimelineEasing
 
     public init(
         kind: Kind = .crossDissolve,
         timeRange: CMTimeRange,
         sourceLayerLevel: Int? = nil,
-        destinationLayerLevel: Int? = nil
+        destinationLayerLevel: Int? = nil,
+        audioBehavior: AudioBehavior = .crossfade,
+        timingFunction: TimelineEasing = .linear
     ) {
         self.kind = kind
         self.timeRange = timeRange
         self.sourceLayerLevel = sourceLayerLevel
         self.destinationLayerLevel = destinationLayerLevel
+        self.audioBehavior = audioBehavior
+        self.timingFunction = timingFunction
     }
 }
