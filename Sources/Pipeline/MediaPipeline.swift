@@ -8,113 +8,56 @@
 import Foundation
 
 public final class MediaProcessorChain: MediaSink {
-    public var processors: [FrameProcessor]
-    public var sinks: [MediaSink]
-    public var errorHandler: ((Error) -> Void)?
+    public var processors: [FrameProcessor] {
+        get { node.processors }
+        set { node.processors = newValue }
+    }
+
+    public var sinks: [MediaSink] {
+        get { node.sinks }
+        set { node.sinks = newValue }
+    }
+
+    public var errorHandler: ((Error) -> Void)? {
+        get { node.errorHandler }
+        set { node.errorHandler = newValue }
+    }
+
     public var completionHandler: (() -> Void)?
 
-    private var hasFinishedSinks = false
-    private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-processor-chain.state")
+    let node: MediaConsumerChainNode
 
     public init(processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
-        self.processors = processors
-        self.sinks = sinks
+        self.node = MediaConsumerChainNode(processors: processors, sinks: sinks)
     }
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
-        process(frame, at: 0, completion: completion)
+        node.consume(frame, from: node, completion: completion)
     }
 
     public func pause() {
-        sinks.forEach { $0.pause() }
+        node.pause()
     }
 
     public func resume() {
-        sinks.forEach { $0.resume() }
+        node.resume()
     }
 
     public func cancel() {
-        sinks.forEach { $0.cancel() }
+        node.cancel()
     }
 
     public func finish(completion: @escaping (Result<Void, Error>) -> Void) {
-        let shouldFinish = stateQueue.sync { () -> Bool in
-            guard !hasFinishedSinks else { return false }
-            hasFinishedSinks = true
-            return true
-        }
-
-        guard shouldFinish else {
-            completion(.success(()))
-            return
-        }
-
-        guard !sinks.isEmpty else {
-            completionHandler?()
-            completion(.success(()))
-            return
-        }
-
-        let group = DispatchGroup()
-        var capturedError: Error?
-
-        sinks.forEach { sink in
-            group.enter()
-            sink.finish { result in
-                if case .failure(let error) = result, capturedError == nil {
-                    capturedError = error
-                }
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) { [weak self] in
-            if let error = capturedError {
-                self?.errorHandler?(error)
-                completion(.failure(error))
-            } else {
+        node.finish { [weak self] result in
+            if case .success = result {
                 self?.completionHandler?()
-                completion(.success(()))
             }
-        }
-    }
-
-    private func process(_ frame: MediaFrame, at index: Int, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard index < processors.count else {
-            consume(frame, at: 0, completion: completion)
-            return
-        }
-
-        processors[index].process(frame) { [weak self] result in
-            switch result {
-            case .success(let processedFrame):
-                self?.process(processedFrame, at: index + 1, completion: completion)
-            case .failure(let error):
-                self?.errorHandler?(error)
-                completion(.failure(error))
-            }
-        }
-    }
-
-    private func consume(_ frame: MediaFrame, at index: Int, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard index < sinks.count else {
-            completion(.success(()))
-            return
-        }
-
-        sinks[index].consume(frame) { [weak self] result in
-            switch result {
-            case .success:
-                self?.consume(frame, at: index + 1, completion: completion)
-            case .failure(let error):
-                self?.errorHandler?(error)
-                completion(.failure(error))
-            }
+            completion(result)
         }
     }
 }
 
-public final class MediaPipeline: MediaSourceDelegate {
+public final class MediaPipeline {
     public let source: MediaSource
     public let chain: MediaProcessorChain
 
@@ -130,18 +73,34 @@ public final class MediaPipeline: MediaSourceDelegate {
 
     public var errorHandler: ((Error) -> Void)? {
         get { chain.errorHandler }
-        set { chain.errorHandler = newValue }
+        set {
+            chain.errorHandler = newValue
+            sourceAdapter.errorHandler = newValue
+        }
     }
 
     public var completionHandler: (() -> Void)? {
         get { chain.completionHandler }
-        set { chain.completionHandler = newValue }
+        set {
+            chain.completionHandler = newValue
+            sourceAdapter.finishHandler = { [weak self] in
+                self?.finishChain()
+            }
+        }
     }
+
+    private let sourceAdapter: MediaSourceNodeAdapter
+    private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-pipeline.state")
+    private var hasFinished = false
 
     public init(source: MediaSource, processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
         self.source = source
         self.chain = MediaProcessorChain(processors: processors, sinks: sinks)
-        self.source.delegate = self
+        self.sourceAdapter = MediaSourceNodeAdapter(source: source)
+        self.sourceAdapter.add(consumer: chain.node)
+        self.sourceAdapter.finishHandler = { [weak self] in
+            self?.finishChain()
+        }
     }
 
     public convenience init(source: MediaSource, branch: MediaGraphBranch) {
@@ -172,23 +131,14 @@ public final class MediaPipeline: MediaSourceDelegate {
         chain.cancel()
     }
 
-    public func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
-        chain.consume(frame) { [weak self] result in
-            if case .failure(let error) = result {
-                self?.errorHandler?(error)
-            }
-        }
-    }
-
-    public func mediaSource(_ source: MediaSource, didFail error: Error) {
-        errorHandler?(error)
-    }
-
-    public func mediaSourceDidFinish(_ source: MediaSource) {
-        finishChain()
-    }
-
     private func finishChain() {
+        let shouldFinish = stateQueue.sync { () -> Bool in
+            guard !hasFinished else { return false }
+            hasFinished = true
+            return true
+        }
+        guard shouldFinish else { return }
+
         chain.finish { [weak self] result in
             if case .failure(let error) = result {
                 self?.errorHandler?(error)

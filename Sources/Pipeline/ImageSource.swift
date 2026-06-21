@@ -35,7 +35,7 @@ public struct StillImageFrame {
     }
 }
 
-public final class ImageSource: MediaSource {
+public final class ImageSource: MediaSource, MediaFrameSourceNode {
     public enum MetadataKey {
         public static let imageIndex = "kakapos.image-source.index"
         public static let imageCount = "kakapos.image-source.count"
@@ -49,6 +49,7 @@ public final class ImageSource: MediaSource {
     public var callbackQueue: DispatchQueue
 
     private let queue = DispatchQueue(label: "com.condy.kakapos.image-source")
+    private let outputNode = MediaOutputNode()
     private let pauseCondition = NSCondition()
     private var shouldStop = false
     private var isPaused = false
@@ -183,6 +184,7 @@ public final class ImageSource: MediaSource {
                     let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: metadata)
                     callbackQueue.async {
                         self.delegate?.mediaSource(self, didOutput: frame)
+                        self.outputNode.transmit(frame) { _ in }
                     }
                     currentPresentationTime = currentPresentationTime + item.duration
                     currentIndex += 1
@@ -260,5 +262,22 @@ public final class ImageSource: MediaSource {
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return pixelBuffer
+    }
+
+    @discardableResult
+    public func add<T: MediaFrameConsumerNode>(consumer: T) -> T {
+        outputNode.add(consumer: consumer)
+    }
+
+    public func add(consumer: MediaFrameConsumerNode, at index: Int) {
+        outputNode.add(consumer: consumer, at: index)
+    }
+
+    public func remove(consumer: MediaFrameConsumerNode) {
+        outputNode.remove(consumer: consumer)
+    }
+
+    public func removeAllConsumers() {
+        outputNode.removeAllConsumers()
     }
 }

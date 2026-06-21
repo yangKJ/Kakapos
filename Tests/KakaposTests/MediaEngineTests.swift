@@ -52,6 +52,56 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.frames.first?.metadata.frameIndex, 2)
     }
 
+    func testImageSourceCanBroadcastFramesDirectlyToConsumerNode() throws {
+        let frame = StillImageFrame(image: try makeImage(width: 16, height: 16))
+        let source = ImageSource(frames: [frame], callbackQueue: .main)
+        let consumer = TestConsumerNode()
+        let completion = expectation(description: "direct source-consumer delivery")
+
+        source.add(consumer: consumer)
+        consumer.onFrame = { receivedFrame in
+            XCTAssertEqual(receivedFrame.metadata.frameIndex, 0)
+            guard let pixelBuffer = receivedFrame.pixelBuffer else {
+                XCTFail("Expected pixel buffer")
+                return
+            }
+            XCTAssertEqual(CVPixelBufferGetWidth(pixelBuffer), 16)
+            completion.fulfill()
+        }
+
+        source.start()
+
+        wait(for: [completion], timeout: 2)
+    }
+
+    func testMediaProcessorNodeForwardsProcessedFrameToAttachedConsumer() throws {
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 5))
+        let outputConsumer = TestConsumerNode()
+        let processorNode = MediaProcessorNode(processors: [
+            ClosureFrameProcessor { frame, completion in
+                var output = frame
+                output.metadata.frameIndex = 9
+                completion(.success(output))
+            }
+        ])
+        let completion = expectation(description: "processor node forwards output")
+
+        outputConsumer.onFrame = { frame in
+            XCTAssertEqual(frame.metadata.frameIndex, 9)
+            completion.fulfill()
+        }
+        processorNode.add(consumer: outputConsumer)
+
+        processorNode.consume(input, from: processorNode) { result in
+            if case .failure = result {
+                XCTFail("Unexpected processor node failure")
+            }
+        }
+
+        wait(for: [completion], timeout: 1)
+    }
+
     func testMediaGraphRoutesFramesToMultipleBranches() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
         let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
@@ -1399,6 +1449,15 @@ private final class LifecycleAwareSink: MediaSink {
 
     func cancel() {
         cancelCount += 1
+    }
+}
+
+private final class TestConsumerNode: MediaFrameConsumerNode {
+    var onFrame: ((MediaFrame) -> Void)?
+
+    func consume(_ frame: MediaFrame, from source: MediaFrameSourceNode, completion: @escaping (Result<Void, Error>) -> Void) {
+        onFrame?(frame)
+        completion(.success(()))
     }
 }
 
