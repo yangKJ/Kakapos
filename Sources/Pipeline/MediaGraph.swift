@@ -14,6 +14,9 @@ public final class MediaGraphBranch {
     public var children: [MediaGraphBranch]
     public var isEnabled: Bool
 
+    private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-graph-branch.state")
+    private var branchNode: MediaGraphBranchNode?
+
     public init(
         id: UUID = UUID(),
         processors: [FrameProcessor] = [],
@@ -30,120 +33,77 @@ public final class MediaGraphBranch {
 
     public func append(_ child: MediaGraphBranch) {
         children.append(child)
+        branchNode?.rebuild()
     }
 
     public func append(sink: MediaSink) {
         sinks.append(sink)
+        branchNode?.rebuild()
     }
 
     public func append(processor: FrameProcessor) {
         processors.append(processor)
+        branchNode?.rebuild()
+    }
+
+    func attachErrorHandlerRecursively(_ errorHandler: ((Error) -> Void)?) {
+        branchNode?.errorHandler = errorHandler
+        children.forEach { $0.attachErrorHandlerRecursively(errorHandler) }
+    }
+
+    func materializeNode(errorHandler: ((Error) -> Void)? = nil) -> MediaGraphBranchNode {
+        stateQueue.sync {
+            if let branchNode {
+                branchNode.rebuild()
+                branchNode.errorHandler = errorHandler
+                return branchNode
+            }
+            let branchNode = MediaGraphBranchNode(branch: self, errorHandler: errorHandler)
+            self.branchNode = branchNode
+            return branchNode
+        }
     }
 
     func pause() {
-        sinks.forEach { $0.pause() }
-        children.forEach { $0.pause() }
+        materializeNode().pause()
     }
 
     func resume() {
-        sinks.forEach { $0.resume() }
-        children.forEach { $0.resume() }
+        materializeNode().resume()
     }
 
     func cancel() {
-        sinks.forEach { $0.cancel() }
-        children.forEach { $0.cancel() }
+        materializeNode().cancel()
     }
 
     func finish(completion: @escaping (Result<Void, Error>) -> Void) {
-        guard isEnabled else {
-            completion(.success(()))
-            return
-        }
-
-        let group = DispatchGroup()
-        let state = LockedGraphResult()
-
-        for sink in sinks {
-            group.enter()
-            sink.finish { result in
-                state.capture(result)
-                group.leave()
-            }
-        }
-
-        for child in children {
-            group.enter()
-            child.finish { result in
-                state.capture(result)
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) {
-            completion(state.result)
-        }
+        materializeNode().finish(completion: completion)
     }
 
     func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard isEnabled else {
-            completion(.success(()))
-            return
-        }
-        process(frame, at: 0, completion: completion)
-    }
-
-    private func process(_ frame: MediaFrame, at index: Int, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard index < processors.count else {
-            route(frame, completion: completion)
-            return
-        }
-
-        processors[index].process(frame) { [weak self] result in
-            switch result {
-            case .success(let processedFrame):
-                self?.process(processedFrame, at: index + 1, completion: completion)
-            case .failure(let error):
-                completion(.failure(error))
-            }
-        }
-    }
-
-    private func route(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
-        let group = DispatchGroup()
-        let state = LockedGraphResult()
-
-        for sink in sinks {
-            group.enter()
-            sink.consume(frame) { result in
-                state.capture(result)
-                group.leave()
-            }
-        }
-
-        for child in children {
-            group.enter()
-            child.consume(frame) { result in
-                state.capture(result)
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) {
-            completion(state.result)
-        }
+        materializeNode().consume(frame, from: materializeNode(), completion: completion)
     }
 }
 
-public final class MediaGraph: MediaSourceDelegate {
+public final class MediaGraph {
     public let source: MediaSource
     public private(set) var branches: [MediaGraphBranch]
-    public var errorHandler: ((Error) -> Void)?
+    public var errorHandler: ((Error) -> Void)? {
+        didSet {
+            sourceAdapter.errorHandler = errorHandler
+            branches.forEach { $0.attachErrorHandlerRecursively(errorHandler) }
+        }
+    }
     public var completionHandler: (() -> Void)?
-    public var frameHandler: ((MediaFrame) -> Void)?
+    public var frameHandler: ((MediaFrame) -> Void)? {
+        didSet {
+            sourceAdapter.frameHandler = frameHandler
+        }
+    }
 
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-graph.state")
     private var hasFinished = false
+    private let sourceAdapter: MediaSourceNodeAdapter
 
     public init(
         source: MediaSource,
@@ -151,11 +111,18 @@ public final class MediaGraph: MediaSourceDelegate {
     ) {
         self.source = source
         self.branches = branches
-        self.source.delegate = self
+        self.sourceAdapter = MediaSourceNodeAdapter(source: source)
+        self.sourceAdapter.finishHandler = { [weak self] in
+            self?.finishBranches()
+        }
+        self.sourceAdapter.frameHandler = frameHandler
+        rebuildConnections()
     }
 
     public func append(_ branch: MediaGraphBranch) {
         branches.append(branch)
+        branch.attachErrorHandlerRecursively(errorHandler)
+        rebuildConnections()
     }
 
     public func start() {
@@ -182,34 +149,12 @@ public final class MediaGraph: MediaSourceDelegate {
         branches.forEach { $0.cancel() }
     }
 
-    public func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
-        frameHandler?(frame)
-        guard !branches.isEmpty else { return }
-
-        let group = DispatchGroup()
-        let state = LockedGraphResult()
-
-        for branch in branches {
-            group.enter()
-            branch.consume(frame) { result in
-                state.capture(result)
-                group.leave()
-            }
+    private func rebuildConnections() {
+        sourceAdapter.removeAllConsumers()
+        branches.forEach { branch in
+            branch.attachErrorHandlerRecursively(errorHandler)
+            sourceAdapter.add(consumer: branch.materializeNode(errorHandler: errorHandler))
         }
-
-        group.notify(queue: .main) { [weak self] in
-            if case .failure(let error) = state.result {
-                self?.errorHandler?(error)
-            }
-        }
-    }
-
-    public func mediaSource(_ source: MediaSource, didFail error: Error) {
-        errorHandler?(error)
-    }
-
-    public func mediaSourceDidFinish(_ source: MediaSource) {
-        finishBranches()
     }
 
     private func finishBranches() {
@@ -220,8 +165,13 @@ public final class MediaGraph: MediaSourceDelegate {
         }
         guard shouldFinish else { return }
 
+        guard !branches.isEmpty else {
+            completionHandler?()
+            return
+        }
+
         let group = DispatchGroup()
-        let state = LockedGraphResult()
+        let state = MediaNodeResultState()
 
         for branch in branches {
             group.enter()
@@ -241,25 +191,114 @@ public final class MediaGraph: MediaSourceDelegate {
     }
 }
 
-private final class LockedGraphResult {
-    private let lock = NSLock()
-    private var capturedError: Error?
+final class MediaGraphBranchNode: MediaFrameConsumerNode, MediaFrameSourceNode {
+    private let branch: MediaGraphBranch
+    private let outputNode = MediaOutputNode()
+    private var chainNode: MediaConsumerChainNode
 
-    var result: Result<Void, Error> {
-        lock.lock()
-        defer { lock.unlock() }
-        if let capturedError {
-            return .failure(capturedError)
+    var errorHandler: ((Error) -> Void)? {
+        didSet {
+            chainNode.errorHandler = errorHandler
+            childNodes.forEach { $0.errorHandler = errorHandler }
         }
-        return .success(())
     }
 
-    func capture(_ result: Result<Void, Error>) {
-        guard case .failure(let error) = result else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        if capturedError == nil {
-            capturedError = error
+    private var childNodes: [MediaGraphBranchNode] = []
+
+    init(branch: MediaGraphBranch, errorHandler: ((Error) -> Void)? = nil) {
+        self.branch = branch
+        self.chainNode = MediaConsumerChainNode(processors: branch.processors, sinks: branch.sinks)
+        self.errorHandler = errorHandler
+        self.chainNode.errorHandler = errorHandler
+        rebuild()
+    }
+
+    func rebuild() {
+        chainNode.processors = branch.processors
+        chainNode.sinks = branch.sinks
+        chainNode.errorHandler = errorHandler
+
+        outputNode.removeAllConsumers()
+        outputNode.add(consumer: chainNode)
+
+        childNodes = branch.children.map { child in
+            let node = child.materializeNode(errorHandler: errorHandler)
+            node.rebuild()
+            return node
+        }
+        childNodes.forEach { outputNode.add(consumer: $0) }
+    }
+
+    @discardableResult
+    func add<T: MediaFrameConsumerNode>(consumer: T) -> T {
+        outputNode.add(consumer: consumer)
+    }
+
+    func add(consumer: MediaFrameConsumerNode, at index: Int) {
+        outputNode.add(consumer: consumer, at: index)
+    }
+
+    func remove(consumer: MediaFrameConsumerNode) {
+        outputNode.remove(consumer: consumer)
+    }
+
+    func removeAllConsumers() {
+        outputNode.removeAllConsumers()
+    }
+
+    func consume(_ frame: MediaFrame, from source: MediaFrameSourceNode, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard branch.isEnabled else {
+            completion(.success(()))
+            return
+        }
+        outputNode.transmit(frame) { [weak self] result in
+            if case .failure(let error) = result {
+                self?.errorHandler?(error)
+            }
+            completion(result)
+        }
+    }
+
+    func pause() {
+        chainNode.pause()
+        childNodes.forEach { $0.pause() }
+    }
+
+    func resume() {
+        chainNode.resume()
+        childNodes.forEach { $0.resume() }
+    }
+
+    func cancel() {
+        chainNode.cancel()
+        childNodes.forEach { $0.cancel() }
+    }
+
+    func finish(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard branch.isEnabled else {
+            completion(.success(()))
+            return
+        }
+
+        let group = DispatchGroup()
+        let state = MediaNodeResultState()
+
+        group.enter()
+        chainNode.finish { result in
+            state.capture(result)
+            group.leave()
+        }
+
+        for child in childNodes {
+            group.enter()
+            child.finish { result in
+                state.capture(result)
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) {
+            completion(state.result)
         }
     }
 }
