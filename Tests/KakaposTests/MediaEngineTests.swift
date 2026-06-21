@@ -2236,7 +2236,55 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.playerSourceState, .active)
         XCTAssertEqual(pipeline.playerSourceGeneration, 1)
         XCTAssertEqual(pipeline.playerSourceFrameIndex, 1)
+        XCTAssertEqual(pipeline.playerSourceSummary?.state, .active)
+        XCTAssertEqual(pipeline.playerSourceSummary?.generation, 1)
+        XCTAssertEqual(pipeline.playerSourceSummary?.frameIndex, 1)
+        XCTAssertEqual(pipeline.playerSourceSummary?.lastFrameRequestReason, "manual")
         XCTAssertEqual(pipeline.sourceSnapshot?.details["generation"], "1")
+    }
+
+    func testPreviewPipelinePlayerSourceSummaryTracksPausedManualFrames() throws {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let pipeline = PreviewPipeline(source: source) { _, _ in }
+
+        pipeline.start()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: .zero,
+                playerTimestamp: .zero,
+                requestTimestamp: .zero,
+                pixelBuffer: try makePixelBuffer(width: 18, height: 12)
+            )
+        )
+
+        XCTAssertEqual(pipeline.playerSourceSummary?.frameIndex, 1)
+        XCTAssertEqual(pipeline.playerSourceSummary?.lastFrameRequestReason, "manual")
+
+        source.pause()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 1, timescale: 30),
+                playerTimestamp: CMTime(value: 1, timescale: 30),
+                requestTimestamp: CMTime(value: 1, timescale: 30),
+                pixelBuffer: try makePixelBuffer(width: 18, height: 12)
+            )
+        )
+
+        XCTAssertEqual(pipeline.playerSourceSummary?.state, .paused)
+        XCTAssertEqual(pipeline.playerSourceSummary?.generation, 1)
+        XCTAssertEqual(pipeline.playerSourceSummary?.frameIndex, 2)
+        XCTAssertEqual(pipeline.playerSourceSummary?.lastFrameRequestReason, "manual")
     }
     #endif
 
