@@ -20,7 +20,7 @@ protocol ReaderWriterExportSession {
 }
 
 public final class ReaderWriterExportJob {
-    public enum Status: Equatable, Sendable {
+    public enum Status: String, Equatable, Sendable, Codable {
         case idle
         case exporting
         case paused
@@ -29,8 +29,8 @@ public final class ReaderWriterExportJob {
         case failed
     }
 
-    public struct ProgressInfo: Equatable, Sendable {
-        public enum Phase: String, Sendable {
+    public struct ProgressInfo: Equatable, Sendable, Codable {
+        public enum Phase: String, Sendable, Codable {
             case idle
             case videoEncoding
             case audioEncoding
@@ -71,6 +71,44 @@ public final class ReaderWriterExportJob {
             guard hasVideo || hasAudio else { return finishWritingProgress }
             return max(fractionCompleted, finishWritingProgress)
         }
+    }
+
+    public struct ManifestTimeRange: Equatable, Sendable, Codable {
+        public let startSeconds: Double
+        public let durationSeconds: Double?
+        public let endSeconds: Double?
+        public let isInfinite: Bool
+
+        public init(timeRange: CMTimeRange) {
+            self.startSeconds = timeRange.start.seconds
+            if timeRange.duration.isValid,
+               timeRange.duration.isNumeric,
+               timeRange.duration.isPositiveInfinity == false {
+                self.durationSeconds = timeRange.duration.seconds
+                self.endSeconds = timeRange.end.seconds
+                self.isInfinite = false
+            } else {
+                self.durationSeconds = nil
+                self.endSeconds = nil
+                self.isInfinite = true
+            }
+        }
+    }
+
+    public struct Manifest: Equatable, Sendable, Codable {
+        public let status: Status
+        public let fileTypeRawValue: String
+        public let timeRange: ManifestTimeRange
+        public let shouldOptimizeForNetworkUse: Bool
+        public let metadataCount: Int
+        public let videoTrackCount: Int
+        public let audioTrackCount: Int
+        public let processorCount: Int
+        public let hasVideoComposition: Bool
+        public let hasAudioMix: Bool
+        public let lastPhase: ProgressInfo.Phase
+        public let lastProgressInfo: ProgressInfo?
+        public let lastErrorDescription: String?
     }
 
     public struct Snapshot: Equatable, Sendable {
@@ -194,6 +232,25 @@ public final class ReaderWriterExportJob {
             lastPhase: lastProgressInfo?.phase ?? .idle,
             lastProgressInfo: lastProgressInfo,
             lastErrorDescription: lastErrorDescription
+        )
+    }
+
+    public var manifest: Manifest {
+        let currentSnapshot = snapshot
+        return Manifest(
+            status: currentSnapshot.status,
+            fileTypeRawValue: currentSnapshot.fileType.rawValue,
+            timeRange: ManifestTimeRange(timeRange: currentSnapshot.timeRange),
+            shouldOptimizeForNetworkUse: currentSnapshot.shouldOptimizeForNetworkUse,
+            metadataCount: currentSnapshot.metadataCount,
+            videoTrackCount: currentSnapshot.videoTrackCount,
+            audioTrackCount: currentSnapshot.audioTrackCount,
+            processorCount: currentSnapshot.processorCount,
+            hasVideoComposition: currentSnapshot.hasVideoComposition,
+            hasAudioMix: currentSnapshot.hasAudioMix,
+            lastPhase: currentSnapshot.lastPhase,
+            lastProgressInfo: currentSnapshot.lastProgressInfo,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
         )
     }
 
