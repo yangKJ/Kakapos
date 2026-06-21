@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AVFoundation
 
 public final class MediaProcessorChain: MediaSink {
     public var processors: [FrameProcessor] {
@@ -118,6 +119,12 @@ public final class MediaPipeline {
     public convenience init(source: MediaSource, branch: MediaGraphBranch) {
         self.init(source: source, processors: branch.processors, sinks: branch.sinks)
     }
+
+    #if canImport(UIKit)
+    public convenience init(player: AVPlayer, processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
+        self.init(source: PlayerFrameSource(player: player), processors: processors, sinks: sinks)
+    }
+    #endif
 
     public func start() {
         transitionIfNeeded(from: [.idle], to: .running)

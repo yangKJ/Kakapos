@@ -275,7 +275,6 @@ private struct PlayerPreviewView: View {
         previewStateText = "starting"
         previewGeneration = 0
         #if canImport(UIKit)
-        let source = PlayerFrameSource(player: player)
         let sink = PreviewSink { image, metadata in
             let generation = metadata.userInfo[PlayerFrameSource.MetadataKey.generation] as? Int64 ?? 0
             guard generation >= previewGeneration else { return }
@@ -286,11 +285,11 @@ private struct PlayerPreviewView: View {
             previewStateText = metadata.userInfo[PlayerFrameSource.MetadataKey.playbackState] as? String ?? "running"
         }
         let pipeline = MediaPipeline(
-            source: source,
+            player: player,
             processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.15)])],
             sinks: [sink]
         )
-        self.frameSource = source
+        self.frameSource = pipeline.source as? PlayerFrameSource
         self.pipeline = pipeline
         pipeline.start()
         player.play()
