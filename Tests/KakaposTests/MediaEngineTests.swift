@@ -2623,6 +2623,41 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summaryText.contains("processors 0"))
     }
 
+    func testTimelinePipelineForwardsCompiledAssetImageAndProcessorHelpers() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let imageLayer = ImageLayer(
+            source: StillImageSource(image: try makeImage(width: 20, height: 12)),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            layerLevel: 1
+        )
+        let effectLayer = EffectLayer(
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            source: EffectSource(processor: PassthroughFrameProcessor(), intensity: 0.6),
+            layerLevel: 2
+        )
+        let pipeline = TimelinePipeline(
+            renderSize: CGSize(width: 1280, height: 720),
+            frameDuration: CMTime(value: 1, timescale: 30),
+            layers: [clip, imageLayer, effectLayer]
+        )
+
+        let compiled = pipeline.compile()
+        let assetSources = pipeline.makeAssetSources()
+        let imageSource = pipeline.makeImageSource()
+        let processorChain = pipeline.makeProcessorChain()
+
+        XCTAssertEqual(assetSources.count, compiled.makeAssetSources().count)
+        XCTAssertNotNil(imageSource)
+        XCTAssertEqual(processorChain.summary.summaryText, compiled.makeProcessorChain().summary.summaryText)
+        XCTAssertTrue(pipeline.summaryText.contains("layers 3"))
+        XCTAssertTrue(pipeline.summaryText.contains("processors 1"))
+    }
+
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
         var lifecycle = CameraSessionLifecycle(position: .back)
 
