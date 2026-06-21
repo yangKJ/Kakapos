@@ -117,6 +117,7 @@ public final class RecorderSink: MediaSink {
     public func cancel() {
         queue.async {
             self.writer.cancelWriting()
+            try? FileManager.default.removeItem(at: self.outputURL)
             self.setState(.cancelled)
             self.recordedClip = nil
         }
