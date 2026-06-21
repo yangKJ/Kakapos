@@ -238,6 +238,7 @@ private struct PlayerPreviewView: View {
     @State private var previewGeneration: Int64 = 0
     #if canImport(UIKit)
     @State private var frameSource: PlayerFrameSource?
+    @State private var previewSink: PreviewSink?
     @State private var pipeline: MediaPipeline?
     #endif
 
@@ -267,6 +268,12 @@ private struct PlayerPreviewView: View {
                 .foregroundColor(.secondary)
             Text("State: \(previewStateText)")
                 .font(.subheadline)
+                .foregroundColor(.secondary)
+            Text(frameSource?.summaryText ?? "state idle · generation 0 · frame 0 · lastFrame no · seekTarget no · fps 30")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            Text(previewSink?.summaryText ?? "state idle · frame n/a · image n/a · pending no")
+                .font(.footnote)
                 .foregroundColor(.secondary)
             Text(pipeline?.summary.summaryText ?? "source unavailable · processors 0 · sinks 0 · state idle")
                 .font(.footnote)
@@ -316,6 +323,7 @@ private struct PlayerPreviewView: View {
             sinks: [sink]
         )
         self.frameSource = pipeline.source as? PlayerFrameSource
+        self.previewSink = sink
         self.pipeline = pipeline
         pipeline.start()
         player.play()
@@ -365,6 +373,7 @@ private struct PlayerPreviewView: View {
         pipeline?.stop()
         pipeline = nil
         frameSource = nil
+        previewSink = nil
         #endif
         previewImage = nil
         previewStateText = "stopped"

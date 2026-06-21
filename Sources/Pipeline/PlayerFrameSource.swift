@@ -12,6 +12,19 @@ import AVFoundation
 import UIKit
 
 public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNode {
+    public struct Summary {
+        public let state: State
+        public let generation: Int64
+        public let frameIndex: Int64
+        public let hasLastFrame: Bool
+        public let hasSeekTarget: Bool
+        public let preferredFramesPerSecond: Int
+
+        public var summaryText: String {
+            "state \(state) · generation \(generation) · frame \(frameIndex) · lastFrame \(hasLastFrame ? "yes" : "no") · seekTarget \(hasSeekTarget ? "yes" : "no") · fps \(preferredFramesPerSecond)"
+        }
+    }
+
     public enum State: Equatable {
         case idle
         case active
@@ -41,6 +54,21 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         didSet {
             driver?.configuration.preferredFramesPerSecond = preferredFramesPerSecond
         }
+    }
+
+    public var summary: Summary {
+        Summary(
+            state: state,
+            generation: coordinator.generation,
+            frameIndex: coordinator.frameIndex,
+            hasLastFrame: lastFrame != nil,
+            hasSeekTarget: lastSeekTargetTime != nil,
+            preferredFramesPerSecond: preferredFramesPerSecond
+        )
+    }
+
+    public var summaryText: String {
+        summary.summaryText
     }
 
     private var coordinator = PlayerFrameCoordinator()
