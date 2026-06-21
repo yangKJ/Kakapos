@@ -15,6 +15,7 @@ public final class ReaderWriterExportJob {
         case paused
         case completed
         case cancelled
+        case failed
     }
 
     public struct ProgressInfo {
@@ -22,12 +23,20 @@ public final class ReaderWriterExportJob {
         public var audioProgress: Double
         public var hasVideo: Bool
         public var hasAudio: Bool
+        public var finishWritingProgress: Double
 
-        public init(videoProgress: Double, audioProgress: Double, hasVideo: Bool, hasAudio: Bool) {
+        public init(
+            videoProgress: Double,
+            audioProgress: Double,
+            hasVideo: Bool,
+            hasAudio: Bool,
+            finishWritingProgress: Double = 0
+        ) {
             self.videoProgress = min(max(videoProgress, 0), 1)
             self.audioProgress = min(max(audioProgress, 0), 1)
             self.hasVideo = hasVideo
             self.hasAudio = hasAudio
+            self.finishWritingProgress = min(max(finishWritingProgress, 0), 1)
         }
 
         public var fractionCompleted: Double {
@@ -35,6 +44,11 @@ public final class ReaderWriterExportJob {
             guard activeCount > 0 else { return 0 }
             let total = (hasVideo ? videoProgress : 0) + (hasAudio ? audioProgress : 0)
             return total / activeCount
+        }
+
+        public var overallFractionCompleted: Double {
+            guard hasVideo || hasAudio else { return finishWritingProgress }
+            return min((fractionCompleted * 0.95) + (finishWritingProgress * 0.05), 1)
         }
     }
 
@@ -80,6 +94,8 @@ public final class ReaderWriterExportJob {
             do {
                 try self.exportOnQueue(completion: completion)
             } catch {
+                self.removePartialOutputIfNeeded()
+                self.setStatus(.failed)
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
         }
@@ -101,14 +117,13 @@ public final class ReaderWriterExportJob {
 
     public func cancel() {
         stateLock.lock()
-        guard _status != .completed && _status != .cancelled else {
+        guard _status != .completed && _status != .cancelled && _status != .failed else {
             stateLock.unlock()
             return
         }
         isCancelled = true
         stateLock.unlock()
         reader?.cancelReading()
-        writer?.cancelWriting()
         setStatus(.cancelled, shouldSignal: true)
     }
 
@@ -139,7 +154,10 @@ public final class ReaderWriterExportJob {
             } else {
                 output = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: outputSettings)
             }
-            if reader.canAdd(output) { reader.add(output) }
+            guard reader.canAdd(output) else {
+                throw VideoX.Error.videoTrackEmpty
+            }
+            reader.add(output)
             videoOutput = output
 
             let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
@@ -147,7 +165,10 @@ public final class ReaderWriterExportJob {
             let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
             input.expectsMediaDataInRealTime = false
             input.transform = videoTrack.preferredTransform
-            if writer.canAdd(input) { writer.add(input) }
+            guard writer.canAdd(input) else {
+                throw VideoX.Error.addVideoTrack
+            }
+            writer.add(input)
             videoInput = input
         }
 
@@ -160,12 +181,26 @@ public final class ReaderWriterExportJob {
             } else {
                 output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
             }
-            if reader.canAdd(output) { reader.add(output) }
+            guard reader.canAdd(output) else {
+                throw VideoX.Error.error(NSError(domain: "Kakapos.ReaderWriterExportJob", code: -1001, userInfo: [
+                    NSLocalizedDescriptionKey: "Unable to attach audio reader output."
+                ]))
+            }
+            reader.add(output)
             audioOutput = output
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
             input.expectsMediaDataInRealTime = false
-            if writer.canAdd(input) { writer.add(input) }
+            guard writer.canAdd(input) else {
+                throw VideoX.Error.error(NSError(domain: "Kakapos.ReaderWriterExportJob", code: -1002, userInfo: [
+                    NSLocalizedDescriptionKey: "Unable to attach audio writer input."
+                ]))
+            }
+            writer.add(input)
             audioInput = input
+        }
+
+        guard videoOutput != nil || audioOutput != nil else {
+            throw VideoX.Error.videoTrackEmpty
         }
 
         guard writer.startWriting(), reader.startReading() else {
@@ -182,88 +217,161 @@ public final class ReaderWriterExportJob {
         let hasVideo = videoOutput != nil
         let hasAudio = audioOutput != nil
         var exportError: Error?
-        dispatchProgress(video: 0, audio: 0, hasVideo: hasVideo, hasAudio: hasAudio)
+        dispatchProgress(video: 0, audio: 0, hasVideo: hasVideo, hasAudio: hasAudio, finishWriting: 0)
 
         if let output = videoOutput, let input = videoInput {
             group.enter()
-            input.requestMediaDataWhenReady(on: queue) {
-                while input.isReadyForMoreMediaData {
-                    guard self.waitUntilReadyForWork() else {
-                        input.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                    if let buffer = output.copyNextSampleBuffer() {
-                        videoProgress = (CMSampleBufferGetPresentationTimeStamp(buffer) - startTime).seconds / duration
-                        self.dispatchProgress(video: videoProgress, audio: audioProgress, hasVideo: hasVideo, hasAudio: hasAudio)
-                        if !input.append(buffer) {
-                            exportError = writer.error ?? reader.error ?? VideoX.Error.unknown
-                            input.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                    } else {
-                        input.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                }
-            }
+            encodeTrack(output: output, input: input, reader: reader, writer: writer, group: group, onSample: { buffer in
+                videoProgress = (CMSampleBufferGetPresentationTimeStamp(buffer) - startTime).seconds / duration
+                self.dispatchProgress(
+                    video: videoProgress,
+                    audio: audioProgress,
+                    hasVideo: hasVideo,
+                    hasAudio: hasAudio,
+                    finishWriting: 0
+                )
+            }, onFailure: { error in
+                exportError = exportError ?? error
+            })
         }
 
         if let output = audioOutput, let input = audioInput {
             group.enter()
-            input.requestMediaDataWhenReady(on: queue) {
-                while input.isReadyForMoreMediaData {
-                    guard self.waitUntilReadyForWork() else {
-                        input.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                    if let buffer = output.copyNextSampleBuffer() {
-                        audioProgress = (CMSampleBufferGetPresentationTimeStamp(buffer) - startTime).seconds / duration
-                        self.dispatchProgress(video: videoProgress, audio: audioProgress, hasVideo: hasVideo, hasAudio: hasAudio)
-                        if !input.append(buffer) {
-                            exportError = writer.error ?? reader.error ?? VideoX.Error.unknown
-                            input.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                    } else {
-                        input.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                }
-            }
+            encodeTrack(output: output, input: input, reader: reader, writer: writer, group: group, onSample: { buffer in
+                audioProgress = (CMSampleBufferGetPresentationTimeStamp(buffer) - startTime).seconds / duration
+                self.dispatchProgress(
+                    video: videoProgress,
+                    audio: audioProgress,
+                    hasVideo: hasVideo,
+                    hasAudio: hasAudio,
+                    finishWriting: 0
+                )
+            }, onFailure: { error in
+                exportError = exportError ?? error
+            })
         }
 
         group.notify(queue: queue) {
-            if self.currentlyCancelled {
-                DispatchQueue.main.async { completion(.failure(VideoX.Error.exportCancelled)) }
-                return
-            }
-            if let exportError {
-                DispatchQueue.main.async { completion(.failure(exportError)) }
-                return
-            }
-            writer.finishWriting {
-                self.setStatus(.completed)
-                self.dispatchProgress(video: hasVideo ? 1 : 0, audio: hasAudio ? 1 : 0, hasVideo: hasVideo, hasAudio: hasAudio)
-                DispatchQueue.main.async {
-                    if let error = writer.error {
-                        completion(.failure(error))
-                    } else {
-                        completion(.success(self.outputURL))
-                    }
+            self.finishExport(
+                reader: reader,
+                writer: writer,
+                hasVideo: hasVideo,
+                hasAudio: hasAudio,
+                lastVideoProgress: videoProgress,
+                lastAudioProgress: audioProgress,
+                exportError: exportError,
+                completion: completion
+            )
+        }
+    }
+
+    private func encodeTrack(
+        output: AVAssetReaderOutput,
+        input: AVAssetWriterInput,
+        reader: AVAssetReader,
+        writer: AVAssetWriter,
+        group: DispatchGroup,
+        onSample: @escaping (CMSampleBuffer) -> Void,
+        onFailure: @escaping (Error) -> Void
+    ) {
+        input.requestMediaDataWhenReady(on: queue) {
+            while input.isReadyForMoreMediaData {
+                guard self.waitUntilReadyForWork() else {
+                    input.markAsFinished()
+                    group.leave()
+                    return
+                }
+                if let runtimeError = self.runtimeErrorIfNeeded(reader: reader, writer: writer) {
+                    onFailure(runtimeError)
+                    input.markAsFinished()
+                    group.leave()
+                    return
+                }
+                guard let buffer = output.copyNextSampleBuffer() else {
+                    input.markAsFinished()
+                    group.leave()
+                    return
+                }
+                onSample(buffer)
+                if !input.append(buffer) {
+                    onFailure(writer.error ?? reader.error ?? VideoX.Error.unknown)
+                    input.markAsFinished()
+                    group.leave()
+                    return
                 }
             }
         }
     }
 
-    private func dispatchProgress(video: Double, audio: Double, hasVideo: Bool, hasAudio: Bool) {
+    private func finishExport(
+        reader: AVAssetReader,
+        writer: AVAssetWriter,
+        hasVideo: Bool,
+        hasAudio: Bool,
+        lastVideoProgress: Double,
+        lastAudioProgress: Double,
+        exportError: Error?,
+        completion: @escaping (Result<URL, Error>) -> Void
+    ) {
+        if let finalError = resolvedTerminalError(reader: reader, writer: writer, exportError: exportError) {
+            if case VideoX.Error.exportCancelled = VideoX.Error.toError(finalError) {
+                removePartialOutputIfNeeded()
+                setStatus(.cancelled)
+            } else {
+                removePartialOutputIfNeeded()
+                setStatus(.failed)
+            }
+            DispatchQueue.main.async { completion(.failure(finalError)) }
+            return
+        }
+
+        dispatchProgress(
+            video: lastVideoProgress,
+            audio: lastAudioProgress,
+            hasVideo: hasVideo,
+            hasAudio: hasAudio,
+            finishWriting: 0
+        )
+        writer.finishWriting {
+            self.queue.async {
+                if let finalError = self.resolvedTerminalError(reader: reader, writer: writer, exportError: writer.error) {
+                    if case VideoX.Error.exportCancelled = VideoX.Error.toError(finalError) {
+                        self.removePartialOutputIfNeeded()
+                        self.setStatus(.cancelled)
+                    } else {
+                        self.removePartialOutputIfNeeded()
+                        self.setStatus(.failed)
+                    }
+                    DispatchQueue.main.async { completion(.failure(finalError)) }
+                    return
+                }
+
+                self.setStatus(.completed)
+                self.dispatchProgress(
+                    video: hasVideo ? 1 : 0,
+                    audio: hasAudio ? 1 : 0,
+                    hasVideo: hasVideo,
+                    hasAudio: hasAudio,
+                    finishWriting: 1
+                )
+                DispatchQueue.main.async {
+                    completion(.success(self.outputURL))
+                }
+            }
+        }
+    }
+
+    private func dispatchProgress(video: Double, audio: Double, hasVideo: Bool, hasAudio: Bool, finishWriting: Double) {
         DispatchQueue.main.async {
-            self.progressHandler?(ProgressInfo(videoProgress: video, audioProgress: audio, hasVideo: hasVideo, hasAudio: hasAudio))
+            self.progressHandler?(
+                ProgressInfo(
+                    videoProgress: video,
+                    audioProgress: audio,
+                    hasVideo: hasVideo,
+                    hasAudio: hasAudio,
+                    finishWritingProgress: finishWriting
+                )
+            )
         }
     }
 
@@ -271,6 +379,46 @@ public final class ReaderWriterExportJob {
         stateLock.lock()
         defer { stateLock.unlock() }
         return isCancelled
+    }
+
+    private func runtimeErrorIfNeeded(reader: AVAssetReader, writer: AVAssetWriter) -> Error? {
+        if currentlyCancelled || reader.status == .cancelled || writer.status == .cancelled {
+            return VideoX.Error.exportCancelled
+        }
+        if reader.status == .failed {
+            return reader.error ?? VideoX.Error.unknown
+        }
+        if writer.status == .failed {
+            return writer.error ?? VideoX.Error.unknown
+        }
+        if writer.status != .writing {
+            return writer.error ?? VideoX.Error.unknown
+        }
+        return nil
+    }
+
+    private func resolvedTerminalError(
+        reader: AVAssetReader,
+        writer: AVAssetWriter,
+        exportError: Error?
+    ) -> Error? {
+        if currentlyCancelled || reader.status == .cancelled || writer.status == .cancelled {
+            return VideoX.Error.exportCancelled
+        }
+        if let exportError {
+            return exportError
+        }
+        if reader.status == .failed {
+            return reader.error ?? VideoX.Error.unknown
+        }
+        if writer.status == .failed {
+            return writer.error ?? VideoX.Error.unknown
+        }
+        return nil
+    }
+
+    private func removePartialOutputIfNeeded() {
+        try? FileManager.default.removeItem(at: outputURL)
     }
 
     private func waitUntilReadyForWork() -> Bool {
@@ -294,13 +442,19 @@ public final class ReaderWriterExportJob {
 
     private func setStatus(_ status: Status, shouldSignal: Bool = false) {
         stateLock.lock()
+        let didChange = _status != status
         _status = status
         if shouldSignal {
             stateLock.broadcast()
         }
         stateLock.unlock()
+        guard didChange else { return }
         DispatchQueue.main.async {
             self.statusHandler?(status)
         }
+    }
+
+    func _setStatusForTesting(_ status: Status) {
+        setStatus(status, shouldSignal: false)
     }
 }

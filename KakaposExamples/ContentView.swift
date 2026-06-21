@@ -30,9 +30,11 @@ struct ContentView: View {
 private struct OfflineExportView: View {
     @State private var player: AVPlayer?
     @State private var outputURL: URL?
+    @State private var exportTask: VideoX.ExportTask?
     @State private var isProcessing = false
     @State private var progress: Float = 0
     @State private var message = "Ready"
+    @State private var taskStatus = "idle"
     @State private var selectedRotation: RotationAngle = .angle0
 
     var body: some View {
@@ -55,11 +57,26 @@ private struct OfflineExportView: View {
             HStack {
                 Button("Export with Harbeth") { exportVideo() }
                     .disabled(isProcessing)
+                Button("Cancel") { cancelExport() }
+                    .disabled(exportTask == nil || !isProcessing)
                 Button("Save") { saveVideo() }
                     .disabled(outputURL == nil)
             }
             .buttonStyle(.borderedProminent)
 
+            if exportTask?.supportsPauseResume == true {
+                HStack {
+                    Button("Pause") { pauseExport() }
+                        .disabled(taskStatus != "exporting")
+                    Button("Resume") { resumeExport() }
+                        .disabled(taskStatus != "paused")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Text("Task Status: \(taskStatus)")
+                .font(.footnote)
+                .foregroundColor(.secondary)
             Text(message).font(.footnote).foregroundColor(.secondary)
             Spacer()
         }
@@ -81,22 +98,93 @@ private struct OfflineExportView: View {
             instructions.insert(RotateInstruction(rotationAngle: selectedRotation), at: 0)
         }
         let exporter = VideoX(provider: .init(with: videoURL))
-        _ = exporter.export(options: [.OptimizeForNetworkUse: true], instructions: instructions, complete: { result in
-            DispatchQueue.main.async {
-                isProcessing = false
-                switch result {
-                case .success(let url):
-                    outputURL = url
-                    player = AVPlayer(url: url)
-                    player?.play()
-                    message = "Exported: \(url.lastPathComponent)"
-                case .failure(let error):
-                    message = error.localizedDescription
+        do {
+            let task = try exporter.makeExportTask(
+                options: [
+                    .OptimizeForNetworkUse: true,
+                    .ExportPipeline: VideoX.ExportPipeline.readerWriter
+                ],
+                instructions: instructions
+            )
+            exportTask = task
+            taskStatus = statusText(for: task.status)
+            task.readerWriterJob?.statusHandler = { status in
+                DispatchQueue.main.async {
+                    taskStatus = statusText(for: status)
                 }
             }
-        }, progress: { value in
-            DispatchQueue.main.async { progress = value }
-        })
+            task.start(complete: { result in
+                DispatchQueue.main.async {
+                    isProcessing = false
+                    exportTask = nil
+                    switch result {
+                    case .success(let url):
+                        outputURL = url
+                        player = AVPlayer(url: url)
+                        player?.play()
+                        message = "Exported: \(url.lastPathComponent)"
+                    case .failure(let error):
+                        message = error.localizedDescription
+                    }
+                }
+            }, progress: { value in
+                DispatchQueue.main.async { progress = value }
+            })
+        } catch {
+            isProcessing = false
+            exportTask = nil
+            taskStatus = "failed"
+            message = error.localizedDescription
+        }
+    }
+
+    private func pauseExport() {
+        exportTask?.pause()
+        taskStatus = statusText(for: exportTask?.status ?? .idle)
+    }
+
+    private func resumeExport() {
+        exportTask?.resume()
+        taskStatus = statusText(for: exportTask?.status ?? .idle)
+    }
+
+    private func cancelExport() {
+        exportTask?.cancel()
+        taskStatus = statusText(for: exportTask?.status ?? .idle)
+    }
+
+    private func statusText(for status: VideoX.ExportTask.Status) -> String {
+        switch status {
+        case .idle:
+            return "idle"
+        case .exporting:
+            return "exporting"
+        case .paused:
+            return "paused"
+        case .completed:
+            return "completed"
+        case .cancelled:
+            return "cancelled"
+        case .failed:
+            return "failed"
+        }
+    }
+
+    private func statusText(for status: ReaderWriterExportJob.Status) -> String {
+        switch status {
+        case .idle:
+            return "idle"
+        case .exporting:
+            return "exporting"
+        case .paused:
+            return "paused"
+        case .completed:
+            return "completed"
+        case .cancelled:
+            return "cancelled"
+        case .failed:
+            return "failed"
+        }
     }
 
     private func saveVideo() {

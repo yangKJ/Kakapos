@@ -50,12 +50,12 @@ public struct VideoX {
             return Self.status(for: assetExportSession.status)
         }
 
-        fileprivate init(assetExportSession: AVAssetExportSession) {
+        init(assetExportSession: AVAssetExportSession) {
             self.assetExportSession = assetExportSession
             self.readerWriterJob = nil
         }
 
-        fileprivate init(readerWriterJob: ReaderWriterExportJob) {
+        init(readerWriterJob: ReaderWriterExportJob) {
             self.assetExportSession = nil
             self.readerWriterJob = readerWriterJob
         }
@@ -67,7 +67,7 @@ public struct VideoX {
             if let readerWriterJob {
                 if let progress {
                     readerWriterJob.progressHandler = { info in
-                        progress(Float(info.fractionCompleted))
+                        progress(Float(info.overallFractionCompleted))
                     }
                 }
                 readerWriterJob.export { result in
@@ -184,6 +184,8 @@ public struct VideoX {
                 return .completed
             case .cancelled:
                 return .cancelled
+            case .failed:
+                return .failed
             }
         }
     }

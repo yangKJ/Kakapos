@@ -147,6 +147,32 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(info.fractionCompleted, 0.5, accuracy: 0.0001)
     }
 
+    func testReaderWriterProgressInfoReturnsZeroWithoutActiveTracksAndUsesFinishWritingForOverallProgress() {
+        let info = ReaderWriterExportJob.ProgressInfo(
+            videoProgress: 0.9,
+            audioProgress: 0.6,
+            hasVideo: false,
+            hasAudio: false,
+            finishWritingProgress: 0.4
+        )
+
+        XCTAssertEqual(info.fractionCompleted, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(info.overallFractionCompleted, 0.4, accuracy: 0.0001)
+    }
+
+    func testReaderWriterProgressInfoKeepsOverallProgressBelowOneBeforeFinishWriting() {
+        let info = ReaderWriterExportJob.ProgressInfo(
+            videoProgress: 1.0,
+            audioProgress: 1.0,
+            hasVideo: true,
+            hasAudio: true,
+            finishWritingProgress: 0.0
+        )
+
+        XCTAssertEqual(info.fractionCompleted, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(info.overallFractionCompleted, 0.95, accuracy: 0.0001)
+    }
+
     func testReaderWriterExportJobKeepsStableStatusOutsideExportingState() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),
@@ -177,6 +203,46 @@ final class MediaEngineTests: XCTestCase {
 
         job.resume()
         XCTAssertEqual(job.status, .cancelled)
+    }
+
+    func testReaderWriterExportJobPauseAndResumeTransitionFromExportingState() {
+        let job = ReaderWriterExportJob(
+            asset: AVMutableComposition(),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+        )
+        job._setStatusForTesting(.exporting)
+
+        job.pause()
+        XCTAssertEqual(job.status, .paused)
+
+        job.resume()
+        XCTAssertEqual(job.status, .exporting)
+    }
+
+    func testReaderWriterExportJobRepeatedCancelDoesNotNotifyTwice() {
+        let job = ReaderWriterExportJob(
+            asset: AVMutableComposition(),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+        )
+        let expectation = expectation(description: "cancel callback")
+        expectation.expectedFulfillmentCount = 1
+        var statuses: [ReaderWriterExportJob.Status] = []
+        job.statusHandler = { status in
+            statuses.append(status)
+            if status == .cancelled {
+                expectation.fulfill()
+            }
+        }
+
+        job.cancel()
+        job.cancel()
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(statuses, [.cancelled])
     }
 
     func testVideoXExportPipelineDefaultsToAssetExportSession() {
@@ -252,6 +318,25 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(exportTask.status, .idle)
         exportTask.cancel()
         XCTAssertEqual(exportTask.status, .cancelled)
+    }
+
+    func testVideoXExportTaskMapsReaderWriterStatuses() throws {
+        let job = ReaderWriterExportJob(
+            asset: AVMutableComposition(),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+        )
+        let task = VideoX.ExportTask(readerWriterJob: job)
+
+        job._setStatusForTesting(.exporting)
+        XCTAssertEqual(task.status, .exporting)
+        job._setStatusForTesting(.paused)
+        XCTAssertEqual(task.status, .paused)
+        job._setStatusForTesting(.failed)
+        XCTAssertEqual(task.status, .failed)
+        job._setStatusForTesting(.completed)
+        XCTAssertEqual(task.status, .completed)
     }
 
     func testPreviewSinkBuildsPreviewImageAndPreservesMetadata() throws {
