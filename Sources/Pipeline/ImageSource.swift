@@ -220,18 +220,13 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
     private static func makePixelBuffer(from image: CGImage, renderSize: CGSize?) throws -> CVPixelBuffer {
         let width = max(Int(renderSize?.width ?? CGFloat(image.width)), 1)
         let height = max(Int(renderSize?.height ?? CGFloat(image.height)), 1)
-        let attributes: [CFString: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
-            kCVPixelBufferMetalCompatibilityKey: true
-        ]
         var pixelBuffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(
             kCFAllocatorDefault,
             width,
             height,
             kCVPixelFormatType_32BGRA,
-            attributes as CFDictionary,
+            nil,
             &pixelBuffer
         )
         guard status == kCVReturnSuccess, let pixelBuffer else {
@@ -241,8 +236,7 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
 
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
-              let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB) else {
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
             throw VideoX.Error.newRenderedPixelBufferForRequestFailure
         }
 
@@ -253,7 +247,7 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: bytesPerRow,
-            space: colorSpace,
+            space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         ) else {
             throw VideoX.Error.newRenderedPixelBufferForRequestFailure
