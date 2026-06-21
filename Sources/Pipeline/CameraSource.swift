@@ -10,6 +10,18 @@ import AVFoundation
 
 #if canImport(UIKit) && !os(watchOS)
 public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
+    public struct Summary {
+        public let state: CameraSessionState
+        public let position: CameraPosition
+        public let authorizationStatus: CameraAuthorizationStatus
+        public let isPaused: Bool
+        public let captureMode: CameraCaptureMode
+
+        public var summaryText: String {
+            "state \(state) · position \(position) · auth \(authorizationStatus) · paused \(isPaused ? "yes" : "no") · mode \(captureMode)"
+        }
+    }
+
     public enum MetadataKey {
         public static let mediaType = "kakapos.camera.media-type"
         public static let cameraPosition = "kakapos.camera.position"
@@ -29,6 +41,19 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     public var sessionEventHandler: ((CameraSessionEvent) -> Void)?
     public var photoCaptureHandler: ((CameraPhotoCaptureResult) -> Void)?
     public var authorizationStatusChangedHandler: ((CameraAuthorizationStatus) -> Void)?
+    public var summary: Summary {
+        Summary(
+            state: state,
+            position: currentPosition,
+            authorizationStatus: authorizationStatus,
+            isPaused: isPaused,
+            captureMode: configuration.captureMode
+        )
+    }
+
+    public var summaryText: String {
+        summary.summaryText
+    }
 
     private let queue = DispatchQueue(label: "com.condy.kakapos.camera-source")
     private let realtime: KakaposRealtime

@@ -2319,6 +2319,34 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(pausedSnapshot.currentClipDuration.seconds, 0)
     }
 
+    func testRecorderSinkSummaryReflectsRecordedDurationAndClipCounts() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
+        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let expectedClipDuration = CMTime(value: 1, timescale: 600)
+        let expectation = self.expectation(description: "append frame for summary")
+
+        sink.consume(frame) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 2)
+
+        XCTAssertEqual(sink.summary.state, .recording)
+        XCTAssertEqual(sink.summary.outputURL, outputURL)
+        XCTAssertEqual(sink.summary.clipCount, 0)
+        XCTAssertEqual(sink.summary.totalDuration, .zero)
+        XCTAssertEqual(sink.summary.currentClipDuration, expectedClipDuration)
+        XCTAssertEqual(sink.summary.hasRecordedClip, false)
+        XCTAssertEqual(sink.summary.summaryText, "state recording · clips 0 · total 0.00s · clip 0.00s · recorded no")
+    }
+
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
         var lifecycle = CameraSessionLifecycle(position: .back)
 
@@ -2414,6 +2442,30 @@ final class MediaEngineTests: XCTestCase {
     }
 
     #if canImport(UIKit) && !os(watchOS)
+    func testCameraSourceSummaryReflectsSessionStateAndCaptureConfiguration() throws {
+        let configuration = CameraSourceConfiguration(
+            captureMode: .videoWithoutAudio,
+            preferredPosition: .front,
+            mirroringMode: .on
+        )
+        let source = try CameraSource(configuration: configuration)
+
+        XCTAssertEqual(source.summary.state, .idle)
+        XCTAssertEqual(source.summary.position, .front)
+        XCTAssertEqual(source.summary.authorizationStatus, source.authorizationStatus)
+        XCTAssertEqual(source.summary.isPaused, false)
+        XCTAssertEqual(source.summary.captureMode, .videoWithoutAudio)
+        XCTAssertEqual(
+            source.summary.summaryText,
+            "state idle · position front · auth \(source.authorizationStatus.description) · paused no · mode videoWithoutAudio"
+        )
+
+        source._setStateForTesting(.running)
+        source.pause()
+        XCTAssertEqual(source.summary.state, .paused)
+        XCTAssertTrue(source.summary.summaryText.contains("state paused"))
+    }
+
     func testCameraSourcePausesAndResumesFrameEmissionWithSessionMetadata() throws {
         let configuration = CameraSourceConfiguration(captureMode: .videoWithoutAudio)
         let source = try CameraSource(configuration: configuration)

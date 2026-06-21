@@ -30,6 +30,21 @@ public final class RecorderSink: MediaSink {
         }
     }
 
+    public struct Summary {
+        public let state: State
+        public let outputURL: URL
+        public let clipCount: Int
+        public let totalDuration: CMTime
+        public let currentClipDuration: CMTime
+        public let hasRecordedClip: Bool
+
+        public var summaryText: String {
+            let durationText = String(format: "%.2fs", totalDuration.seconds)
+            let currentClipText = String(format: "%.2fs", currentClipDuration.seconds)
+            return "state \(state) · clips \(clipCount) · total \(durationText) · clip \(currentClipText) · recorded \(hasRecordedClip ? "yes" : "no")"
+        }
+    }
+
     public enum State: Equatable, Sendable {
         case idle
         case recording
@@ -64,6 +79,22 @@ public final class RecorderSink: MediaSink {
                 pausedAt: pausedAt
             )
         }
+    }
+
+    public var summary: Summary {
+        let currentSnapshot = snapshot
+        return Summary(
+            state: currentSnapshot.state,
+            outputURL: currentSnapshot.outputURL,
+            clipCount: currentSnapshot.clipCount,
+            totalDuration: currentSnapshot.totalDuration,
+            currentClipDuration: currentSnapshot.currentClipDuration,
+            hasRecordedClip: currentSnapshot.hasRecordedClip
+        )
+    }
+
+    public var summaryText: String {
+        summary.summaryText
     }
 
     private let writer: AVAssetWriter
