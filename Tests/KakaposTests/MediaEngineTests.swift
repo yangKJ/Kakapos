@@ -1123,6 +1123,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lastProgressInfo.finishWritingProgress, 0.5, accuracy: 0.0001)
         XCTAssertEqual(lastProgressInfo.overallFractionCompleted, progress.overallFractionCompleted, accuracy: 0.0001)
         XCTAssertEqual(lastProgressInfo.phase, .idle)
+        XCTAssertEqual(Double(job.progressFraction ?? 0), progress.overallFractionCompleted, accuracy: 0.0001)
     }
 
     func testReaderWriterExportJobSummaryReflectsTracksProcessorsAndProgress() {
