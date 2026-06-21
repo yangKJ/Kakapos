@@ -213,6 +213,7 @@ public final class MediaPipeline {
             allowedStates.append(.finished)
         }
         guard transitionIfNeeded(from: allowedStates, to: .failed) else { return }
+        source.cancel()
         if cancelChain {
             chain.cancel()
         }

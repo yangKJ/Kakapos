@@ -1672,6 +1672,42 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    func testMediaPipelineCancelsUpstreamSourceWhenSinkFailsDuringStreaming() throws {
+        let firstFrame = MediaFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        )
+        let secondFrame = MediaFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2)
+        )
+        let source = DelayedEmittingSource(frames: [firstFrame, secondFrame], emissionDelay: 0.15)
+        let sink = FailingConsumeSink(error: NSError(domain: "MediaPipelineTests", code: 41))
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+        let errorExpectation = expectation(description: "pipeline failure")
+        let stateExpectation = expectation(description: "failed state")
+        stateExpectation.expectedFulfillmentCount = 2
+
+        pipeline.errorHandler = { error in
+            XCTAssertEqual((error as NSError).code, 41)
+            errorExpectation.fulfill()
+        }
+        pipeline.stateHandler = { state in
+            if state == .running || state == .failed {
+                stateExpectation.fulfill()
+            }
+        }
+
+        pipeline.start()
+
+        wait(for: [errorExpectation, stateExpectation], timeout: 2)
+
+        XCTAssertEqual(source.cancelCount, 1)
+        XCTAssertEqual(source.emissionCount, 1)
+        XCTAssertEqual(pipeline.state, .failed)
+        XCTAssertEqual(pipeline.lastErrorDescription, "MediaPipelineTests#41")
+    }
+
     func testPlayerFrameCoordinatorResetsFrameIndexWhenCurrentItemChanges() {
         final class Token: NSObject {}
 
@@ -2742,6 +2778,73 @@ private final class FailingSource: MediaSource {
     func resume() {}
     func stop() {}
     func cancel() {}
+}
+
+private final class DelayedEmittingSource: MediaSource {
+    weak var delegate: MediaSourceDelegate?
+    private let frames: [MediaFrame]
+    private let emissionDelay: TimeInterval
+    private let queue = DispatchQueue(label: "com.condy.kakapos.tests.delayed-emitting-source")
+    private let lock = NSLock()
+    private var cancelled = false
+    private(set) var cancelCount = 0
+    private(set) var emissionCount = 0
+
+    init(frames: [MediaFrame], emissionDelay: TimeInterval) {
+        self.frames = frames
+        self.emissionDelay = emissionDelay
+    }
+
+    func start() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            for (index, frame) in self.frames.enumerated() {
+                if index > 0 {
+                    Thread.sleep(forTimeInterval: self.emissionDelay)
+                }
+                if self.isCancelled {
+                    return
+                }
+                self.lock.lock()
+                self.emissionCount += 1
+                self.lock.unlock()
+                self.delegate?.mediaSource(self, didOutput: frame)
+            }
+            if self.isCancelled {
+                return
+            }
+            self.delegate?.mediaSourceDidFinish(self)
+        }
+    }
+
+    func pause() {}
+    func resume() {}
+    func stop() {}
+
+    func cancel() {
+        lock.lock()
+        cancelCount += 1
+        cancelled = true
+        lock.unlock()
+    }
+
+    private var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+}
+
+private final class FailingConsumeSink: MediaSink {
+    let error: Error
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        completion(.failure(error))
+    }
 }
 
 #if canImport(UIKit) && !os(watchOS)
