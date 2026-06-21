@@ -2054,6 +2054,41 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(configuration.effectiveMirroringValue(for: .front))
         XCTAssertFalse(configuration.effectiveMirroringValue(for: .back))
     }
+
+    #if canImport(UIKit) && !os(watchOS)
+    func testCameraSourcePausesAndResumesFrameEmissionWithSessionMetadata() throws {
+        let configuration = CameraSourceConfiguration(captureMode: .videoWithoutAudio)
+        let source = try CameraSource(configuration: configuration)
+        let firstBuffer = try makeSampleBuffer(width: 16, height: 10, presentationTime: CMTime(value: 1, timescale: 30))
+        let secondBuffer = try makeSampleBuffer(width: 24, height: 14, presentationTime: CMTime(value: 2, timescale: 30))
+        var receivedFrames: [MediaFrame] = []
+
+        source._setStateForTesting(.running)
+        source.frameHandler = { frame in
+            receivedFrames.append(frame)
+        }
+
+        source._emitForTesting(sampleBuffer: firstBuffer, mediaType: .video)
+        XCTAssertEqual(receivedFrames.count, 1)
+        XCTAssertEqual(receivedFrames[0].metadata.frameIndex, 1)
+        XCTAssertEqual(receivedFrames[0].metadata.userInfo[CameraSource.MetadataKey.sessionState] as? String, "running")
+        XCTAssertEqual(receivedFrames[0].metadata.userInfo[CameraSource.MetadataKey.mediaType] as? String, AVMediaType.video.rawValue)
+
+        source.pause()
+        XCTAssertEqual(source.state, .paused)
+        source._emitForTesting(sampleBuffer: secondBuffer, mediaType: .video)
+        XCTAssertEqual(receivedFrames.count, 1)
+
+        source.resume()
+        XCTAssertEqual(source.state, .running)
+        source._emitForTesting(sampleBuffer: secondBuffer, mediaType: .video)
+
+        XCTAssertEqual(receivedFrames.count, 2)
+        XCTAssertEqual(receivedFrames[1].metadata.frameIndex, 2)
+        XCTAssertEqual(receivedFrames[1].metadata.userInfo[CameraSource.MetadataKey.sessionState] as? String, "running")
+        XCTAssertEqual(receivedFrames[1].metadata.userInfo[CameraSource.MetadataKey.mediaType] as? String, AVMediaType.video.rawValue)
+    }
+    #endif
 }
 
 private final class TestSource: MediaSource {
@@ -2170,6 +2205,38 @@ private final class FailingSource: MediaSource {
     func stop() {}
     func cancel() {}
 }
+
+#if canImport(UIKit) && !os(watchOS)
+private func makeSampleBuffer(
+    width: Int,
+    height: Int,
+    presentationTime: CMTime
+) throws -> CMSampleBuffer {
+    let pixelBuffer = try makePixelBuffer(width: width, height: height)
+    var sampleBuffer: CMSampleBuffer?
+    var formatDescription: CMVideoFormatDescription?
+    let formatStatus = CMVideoFormatDescriptionCreateForImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: pixelBuffer,
+        formatDescriptionOut: &formatDescription
+    )
+    XCTAssertEqual(formatStatus, noErr)
+    var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: 30),
+        presentationTimeStamp: presentationTime,
+        decodeTimeStamp: .invalid
+    )
+    let createStatus = CMSampleBufferCreateReadyWithImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: pixelBuffer,
+        formatDescription: formatDescription!,
+        sampleTiming: &timing,
+        sampleBufferOut: &sampleBuffer
+    )
+    XCTAssertEqual(createStatus, noErr)
+    return try XCTUnwrap(sampleBuffer)
+}
+#endif
 
 private final class TestConsumerNode: MediaFrameConsumerNode {
     var onFrame: ((MediaFrame) -> Void)?
