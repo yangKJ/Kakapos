@@ -56,6 +56,10 @@ public final class PreviewSink: MediaSink {
         public let lastPresentationTime: CMTime?
         public let lastSourceTime: CMTime?
         public let lastFrameRequestReason: String?
+        public let pendingFrameIndex: Int64?
+        public let pendingFramePresentationTime: CMTime?
+        public let pendingFrameSourceTime: CMTime?
+        public let pendingFrameRequestReason: String?
         public let lastImageWidth: Int?
         public let lastImageHeight: Int?
         public let hasPendingFrame: Bool
@@ -71,7 +75,18 @@ public final class PreviewSink: MediaSink {
             } else {
                 sizeText = "n/a"
             }
-            return "state \(state) · frame \(frameText) · presentation \(presentationText) · sourceTime \(sourceTimeText) · reason \(reasonText) · image \(sizeText) · pending \(hasPendingFrame ? "yes" : "no")"
+            var text = "state \(state) · frame \(frameText) · presentation \(presentationText) · sourceTime \(sourceTimeText) · reason \(reasonText) · image \(sizeText) · pending \(hasPendingFrame ? "yes" : "no")"
+            if hasPendingFrame, let pendingFrameIndex, let pendingFrameRequestReason {
+                text += " · pendingFrame \(pendingFrameIndex)"
+                if let pendingFramePresentationTime {
+                    text += " · pendingPresentation \(String(format: "%.2fs", pendingFramePresentationTime.seconds))"
+                }
+                if let pendingFrameSourceTime {
+                    text += " · pendingSourceTime \(String(format: "%.2fs", pendingFrameSourceTime.seconds))"
+                }
+                text += " · pendingReason \(pendingFrameRequestReason)"
+            }
+            return text
         }
     }
 
@@ -96,12 +111,17 @@ public final class PreviewSink: MediaSink {
     public var summary: Summary {
         lock.lock()
         let lastFrameRequestReason = lastFrame?.metadata.userInfo[MetadataKey.frameRequestReason] as? String
+        let pendingFrameRequestReason = pendingFrame?.metadata.userInfo[MetadataKey.frameRequestReason] as? String
         let summary = Summary(
             state: state,
             lastFrameIndex: lastFrame?.metadata.frameIndex,
             lastPresentationTime: lastFrame?.metadata.presentationTime,
             lastSourceTime: lastFrame?.metadata.sourceTime ?? lastFrame?.metadata.presentationTime,
             lastFrameRequestReason: lastFrameRequestReason,
+            pendingFrameIndex: pendingFrame?.metadata.frameIndex,
+            pendingFramePresentationTime: pendingFrame?.metadata.presentationTime,
+            pendingFrameSourceTime: pendingFrame?.metadata.sourceTime ?? pendingFrame?.metadata.presentationTime,
+            pendingFrameRequestReason: pendingFrameRequestReason,
             lastImageWidth: lastImage?.width,
             lastImageHeight: lastImage?.height,
             hasPendingFrame: pendingFrame != nil
