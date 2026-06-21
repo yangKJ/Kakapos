@@ -9,7 +9,7 @@ import Foundation
 import AVFoundation
 
 #if canImport(UIKit) && !os(watchOS)
-public final class CameraSource: NSObject, MediaSource {
+public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
     public enum MetadataKey {
         public static let mediaType = "kakapos.camera.media-type"
         public static let cameraPosition = "kakapos.camera.position"
@@ -27,6 +27,7 @@ public final class CameraSource: NSObject, MediaSource {
     private let queue = DispatchQueue(label: "com.condy.kakapos.camera-source")
     private let realtime: KakaposRealtime
     private let fallbackSession = AVCaptureSession()
+    private let outputNode = MediaOutputNode()
     private var lifecycle: CameraSessionLifecycle
     private var frameIndex: Int64 = 0
 
@@ -115,6 +116,7 @@ public final class CameraSource: NSObject, MediaSource {
         frame.metadata.frameIndex = frameIndex
         DispatchQueue.main.async {
             self.delegate?.mediaSource(self, didOutput: frame)
+            self.outputNode.transmit(frame) { _ in }
         }
     }
 
@@ -136,6 +138,23 @@ public final class CameraSource: NSObject, MediaSource {
         default:
             return .unspecified
         }
+    }
+
+    @discardableResult
+    public func add<T: MediaFrameConsumerNode>(consumer: T) -> T {
+        outputNode.add(consumer: consumer)
+    }
+
+    public func add(consumer: MediaFrameConsumerNode, at index: Int) {
+        outputNode.add(consumer: consumer, at: index)
+    }
+
+    public func remove(consumer: MediaFrameConsumerNode) {
+        outputNode.remove(consumer: consumer)
+    }
+
+    public func removeAllConsumers() {
+        outputNode.removeAllConsumers()
     }
 }
 

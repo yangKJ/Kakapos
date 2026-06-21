@@ -11,7 +11,7 @@ import AVFoundation
 #if canImport(UIKit)
 import UIKit
 
-public final class PlayerFrameSource: NSObject, MediaSource {
+public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNode {
     public enum MetadataKey {
         public static let playerItemTime = "kakapos.player-item-time"
         public static let playerRate = "kakapos.player-rate"
@@ -32,6 +32,7 @@ public final class PlayerFrameSource: NSObject, MediaSource {
     private var endObserver: NSObjectProtocol?
     private var timeJumpObserver: NSObjectProtocol?
     private var driver: PlayerFrameOutputDriver?
+    private let outputNode = MediaOutputNode()
 
     public init(player: AVPlayer, preferredFramesPerSecond: Int = 30) {
         self.player = player
@@ -103,7 +104,9 @@ public final class PlayerFrameSource: NSObject, MediaSource {
                 MetadataKey.generation: coordinator.generation
             ]
         )
-        delegate?.mediaSource(self, didOutput: MediaFrame(pixelBuffer: frame.pixelBuffer, metadata: metadata))
+        let mediaFrame = MediaFrame(pixelBuffer: frame.pixelBuffer, metadata: metadata)
+        delegate?.mediaSource(self, didOutput: mediaFrame)
+        outputNode.transmit(mediaFrame) { _ in }
     }
 
     private func observePlayerIfNeeded() {
@@ -165,6 +168,23 @@ public final class PlayerFrameSource: NSObject, MediaSource {
             self.timeJumpObserver = nil
         }
         driver = nil
+    }
+
+    @discardableResult
+    public func add<T: MediaFrameConsumerNode>(consumer: T) -> T {
+        outputNode.add(consumer: consumer)
+    }
+
+    public func add(consumer: MediaFrameConsumerNode, at index: Int) {
+        outputNode.add(consumer: consumer, at: index)
+    }
+
+    public func remove(consumer: MediaFrameConsumerNode) {
+        outputNode.remove(consumer: consumer)
+    }
+
+    public func removeAllConsumers() {
+        outputNode.removeAllConsumers()
     }
 }
 #endif
