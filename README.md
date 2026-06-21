@@ -27,6 +27,7 @@ Kakapos is not a filter-kernel library. It owns media lifecycle, frame sourcing,
 
 Kakapos stays easier to adopt when the public surface is used in four small boards instead of one large API surface.
 `KakaposSurface` is the thinnest recommended starting point; `KakaposBoards` remains as a compatibility alias.
+For code that only needs the recommended startup path, `KakaposSurface.starterBoards` gives the four boards in order.
 
 Start with the smallest entry points:
 
@@ -43,6 +44,7 @@ The fuller surface stays available behind each board:
 - **Timeline**: `TimelineComposition`, `ClipLayer`, `ImageLayer`, `AudioLayer`, `EffectLayer`, `GroupLayer`, `Transition`, `KeyframeAnimation`
 
 You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface and its starter types. For a thinner starting layer, use `KakaposBoards` to build the four boards without touching the wider public surface.
+`KakaposCapabilityCatalog.starterBoards` and `KakaposSurface.starterBoards` expose the same ordered starter path when you want the narrowest read-only entry list.
 
 Legacy `KakaposRealtime` symbols remain in the tree for compatibility, but the board entry points above are the recommended path for new code.
 

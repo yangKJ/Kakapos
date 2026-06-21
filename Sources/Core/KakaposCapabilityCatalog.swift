@@ -100,6 +100,10 @@ public enum KakaposCapabilityCatalog {
         )
     }
 
+    public static var starterBoards: [KakaposCapabilityBoardInfo] {
+        boards
+    }
+
     public static func board(named name: String) -> KakaposCapabilityBoardInfo? {
         boards.first { $0.board.rawValue == name }
     }
