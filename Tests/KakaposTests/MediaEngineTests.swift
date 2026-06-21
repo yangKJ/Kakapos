@@ -1494,6 +1494,69 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.state, .active)
     }
 
+    func testPlayerFrameSourceSeekClearsStaleFrameAndTagsNextFrameAsSeek() throws {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
+        let driver = FakePlayerFrameDriver()
+        let seekExpectation = expectation(description: "seek completed")
+        let frameExpectation = expectation(description: "seek frame emitted")
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let initialBuffer = try makePixelBuffer(width: 16, height: 10)
+        let seekBuffer = try makePixelBuffer(width: 22, height: 16)
+        let target = CMTime(value: 24, timescale: 30)
+        var receivedFrame: MediaFrame?
+
+        source.frameHandler = { frame in
+            receivedFrame = frame
+            frameExpectation.fulfill()
+        }
+
+        source.start()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: .zero,
+                playerTimestamp: .zero,
+                requestTimestamp: .zero,
+                pixelBuffer: initialBuffer
+            )
+        )
+
+        XCTAssertNotNil(source.lastFrame)
+
+        source.seek(to: target) { finished in
+            XCTAssertTrue(finished)
+            seekExpectation.fulfill()
+        }
+
+        wait(for: [seekExpectation], timeout: 5)
+        XCTAssertNil(source.lastFrame)
+        XCTAssertEqual(source.lastSeekTargetTime, target)
+
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: target,
+                playerTimestamp: target,
+                requestTimestamp: target,
+                pixelBuffer: seekBuffer
+            )
+        )
+
+        wait(for: [frameExpectation], timeout: 1)
+        XCTAssertEqual(receivedFrame?.metadata.userInfo[PlayerFrameSource.MetadataKey.frameRequestReason] as? String, "seek")
+        XCTAssertEqual(receivedFrame?.metadata.userInfo[PlayerFrameSource.MetadataKey.seekTargetTime] as? CMTime, target)
+        XCTAssertNil(source.lastSeekTargetTime)
+        XCTAssertEqual(source.lastFrame?.metadata.frameIndex, 2)
+        XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(source.lastFrame?.pixelBuffer)), 22)
+    }
+
     func testPlayerFrameSourceResetsSeekTargetAndLastFrameWhenCurrentItemChanges() throws {
         let firstItem = AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL()))
         let secondItem = AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL()))

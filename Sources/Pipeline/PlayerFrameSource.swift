@@ -121,6 +121,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         completion: ((Bool) -> Void)? = nil
     ) {
         lastSeekTargetTime = time
+        lastFrame = nil
         player.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter) { [weak self] finished in
             guard let self else {
                 completion?(finished)
@@ -169,16 +170,18 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         guard coordinator.shouldDriveDisplayLink || player.rate == 0 else { return }
         let frameIndex = coordinator.markFrameOutput()
         updateState(from: coordinator.playbackState)
+        let seekTargetTime = lastSeekTargetTime
         var userInfo: [String: Any] = [
             MetadataKey.playerItemTime: frame.requestTimestamp,
             MetadataKey.playerRate: player.rate,
             MetadataKey.playbackState: String(describing: coordinator.playbackState),
             MetadataKey.generation: coordinator.generation
         ]
-        if let lastSeekTargetTime {
-            userInfo[MetadataKey.seekTargetTime] = lastSeekTargetTime
-        }
-        if player.rate == 0 {
+        if let seekTargetTime {
+            userInfo[MetadataKey.seekTargetTime] = seekTargetTime
+            userInfo[MetadataKey.frameRequestReason] = "seek"
+            lastSeekTargetTime = nil
+        } else if player.rate == 0 {
             userInfo[MetadataKey.frameRequestReason] = "manual"
         } else {
             userInfo[MetadataKey.frameRequestReason] = "playback"
