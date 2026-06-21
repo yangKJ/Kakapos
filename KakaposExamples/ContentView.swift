@@ -265,6 +265,9 @@ private struct PlayerPreviewView: View {
             Text("State: \(previewStateText)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+            Text(pipeline?.summary.summaryText ?? "source unavailable · processors 0 · sinks 0 · state idle")
+                .font(.footnote)
+                .foregroundColor(.secondary)
 
             HStack {
                 Button("Start") { startPreview() }

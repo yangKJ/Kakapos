@@ -26,6 +26,13 @@ public final class MediaProcessorChain: MediaSink {
 
     public var completionHandler: (() -> Void)?
 
+    public var summary: MediaProcessorChainSummary {
+        MediaProcessorChainSummary(
+            processorTypeNames: processors.map { String(describing: type(of: $0)) },
+            sinkTypeNames: sinks.map { String(describing: type(of: $0)) }
+        )
+    }
+
     let node: MediaConsumerChainNode
 
     public init(processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
@@ -82,6 +89,15 @@ public final class MediaPipeline {
     public var sinks: [MediaSink] {
         get { chain.sinks }
         set { chain.sinks = newValue }
+    }
+
+    public var summary: MediaPipelineSummary {
+        MediaPipelineSummary(
+            sourceTypeName: String(describing: type(of: source)),
+            processorTypeNames: processors.map { String(describing: type(of: $0)) },
+            sinkTypeNames: sinks.map { String(describing: type(of: $0)) },
+            state: state
+        )
     }
 
     public var errorHandler: ((Error) -> Void)? {
