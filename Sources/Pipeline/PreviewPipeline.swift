@@ -18,6 +18,7 @@ public final class PreviewPipeline {
         public let lastPresentationTime: CMTime?
         public let lastSourceTime: CMTime?
         public let lastFrameRequestReason: String?
+        public let lastErrorDescription: String?
 
         public var summaryText: String {
             var text = "source \(sourceTypeName) · processors \(processorCount) · pipeline \(pipelineState) · preview \(previewState)"
@@ -32,6 +33,9 @@ public final class PreviewPipeline {
             }
             if let lastFrameRequestReason {
                 text += " · reason \(lastFrameRequestReason)"
+            }
+            if let lastErrorDescription {
+                text += " · error \(lastErrorDescription)"
             }
             return text
         }
@@ -59,8 +63,13 @@ public final class PreviewPipeline {
             lastFrameIndex: previewSink.lastFrame?.metadata.frameIndex,
             lastPresentationTime: previewSink.lastFrame?.metadata.presentationTime,
             lastSourceTime: previewSink.lastFrame?.metadata.sourceTime,
-            lastFrameRequestReason: previewSink.summary.lastFrameRequestReason
+            lastFrameRequestReason: previewSink.summary.lastFrameRequestReason,
+            lastErrorDescription: pipeline.lastErrorDescription
         )
+    }
+
+    public var lastErrorDescription: String? {
+        pipeline.lastErrorDescription
     }
 
     public var summaryText: String {

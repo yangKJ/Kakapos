@@ -18,11 +18,16 @@ public final class RecordingPipeline {
         public let totalDuration: CMTime
         public let currentClipDuration: CMTime
         public let hasRecordedClip: Bool
+        public let lastErrorDescription: String?
 
         public var summaryText: String {
             let totalText = String(format: "%.2fs", totalDuration.seconds)
             let currentText = String(format: "%.2fs", currentClipDuration.seconds)
-            return "source \(sourceTypeName) · processors \(processorCount) · pipeline \(pipelineState) · recorder \(recorderState) · clips \(clipCount) · total \(totalText) · clip \(currentText) · recorded \(hasRecordedClip ? "yes" : "no")"
+            var text = "source \(sourceTypeName) · processors \(processorCount) · pipeline \(pipelineState) · recorder \(recorderState) · clips \(clipCount) · total \(totalText) · clip \(currentText) · recorded \(hasRecordedClip ? "yes" : "no")"
+            if let lastErrorDescription {
+                text += " · error \(lastErrorDescription)"
+            }
+            return text
         }
     }
 
@@ -49,8 +54,13 @@ public final class RecordingPipeline {
             clipCount: snapshot.clipCount,
             totalDuration: snapshot.totalDuration,
             currentClipDuration: snapshot.currentClipDuration,
-            hasRecordedClip: snapshot.hasRecordedClip
+            hasRecordedClip: snapshot.hasRecordedClip,
+            lastErrorDescription: pipeline.lastErrorDescription
         )
+    }
+
+    public var lastErrorDescription: String? {
+        pipeline.lastErrorDescription
     }
 
     public var summaryText: String {
