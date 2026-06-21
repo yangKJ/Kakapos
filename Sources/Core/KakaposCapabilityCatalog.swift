@@ -7,7 +7,7 @@
 
 import Foundation
 
-public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
+public enum KakaposCapabilityBoard: String, CaseIterable, Sendable, Codable {
     case export
     case preview
     case record
@@ -79,7 +79,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
     }
 }
 
-public struct KakaposCapabilityBoardInfo: Sendable, Hashable {
+public struct KakaposCapabilityBoardInfo: Sendable, Hashable, Codable {
     public let board: KakaposCapabilityBoard
     public let displayName: String
     public let summary: String

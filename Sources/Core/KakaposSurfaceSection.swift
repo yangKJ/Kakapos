@@ -11,7 +11,7 @@ import Foundation
 ///
 /// This type mirrors the capability catalog but gives external code a
 /// smaller surface to scan when it only needs the recommended boards.
-public struct KakaposSurfaceSection: Sendable, Hashable, Identifiable {
+public struct KakaposSurfaceSection: Sendable, Hashable, Identifiable, Codable {
     public let board: KakaposCapabilityBoard
     public let displayName: String
     public let summary: String

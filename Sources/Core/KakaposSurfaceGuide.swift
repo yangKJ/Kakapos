@@ -11,7 +11,7 @@ import Foundation
 ///
 /// This type does not add media behavior. It only packages the recommended
 /// board order and its starter path into a single, easy-to-scan surface.
-public struct KakaposSurfaceGuide: Sendable, Hashable {
+public struct KakaposSurfaceGuide: Sendable, Hashable, Codable {
     public let boards: [KakaposCapabilityBoardInfo]
     public let starterBoards: [KakaposCapabilityBoardInfo]
 
