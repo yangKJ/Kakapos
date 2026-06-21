@@ -9,6 +9,28 @@ import Foundation
 import AVFoundation
 
 public final class RecordingPipeline {
+    public struct Snapshot {
+        public let sourceTypeName: String
+        public let processorCount: Int
+        public let pipelineState: MediaPipeline.State
+        public let recorderState: RecorderSink.State
+        public let sourceSnapshot: MediaSourceSnapshot?
+        public let recorderSnapshot: RecorderSink.Snapshot
+#if canImport(UIKit) && !os(watchOS)
+        public let cameraSourceSnapshot: CameraSource.Snapshot?
+#endif
+        public let clipCount: Int
+        public let totalDuration: CMTime
+        public let currentClipDuration: CMTime
+        public let hasRecordedClip: Bool
+        public let currentClipHasStarted: Bool
+        public let currentClipHasVideo: Bool
+        public let currentClipHasAudio: Bool
+        public let recordedVideoSegmentCount: Int
+        public let recordedAudioSegmentCount: Int
+        public let lastErrorDescription: String?
+    }
+
     public struct Summary {
         public let sourceTypeName: String
         public let processorCount: Int
@@ -63,52 +85,95 @@ public final class RecordingPipeline {
         pipeline.state
     }
 
-    public var summary: Summary {
-        let snapshot = recorderSink.snapshot
+    public var snapshot: Snapshot {
+        let recorderSnapshot = recorderSink.snapshot
 #if canImport(UIKit) && !os(watchOS)
-        let cameraSummary = cameraSource?.summary
-        return Summary(
+        return Snapshot(
             sourceTypeName: String(describing: type(of: source)),
             processorCount: processors.count,
             pipelineState: pipeline.state,
             recorderState: recorderSink.state,
             sourceSnapshot: pipeline.summary.sourceSnapshot,
-            cameraSourceState: cameraSummary?.state,
-            cameraSourcePosition: cameraSummary?.position,
-            cameraSourceAuthorizationStatus: cameraSummary?.authorizationStatus,
-            cameraSourceIsPaused: cameraSummary?.isPaused,
-            cameraSourceCaptureMode: cameraSummary?.captureMode,
-            cameraSourceLastFrameIndex: cameraSummary?.lastFrameIndex,
-            cameraSourceLastPresentationTime: cameraSummary?.lastPresentationTime,
-            cameraSourceLastMediaType: cameraSummary?.lastMediaType,
-            clipCount: snapshot.clipCount,
-            totalDuration: snapshot.totalDuration,
-            currentClipDuration: snapshot.currentClipDuration,
-            hasRecordedClip: snapshot.hasRecordedClip,
-            currentClipHasStarted: snapshot.currentClipHasStarted,
-            currentClipHasVideo: snapshot.currentClipHasVideo,
-            currentClipHasAudio: snapshot.currentClipHasAudio,
-            recordedVideoSegmentCount: snapshot.recordedVideoSegmentCount,
-            recordedAudioSegmentCount: snapshot.recordedAudioSegmentCount,
+            recorderSnapshot: recorderSnapshot,
+            cameraSourceSnapshot: cameraSource?.snapshot,
+            clipCount: recorderSnapshot.clipCount,
+            totalDuration: recorderSnapshot.totalDuration,
+            currentClipDuration: recorderSnapshot.currentClipDuration,
+            hasRecordedClip: recorderSnapshot.hasRecordedClip,
+            currentClipHasStarted: recorderSnapshot.currentClipHasStarted,
+            currentClipHasVideo: recorderSnapshot.currentClipHasVideo,
+            currentClipHasAudio: recorderSnapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: recorderSnapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: recorderSnapshot.recordedAudioSegmentCount,
             lastErrorDescription: pipeline.lastErrorDescription
         )
 #else
-        return Summary(
+        return Snapshot(
             sourceTypeName: String(describing: type(of: source)),
             processorCount: processors.count,
             pipelineState: pipeline.state,
             recorderState: recorderSink.state,
             sourceSnapshot: pipeline.summary.sourceSnapshot,
-            clipCount: snapshot.clipCount,
-            totalDuration: snapshot.totalDuration,
-            currentClipDuration: snapshot.currentClipDuration,
-            hasRecordedClip: snapshot.hasRecordedClip,
-            currentClipHasStarted: snapshot.currentClipHasStarted,
-            currentClipHasVideo: snapshot.currentClipHasVideo,
-            currentClipHasAudio: snapshot.currentClipHasAudio,
-            recordedVideoSegmentCount: snapshot.recordedVideoSegmentCount,
-            recordedAudioSegmentCount: snapshot.recordedAudioSegmentCount,
+            recorderSnapshot: recorderSnapshot,
+            clipCount: recorderSnapshot.clipCount,
+            totalDuration: recorderSnapshot.totalDuration,
+            currentClipDuration: recorderSnapshot.currentClipDuration,
+            hasRecordedClip: recorderSnapshot.hasRecordedClip,
+            currentClipHasStarted: recorderSnapshot.currentClipHasStarted,
+            currentClipHasVideo: recorderSnapshot.currentClipHasVideo,
+            currentClipHasAudio: recorderSnapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: recorderSnapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: recorderSnapshot.recordedAudioSegmentCount,
             lastErrorDescription: pipeline.lastErrorDescription
+        )
+#endif
+    }
+
+    public var summary: Summary {
+        let currentSnapshot = snapshot
+#if canImport(UIKit) && !os(watchOS)
+        return Summary(
+            sourceTypeName: currentSnapshot.sourceTypeName,
+            processorCount: currentSnapshot.processorCount,
+            pipelineState: currentSnapshot.pipelineState,
+            recorderState: currentSnapshot.recorderState,
+            sourceSnapshot: currentSnapshot.sourceSnapshot,
+            cameraSourceState: currentSnapshot.cameraSourceSnapshot?.state,
+            cameraSourcePosition: currentSnapshot.cameraSourceSnapshot?.position,
+            cameraSourceAuthorizationStatus: currentSnapshot.cameraSourceSnapshot?.authorizationStatus,
+            cameraSourceIsPaused: currentSnapshot.cameraSourceSnapshot?.isPaused,
+            cameraSourceCaptureMode: currentSnapshot.cameraSourceSnapshot?.captureMode,
+            cameraSourceLastFrameIndex: currentSnapshot.cameraSourceSnapshot?.lastFrameIndex,
+            cameraSourceLastPresentationTime: currentSnapshot.cameraSourceSnapshot?.lastPresentationTime,
+            cameraSourceLastMediaType: currentSnapshot.cameraSourceSnapshot?.lastMediaType,
+            clipCount: currentSnapshot.clipCount,
+            totalDuration: currentSnapshot.totalDuration,
+            currentClipDuration: currentSnapshot.currentClipDuration,
+            hasRecordedClip: currentSnapshot.hasRecordedClip,
+            currentClipHasStarted: currentSnapshot.currentClipHasStarted,
+            currentClipHasVideo: currentSnapshot.currentClipHasVideo,
+            currentClipHasAudio: currentSnapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: currentSnapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: currentSnapshot.recordedAudioSegmentCount,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
+        )
+#else
+        return Summary(
+            sourceTypeName: currentSnapshot.sourceTypeName,
+            processorCount: currentSnapshot.processorCount,
+            pipelineState: currentSnapshot.pipelineState,
+            recorderState: currentSnapshot.recorderState,
+            sourceSnapshot: currentSnapshot.sourceSnapshot,
+            clipCount: currentSnapshot.clipCount,
+            totalDuration: currentSnapshot.totalDuration,
+            currentClipDuration: currentSnapshot.currentClipDuration,
+            hasRecordedClip: currentSnapshot.hasRecordedClip,
+            currentClipHasStarted: currentSnapshot.currentClipHasStarted,
+            currentClipHasVideo: currentSnapshot.currentClipHasVideo,
+            currentClipHasAudio: currentSnapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: currentSnapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: currentSnapshot.recordedAudioSegmentCount,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
         )
 #endif
     }

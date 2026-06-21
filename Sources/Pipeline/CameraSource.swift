@@ -10,6 +10,19 @@ import AVFoundation
 
 #if canImport(UIKit) && !os(watchOS)
 public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, MediaSourceSnapshotProviding {
+    public struct Snapshot: Equatable {
+        public let state: CameraSessionState
+        public let position: CameraPosition
+        public let authorizationStatus: CameraAuthorizationStatus
+        public let isPaused: Bool
+        public let captureMode: CameraCaptureMode
+        public let deviceOrientation: AVCaptureVideoOrientation
+        public let isMirrored: Bool
+        public let lastFrameIndex: Int64?
+        public let lastPresentationTime: CMTime?
+        public let lastMediaType: String?
+    }
+
     public struct Summary {
         public let state: CameraSessionState
         public let position: CameraPosition
@@ -56,8 +69,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     public var sessionEventHandler: ((CameraSessionEvent) -> Void)?
     public var photoCaptureHandler: ((CameraPhotoCaptureResult) -> Void)?
     public var authorizationStatusChangedHandler: ((CameraAuthorizationStatus) -> Void)?
-    public var summary: Summary {
-        Summary(
+    public var snapshot: Snapshot {
+        Snapshot(
             state: state,
             position: currentPosition,
             authorizationStatus: authorizationStatus,
@@ -70,26 +83,42 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             lastMediaType: lastMediaType
         )
     }
+    public var summary: Summary {
+        let currentSnapshot = snapshot
+        return Summary(
+            state: currentSnapshot.state,
+            position: currentSnapshot.position,
+            authorizationStatus: currentSnapshot.authorizationStatus,
+            isPaused: currentSnapshot.isPaused,
+            captureMode: currentSnapshot.captureMode,
+            deviceOrientation: currentSnapshot.deviceOrientation,
+            isMirrored: currentSnapshot.isMirrored,
+            lastFrameIndex: currentSnapshot.lastFrameIndex,
+            lastPresentationTime: currentSnapshot.lastPresentationTime,
+            lastMediaType: currentSnapshot.lastMediaType
+        )
+    }
 
     public var summaryText: String {
         summary.summaryText
     }
 
     public var sourceSnapshot: MediaSourceSnapshot {
-        MediaSourceSnapshot(
-            stateDescription: String(describing: summary.state),
-            lastFrameIndex: summary.lastFrameIndex,
-            lastPresentationTime: summary.lastPresentationTime,
-            lastSourceTime: summary.lastPresentationTime,
+        let currentSnapshot = snapshot
+        return MediaSourceSnapshot(
+            stateDescription: String(describing: currentSnapshot.state),
+            lastFrameIndex: currentSnapshot.lastFrameIndex,
+            lastPresentationTime: currentSnapshot.lastPresentationTime,
+            lastSourceTime: currentSnapshot.lastPresentationTime,
             details: [
-                "sessionState": String(describing: summary.state),
-                "position": String(describing: summary.position),
-                "auth": String(describing: summary.authorizationStatus),
-                "paused": summary.isPaused ? "yes" : "no",
-                "mode": String(describing: summary.captureMode),
-                "orientation": String(describing: summary.deviceOrientation),
-                "mirrored": summary.isMirrored ? "yes" : "no",
-                "mediaType": summary.lastMediaType ?? "n/a"
+                "sessionState": String(describing: currentSnapshot.state),
+                "position": String(describing: currentSnapshot.position),
+                "auth": String(describing: currentSnapshot.authorizationStatus),
+                "paused": currentSnapshot.isPaused ? "yes" : "no",
+                "mode": String(describing: currentSnapshot.captureMode),
+                "orientation": String(describing: currentSnapshot.deviceOrientation),
+                "mirrored": currentSnapshot.isMirrored ? "yes" : "no",
+                "mediaType": currentSnapshot.lastMediaType ?? "n/a"
             ]
         )
     }
