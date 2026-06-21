@@ -221,6 +221,19 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lifecycle.handle(.positionChanged(.front)), .positionChanged(.front))
         XCTAssertEqual(lifecycle.position, .front)
     }
+
+    func testCameraSessionLifecycleTracksRecoverableRuntimeErrors() {
+        var lifecycle = CameraSessionLifecycle(position: .back)
+        _ = lifecycle.handle(.startRequested)
+        _ = lifecycle.handle(.didStartRunning)
+
+        XCTAssertEqual(
+            lifecycle.handle(.runtimeError(isRecoverable: true, description: "reset")),
+            .runtimeError(isRecoverable: true, description: "reset")
+        )
+        XCTAssertEqual(lifecycle.state, .error)
+        XCTAssertTrue(lifecycle.shouldAttemptRecovery)
+    }
 }
 
 private final class TestSource: MediaSource {

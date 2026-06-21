@@ -18,6 +18,7 @@ public enum CameraSessionState: Equatable {
     case starting
     case running
     case interrupted
+    case error
     case stopped
 }
 
@@ -27,6 +28,7 @@ public enum CameraSessionEvent: Equatable {
     case didStop
     case wasInterrupted
     case interruptionEnded
+    case runtimeError(isRecoverable: Bool, description: String?)
     case positionChanged(CameraPosition)
 }
 
@@ -36,16 +38,19 @@ enum CameraLifecycleAction: Equatable {
     case didStopRunning
     case wasInterrupted
     case interruptionEnded
+    case runtimeError(isRecoverable: Bool, description: String?)
     case positionChanged(CameraPosition)
 }
 
 struct CameraSessionLifecycle {
     private(set) var state: CameraSessionState
     private(set) var position: CameraPosition
+    private(set) var shouldAttemptRecovery: Bool
 
     init(position: CameraPosition) {
         self.state = .idle
         self.position = position
+        self.shouldAttemptRecovery = false
     }
 
     @discardableResult
@@ -53,12 +58,15 @@ struct CameraSessionLifecycle {
         switch action {
         case .startRequested:
             state = .starting
+            shouldAttemptRecovery = false
             return .willStart
         case .didStartRunning:
             state = .running
+            shouldAttemptRecovery = false
             return .didStart
         case .didStopRunning:
             state = .stopped
+            shouldAttemptRecovery = false
             return .didStop
         case .wasInterrupted:
             state = .interrupted
@@ -66,6 +74,10 @@ struct CameraSessionLifecycle {
         case .interruptionEnded:
             state = .running
             return .interruptionEnded
+        case .runtimeError(let isRecoverable, let description):
+            state = .error
+            shouldAttemptRecovery = isRecoverable
+            return .runtimeError(isRecoverable: isRecoverable, description: description)
         case .positionChanged(let position):
             self.position = position
             return .positionChanged(position)
