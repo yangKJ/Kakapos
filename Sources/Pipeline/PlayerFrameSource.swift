@@ -97,6 +97,8 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     private var driver: PlayerFrameDriving?
     private let outputNode = MediaOutputNode()
     private let driverFactory: (AVPlayer, PlayerFrameOutputDriver.Configuration, @escaping (PlayerFrameOutputDriver.VideoFrame) -> Void) -> PlayerFrameDriving
+    private let lifecycleLock = NSLock()
+    private var acceptsFrames = true
 
     public init(player: AVPlayer, preferredFramesPerSecond: Int = 30) {
         self.player = player
@@ -123,6 +125,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     }
 
     public func start() {
+        resetFrameAcceptance()
         observePlayerIfNeeded()
         lastSeekTargetTime = nil
         lastFrame = nil
@@ -148,6 +151,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     }
 
     public func stop() {
+        rejectFurtherFrames()
         coordinator.stop()
         updateState(from: coordinator.playbackState)
         lastSeekTargetTime = nil
@@ -224,6 +228,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     }
 
     private func handleVideoFrame(_ frame: PlayerFrameOutputDriver.VideoFrame) {
+        guard canAcceptFrames() else { return }
         guard coordinator.shouldDriveDisplayLink || player.rate == 0 else { return }
         let frameIndex = coordinator.markFrameOutput()
         updateState(from: coordinator.playbackState)
@@ -353,6 +358,25 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         guard state != nextState else { return }
         state = nextState
         stateChangedHandler?(nextState)
+    }
+
+    private func resetFrameAcceptance() {
+        lifecycleLock.lock()
+        acceptsFrames = true
+        lifecycleLock.unlock()
+    }
+
+    private func rejectFurtherFrames() {
+        lifecycleLock.lock()
+        acceptsFrames = false
+        lifecycleLock.unlock()
+    }
+
+    private func canAcceptFrames() -> Bool {
+        lifecycleLock.lock()
+        let result = acceptsFrames
+        lifecycleLock.unlock()
+        return result
     }
 
     @discardableResult
