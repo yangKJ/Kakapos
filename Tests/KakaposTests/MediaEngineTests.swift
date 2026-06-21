@@ -62,6 +62,24 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.frames.first?.metadata.frameIndex, 2)
     }
 
+    func testMediaPipelineSummaryDescribesSourceProcessorsSinksAndState() throws {
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let source = TestSource(frames: [input])
+        let sink = TestSink()
+        let processor = ClosureFrameProcessor { frame, completion in
+            completion(.success(frame))
+        }
+        let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [sink])
+
+        XCTAssertEqual(pipeline.summary.sourceTypeName, "TestSource")
+        XCTAssertEqual(pipeline.summary.processorTypeNames, ["ClosureFrameProcessor"])
+        XCTAssertEqual(pipeline.summary.sinkTypeNames, ["TestSink"])
+        XCTAssertEqual(pipeline.summary.state, .idle)
+        XCTAssertEqual(pipeline.summary.summaryText, "source TestSource · processors 1 · sinks 1 · state idle")
+        XCTAssertEqual(pipeline.chain.summary.summaryText, "processors 1 · sinks 1")
+    }
+
     #if canImport(UIKit)
     func testMediaPipelinePlayerInitializerUsesPlayerFrameSource() {
         let player = AVPlayer()
