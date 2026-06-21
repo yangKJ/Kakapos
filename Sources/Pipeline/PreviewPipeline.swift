@@ -102,6 +102,24 @@ public final class PreviewPipeline {
 #if canImport(UIKit)
 public extension PreviewPipeline {
     convenience init(
+        asset: AVAsset,
+        preferredFramesPerSecond: Int = 30,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: @escaping PreviewSink.Handler
+    ) {
+        let playerItem = AVPlayerItem(asset: asset)
+        let player = AVPlayer(playerItem: playerItem)
+        self.init(
+            player: player,
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+    }
+
+    convenience init(
         player: AVPlayer,
         preferredFramesPerSecond: Int = 30,
         processors: [FrameProcessor] = [],

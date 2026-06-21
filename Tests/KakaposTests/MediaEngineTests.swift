@@ -1507,6 +1507,17 @@ final class MediaEngineTests: XCTestCase {
     }
 
     #if canImport(UIKit)
+    func testPreviewPipelineAssetInitializerBuildsPlayerFrameSource() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let pipeline = PreviewPipeline(asset: asset) { _, _ in }
+
+        XCTAssertTrue(pipeline.source is PlayerFrameSource)
+        XCTAssertNotNil(pipeline.playerSource)
+        XCTAssertEqual(pipeline.summary.sourceTypeName, "PlayerFrameSource")
+    }
+    #endif
+
+    #if canImport(UIKit)
     func testPlayerFrameSourceSummaryReflectsPlaybackAndFrameProgress() throws {
         let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
         let driver = FakePlayerFrameDriver()
