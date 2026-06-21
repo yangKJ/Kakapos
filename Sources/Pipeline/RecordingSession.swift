@@ -110,13 +110,17 @@ final class RecordingSession {
             resetCurrentClipFlags()
             return
         }
-        let endTime: CMTime
+        var endTime: CMTime
         if let preferredEndTime, preferredEndTime > currentClipStart {
             endTime = preferredEndTime
         } else {
             endTime = currentClipEnd
         }
-        let duration = max(endTime - currentClipStart, .zero)
+        var duration = max(endTime - currentClipStart, .zero)
+        if duration == .zero, currentClipHasVideo || currentClipHasAudio {
+            duration = CMTime(value: 1, timescale: 600)
+            endTime = currentClipStart + duration
+        }
         clips.append(
             RecordedClipSegment(
                 index: clipIndex,
@@ -141,6 +145,19 @@ final class RecordingSession {
             endedAt: endedAt,
             segments: clips
         )
+    }
+
+    func trimLastClipEndingIfNeeded(to time: CMTime) {
+        guard let last = clips.last, time.isValid, time < last.endedAt else { return }
+        let duration = max(time - last.startedAt, .zero)
+        let resolvedDuration = duration == .zero ? CMTime(value: 1, timescale: 600) : duration
+        clips[clips.count - 1] = RecordedClipSegment(
+            index: last.index,
+            startedAt: last.startedAt,
+            endedAt: last.startedAt + resolvedDuration,
+            duration: resolvedDuration
+        )
+        totalDuration = clips.reduce(.zero) { $0 + $1.duration }
     }
 
     func snapshot() -> RecordingSessionStateSnapshot {

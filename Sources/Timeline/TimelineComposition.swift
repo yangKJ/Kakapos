@@ -47,6 +47,7 @@ public struct CompiledTimelineComposition {
     public let audioMix: AVMutableAudioMix
     public let renderInstructions: [TimelineRenderInstruction]
     public let resolvedLayers: ResolvedTimelineLayers
+    public let renderPlan: TimelineRenderPlan
 }
 
 public final class TimelineComposition {
@@ -112,13 +113,20 @@ public final class TimelineComposition {
             allocation: videoAllocation
         )
         audioMix.inputParameters = audioParameters
+        let renderPlan = TimelineRenderPlanBuilder(transitions: transitions).makePlan(
+            renderInstructions: renderInstructions,
+            resolvedLayers: resolvedLayers,
+            videoAllocation: videoAllocation,
+            audioAllocation: audioAllocation
+        )
 
         return CompiledTimelineComposition(
             composition: composition,
             videoComposition: videoComposition,
             audioMix: audioMix,
             renderInstructions: renderInstructions,
-            resolvedLayers: resolvedLayers
+            resolvedLayers: resolvedLayers,
+            renderPlan: renderPlan
         )
     }
 

@@ -94,6 +94,9 @@ public final class RecorderSink: MediaSink {
             self.audioInput?.markAsFinished()
             self.writer.finishWriting {
                 self.session.finalizeCurrentClipIfNeeded()
+                if self.state == .paused, let lastPresentationTime = self.lastPresentationTime {
+                    self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
+                }
                 self.setState(.finished)
                 if let error = self.writer.error {
                     self.runtimeErrorHandler?(error)
@@ -169,12 +172,11 @@ public final class RecorderSink: MediaSink {
             applyPadding: applyPaddingAfterResume
         )
         try startIfNeeded(at: normalizedTime)
-        guard let input = videoInput, let adaptor = pixelBufferAdaptor else { return }
-        guard input.isReadyForMoreMediaData else {
+        guard let adaptor = pixelBufferAdaptor else { return }
+        guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
             droppedFrameHandler?(frame.metadata)
             return
         }
-        adaptor.append(pixelBuffer, withPresentationTime: normalizedTime)
         session.markVideoFrame(at: normalizedTime)
         if !hasWrittenFirstVideoFrame {
             hasWrittenFirstVideoFrame = true
@@ -227,10 +229,6 @@ public final class RecorderSink: MediaSink {
         )
         try startIfNeeded(at: normalizedTime)
         guard let input = audioInput else { return }
-        guard input.isReadyForMoreMediaData else {
-            droppedFrameHandler?(FrameMetadata(presentationTime: normalizedTime))
-            return
-        }
         var timingCount: CMItemCount = 0
         CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &timingCount)
         var timingInfo = Array(
@@ -253,7 +251,10 @@ public final class RecorderSink: MediaSink {
             sampleTimingArray: &timingInfo,
             sampleBufferOut: &rebasedBuffer
         )
-        input.append(rebasedBuffer ?? sampleBuffer)
+        guard input.append(rebasedBuffer ?? sampleBuffer) else {
+            droppedFrameHandler?(FrameMetadata(presentationTime: normalizedTime))
+            return
+        }
         session.markAudioFrame(at: normalizedTime)
         updateLastPresentationTime(normalizedTime)
     }
