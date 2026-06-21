@@ -200,6 +200,106 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    func testRecorderSinkPauseResumeRemovesPausedGapFromClipDuration() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
+        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 90, timescale: 30)))
+        let appendExpectation = expectation(description: "append frames around pause")
+        appendExpectation.expectedFulfillmentCount = 2
+        let finishExpectation = expectation(description: "finish paused recording")
+        var recordedClip: RecordedClip?
+
+        sink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        sink.pauseRecording(at: CMTime(value: 30, timescale: 30))
+        XCTAssertEqual(sink.state, .paused)
+        sink.resumeRecording()
+        XCTAssertEqual(sink.state, .recording)
+
+        sink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        wait(for: [appendExpectation], timeout: 2)
+
+        sink.finishRecording { result in
+            switch result {
+            case .success(let clip):
+                recordedClip = clip
+            case .failure(let error):
+                XCTFail("Unexpected finish recording failure: \(error)")
+            }
+            finishExpectation.fulfill()
+        }
+
+        wait(for: [finishExpectation], timeout: 5)
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 30, timescale: 30))
+    }
+
+    func testRecorderSinkFinishWhilePausedKeepsRecordedDuration() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
+        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: CMTime(value: 30, timescale: 30))
+        )
+        let appendExpectation = expectation(description: "append paused clip frames")
+        appendExpectation.expectedFulfillmentCount = 2
+        let finishExpectation = expectation(description: "finish paused clip")
+        var recordedClip: RecordedClip?
+
+        sink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+        sink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        wait(for: [appendExpectation], timeout: 2)
+
+        sink.pauseRecording(at: CMTime(value: 60, timescale: 30))
+        XCTAssertEqual(sink.state, .paused)
+
+        sink.finishRecording { result in
+            switch result {
+            case .success(let clip):
+                recordedClip = clip
+            case .failure(let error):
+                XCTFail("Unexpected finish recording failure: \(error)")
+            }
+            finishExpectation.fulfill()
+        }
+
+        wait(for: [finishExpectation], timeout: 5)
+        XCTAssertEqual(sink.state, .finished)
+        XCTAssertEqual(recordedClip?.startedAt, .zero)
+        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 30, timescale: 30))
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 30, timescale: 30))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
         var lifecycle = CameraSessionLifecycle(position: .back)
 
