@@ -11,6 +11,14 @@ import AVFoundation
 #if canImport(UIKit)
 import UIKit
 
+protocol PlayerFrameDriving: AnyObject {
+    var configuration: PlayerFrameOutputDriver.Configuration { get set }
+    var waitingForMediaDataHandler: ((CMTime) -> Void)? { get set }
+    var mediaDataWillChangeHandler: (() -> Void)? { get set }
+    func setNeedsUpdate()
+    func updateIfNeeded()
+}
+
 final class PlayerFrameOutputDriver: NSObject {
 
     struct Configuration {
@@ -33,6 +41,9 @@ final class PlayerFrameOutputDriver: NSObject {
             displayLink?.preferredFramesPerSecond = configuration.preferredFramesPerSecond
         }
     }
+
+    var waitingForMediaDataHandler: ((CMTime) -> Void)?
+    var mediaDataWillChangeHandler: (() -> Void)?
 
     private(set) var player: AVPlayer? {
         willSet {
@@ -161,6 +172,7 @@ final class PlayerFrameOutputDriver: NSObject {
 
         if !forced && !output.hasNewPixelBuffer(forItemTime: requestTime) {
             displayLink?.isPaused = true
+            waitingForMediaDataHandler?(requestTime)
             output.requestNotificationOfMediaDataChange(withAdvanceInterval: advanceInterval)
             return
         }
@@ -184,6 +196,9 @@ final class PlayerFrameOutputDriver: NSObject {
 extension PlayerFrameOutputDriver: AVPlayerItemOutputPullDelegate {
     func outputMediaDataWillChange(_ sender: AVPlayerItemOutput) {
         displayLink?.isPaused = false
+        mediaDataWillChangeHandler?()
     }
 }
+
+extension PlayerFrameOutputDriver: PlayerFrameDriving {}
 #endif
