@@ -15,6 +15,7 @@ public final class TimelineExportTask {
         public let layerCount: Int
         public let transitionCount: Int
         public let processorCount: Int
+        public let compiledSummary: TimelineCompilationSummary
         public let exportStatus: ReaderWriterExportJob.Status
         public let lastProgressInfo: ReaderWriterExportJob.ProgressInfo?
         public let lastErrorDescription: String?
@@ -48,15 +49,17 @@ public final class TimelineExportTask {
     }
 
     public var summary: Summary {
-        Summary(
-            renderSize: compiledComposition.summary.renderSize,
-            frameDuration: compiledComposition.summary.frameDuration,
-            layerCount: compiledComposition.summary.videoLayerCount
-                + compiledComposition.summary.imageLayerCount
-                + compiledComposition.summary.textLayerCount
-                + compiledComposition.summary.effectLayerCount,
-            transitionCount: compiledComposition.summary.transitionCount,
-            processorCount: compiledComposition.summary.processorCount,
+        let compiledSummary = compiledComposition.summary
+        return Summary(
+            renderSize: compiledSummary.renderSize,
+            frameDuration: compiledSummary.frameDuration,
+            layerCount: compiledSummary.videoLayerCount
+                + compiledSummary.imageLayerCount
+                + compiledSummary.textLayerCount
+                + compiledSummary.effectLayerCount,
+            transitionCount: compiledSummary.transitionCount,
+            processorCount: compiledSummary.processorCount,
+            compiledSummary: compiledSummary,
             exportStatus: readerWriterJob.status,
             lastProgressInfo: readerWriterJob.lastProgressInfo,
             lastErrorDescription: readerWriterJob.lastErrorDescription
