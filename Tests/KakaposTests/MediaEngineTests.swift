@@ -51,6 +51,21 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(decoded.starterText, guide.starterText)
     }
 
+    func testCapabilityCatalogManifestIsCodableForExternalBoardInspection() throws {
+        let manifest = KakaposCapabilityCatalog.manifest
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(manifest)
+        let decoded = try JSONDecoder().decode(KakaposSurfaceManifest.self, from: data)
+
+        XCTAssertEqual(decoded.boardNames, manifest.boardNames)
+        XCTAssertEqual(decoded.starterBoardNames, manifest.starterBoardNames)
+        XCTAssertEqual(decoded.summaryText, manifest.summaryText)
+        XCTAssertEqual(decoded.starterText, manifest.starterText)
+        XCTAssertEqual(decoded.boards.map(\.id), manifest.boards.map(\.id))
+        XCTAssertEqual(decoded.starterBoards.map(\.id), manifest.starterBoards.map(\.id))
+    }
+
     func testSurfaceSectionIsCodableForCompactBoardManifests() throws {
         let section = try XCTUnwrap(KakaposSurface.section(.preview))
         let data = try JSONEncoder().encode(section)
