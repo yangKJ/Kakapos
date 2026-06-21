@@ -38,7 +38,7 @@ public struct VideoX {
         private let legacyFallbackReaderWriterJob: ReaderWriterExportJob?
         public private(set) var progressFraction: Float?
         private var legacyExecutionStatus: Status = .idle
-        private var legacyCompletionWorkItem: DispatchWorkItem?
+        private var legacyProgressObserver: ExportSessionProgressObserver<AVAssetExportSession>?
 
         public var supportsPauseResume: Bool {
             readerWriterJob != nil
@@ -70,7 +70,7 @@ public struct VideoX {
             if let readerWriterJob {
                 return Self.status(for: readerWriterJob.status)
             }
-            if legacyCompletionWorkItem != nil || legacyExecutionStatus != .idle {
+            if legacyExecutionStatus != .idle {
                 return legacyExecutionStatus
             }
             guard let assetExportSession else {
@@ -129,42 +129,55 @@ public struct VideoX {
                 return
             }
             legacyExecutionStatus = .exporting
-            if let progress {
-                progress(0.0)
-                self.progressFraction = 0.0
-            }
-            let outputURL = assetExportSession.outputURL
-            let completionWorkItem = DispatchWorkItem { [weak self] in
+            progress?(0.0)
+            self.progressFraction = 0.0
+            let progressObserver = ExportSessionProgressObserver(
+                session: assetExportSession,
+                keyPath: \.progress
+            ) { [weak self] value in
                 guard let self else { return }
-                guard self.legacyExecutionStatus != .cancelled else {
-                    self.legacyCompletionWorkItem = nil
+                self.progressFraction = value
+                progress?(value)
+            }
+            legacyProgressObserver = progressObserver
+            progressObserver.start()
+            assetExportSession.exportAsynchronously { [weak self] in
+                guard let self else { return }
+                self.legacyProgressObserver?.stop()
+                self.legacyProgressObserver = nil
+                switch assetExportSession.status {
+                case .completed:
+                    self.progressFraction = 1.0
+                    self.legacyExecutionStatus = .completed
+                    progress?(1.0)
+                    if let outputURL = assetExportSession.outputURL {
+                        complete(.success(outputURL))
+                    } else {
+                        complete(.failure(VideoX.Error.exportOutputURL))
+                    }
+                case .cancelled:
+                    self.legacyExecutionStatus = .cancelled
                     complete(.failure(VideoX.Error.exportCancelled))
-                    return
-                }
-                self.progressFraction = 1.0
-                self.legacyExecutionStatus = .completed
-                self.legacyCompletionWorkItem = nil
-                progress?(1.0)
-                if let outputURL {
-                    complete(.success(outputURL))
-                } else {
-                    complete(.failure(VideoX.Error.exportOutputURL))
+                case .failed:
+                    self.legacyExecutionStatus = .failed
+                    complete(.failure(VideoX.Error.toError(assetExportSession.error ?? VideoX.Error.exportSessionEmpty)))
+                default:
+                    self.legacyExecutionStatus = .failed
+                    complete(.failure(VideoX.Error.toError(assetExportSession.error ?? VideoX.Error.exportSessionEmpty)))
                 }
             }
-            legacyCompletionWorkItem = completionWorkItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(25), execute: completionWorkItem)
         }
 
         public func pause() {
             readerWriterJob?.pause()
-            if legacyCompletionWorkItem != nil || legacyExecutionStatus != .idle {
+            if legacyExecutionStatus != .idle {
                 legacyExecutionStatus = .paused
             }
         }
 
         public func resume() {
             readerWriterJob?.resume()
-            if legacyCompletionWorkItem != nil || legacyExecutionStatus != .idle {
+            if legacyExecutionStatus != .idle {
                 legacyExecutionStatus = .exporting
             }
         }
@@ -173,8 +186,8 @@ public struct VideoX {
             if let readerWriterJob {
                 readerWriterJob.cancel()
             } else {
-                legacyCompletionWorkItem?.cancel()
-                legacyCompletionWorkItem = nil
+                legacyProgressObserver?.stop()
+                legacyProgressObserver = nil
                 legacyExecutionStatus = .cancelled
                 assetExportSession?.cancelExport()
             }
