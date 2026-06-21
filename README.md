@@ -23,6 +23,17 @@ Kakapos is not a filter-kernel library. It owns media lifecycle, frame sourcing,
 - **Offline compatibility**: Existing `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, and `WatermarkInstruction` APIs remain available.
 - **Timeline foundation**: Compose clip, image, audio, effect, group, transition, and keyframe-driven media models.
 
+### Lightweight Boards
+
+Kakapos stays easier to adopt when the public surface is used in four small boards instead of one large API surface:
+
+- **Export**: `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, `WatermarkInstruction`, `ReaderWriterExportJob`
+- **Preview**: `PlayerFrameSource`, `PreviewSink`, `MediaPipeline`, `MediaProcessorChain`
+- **Record**: `CameraSource`, `RecorderSink`, `RecordingSession`
+- **Timeline**: `TimelineComposition`, `ClipLayer`, `ImageLayer`, `AudioLayer`, `EffectLayer`, `GroupLayer`, `Transition`, `KeyframeAnimation`
+
+You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface.
+
 ### 🔧 How It Works
 
 Kakapos uses a `source -> processor chain -> sink` model:
