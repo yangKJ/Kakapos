@@ -41,7 +41,7 @@ The fuller surface stays available behind each board:
 - **Record**: `CameraSource`, `RecorderSink`, `RecordingSession`
 - **Timeline**: `TimelineComposition`, `ClipLayer`, `ImageLayer`, `AudioLayer`, `EffectLayer`, `GroupLayer`, `Transition`, `KeyframeAnimation`
 
-You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface and its starter types.
+You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface and its starter types. For a thinner starting layer, use `KakaposBoards` to build the four boards without touching the wider public surface.
 
 ### 🔧 How It Works
 
