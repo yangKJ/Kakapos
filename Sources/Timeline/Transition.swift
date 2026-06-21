@@ -15,9 +15,18 @@ public struct Transition {
 
     public var kind: Kind
     public var timeRange: CMTimeRange
+    public var sourceLayerLevel: Int?
+    public var destinationLayerLevel: Int?
 
-    public init(kind: Kind = .crossDissolve, timeRange: CMTimeRange) {
+    public init(
+        kind: Kind = .crossDissolve,
+        timeRange: CMTimeRange,
+        sourceLayerLevel: Int? = nil,
+        destinationLayerLevel: Int? = nil
+    ) {
         self.kind = kind
         self.timeRange = timeRange
+        self.sourceLayerLevel = sourceLayerLevel
+        self.destinationLayerLevel = destinationLayerLevel
     }
 }

@@ -106,6 +106,86 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(compiled.renderInstructions.map(\.sourceTrackIDs.count), [1, 1])
     }
 
+    func testTimelineCompositionPreservesLayerOrderForOverlappingClips() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let background = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            layerLevel: 0
+        )
+        let foreground = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: CMTime(value: 15, timescale: 30), duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            layerLevel: 1
+        )
+        let timeline = TimelineComposition(layers: [background, foreground])
+
+        let compiled = timeline.compile()
+        let overlapInstruction = try XCTUnwrap(compiled.renderInstructions.first(where: { $0.sourceTrackIDs.count == 2 }))
+
+        XCTAssertEqual(overlapInstruction.layerLevels, [0, 1])
+        XCTAssertEqual(overlapInstruction.sourceTrackIDs.count, 2)
+        XCTAssertNotEqual(overlapInstruction.sourceTrackIDs[0], overlapInstruction.sourceTrackIDs[1])
+    }
+
+    func testTimelineCompositionBuildsCrossDissolveOpacityRamps() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let first = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            layerLevel: 0
+        )
+        let second = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: CMTime(value: 90, timescale: 30), duration: CMTime(value: 120, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 120, timescale: 30)),
+            layerLevel: 1
+        )
+        let transitionRange = CMTimeRange(start: CMTime(value: 90, timescale: 30), duration: CMTime(value: 30, timescale: 30))
+        let timeline = TimelineComposition(
+            layers: [first, second],
+            transitions: [Transition(timeRange: transitionRange, sourceLayerLevel: 0, destinationLayerLevel: 1)]
+        )
+
+        let compiled = timeline.compile()
+        let transitionInstruction = try XCTUnwrap(
+            compiled.videoComposition.instructions
+                .compactMap { $0 as? AVMutableVideoCompositionInstruction }
+                .first(where: { $0.timeRange == transitionRange })
+        )
+        XCTAssertEqual(transitionInstruction.layerInstructions.count, 2)
+
+        var foundSourceRamp = false
+        var foundDestinationRamp = false
+
+        for instruction in transitionInstruction.layerInstructions {
+            guard let layerInstruction = instruction as? AVMutableVideoCompositionLayerInstruction else { continue }
+            var startOpacity: Float = 0
+            var endOpacity: Float = 0
+            var rampRange = CMTimeRange.invalid
+            if layerInstruction.getOpacityRamp(
+                for: transitionRange.start,
+                startOpacity: &startOpacity,
+                endOpacity: &endOpacity,
+                timeRange: &rampRange
+            ) {
+                XCTAssertEqual(rampRange, transitionRange)
+                if startOpacity == 1, endOpacity == 0 {
+                    foundSourceRamp = true
+                }
+                if startOpacity == 0, endOpacity == 1 {
+                    foundDestinationRamp = true
+                }
+            }
+        }
+
+        XCTAssertTrue(foundSourceRamp)
+        XCTAssertTrue(foundDestinationRamp)
+    }
+
     func testKeyframeAnimationAppliesEaseInOutInterpolation() throws {
         let animation = KeyframeAnimation(
             keyPath: "opacity",

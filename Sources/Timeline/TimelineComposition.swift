@@ -34,15 +34,26 @@ public final class TimelineComposition {
     public var renderSize: CGSize
     public var frameDuration: CMTime
     public var layers: [TimelineLayer]
+    public var transitions: [Transition]
 
-    public init(renderSize: CGSize = CGSize(width: 720, height: 1280), frameDuration: CMTime = CMTime(value: 1, timescale: 30), layers: [TimelineLayer] = []) {
+    public init(
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        layers: [TimelineLayer] = [],
+        transitions: [Transition] = []
+    ) {
         self.renderSize = renderSize
         self.frameDuration = frameDuration
         self.layers = layers
+        self.transitions = transitions
     }
 
     public func addLayer(_ layer: TimelineLayer) {
         layers.append(layer)
+    }
+
+    public func addTransition(_ transition: Transition) {
+        transitions.append(transition)
     }
 
     public func compile() -> CompiledTimelineComposition {
@@ -75,7 +86,12 @@ public final class TimelineComposition {
             effectLayers: resolvedLayers.effectLayers,
             allocation: videoAllocation
         )
-        videoComposition.instructions = makeVideoInstructions(from: renderInstructions, composition: composition)
+        videoComposition.instructions = makeVideoInstructions(
+            from: renderInstructions,
+            composition: composition,
+            videoLayers: resolvedLayers.videoLayers,
+            allocation: videoAllocation
+        )
         audioMix.inputParameters = audioParameters
 
         return CompiledTimelineComposition(
@@ -181,6 +197,15 @@ public final class TimelineComposition {
                 continue
             }
             result.append(time)
+        }
+        return result
+    }
+
+    private func uniqueTrackIDsPreservingOrder(_ trackIDs: [CMPersistentTrackID]) -> [CMPersistentTrackID] {
+        var seen: Set<CMPersistentTrackID> = []
+        var result: [CMPersistentTrackID] = []
+        for trackID in trackIDs where seen.insert(trackID).inserted {
+            result.append(trackID)
         }
         return result
     }
@@ -296,7 +321,7 @@ public final class TimelineComposition {
                 TimelineRenderInstruction(
                     timeRange: timeRange,
                     layerLevels: intervalLayers.map(\.layerLevel),
-                    sourceTrackIDs: Array(Set(trackIDs)).sorted()
+                    sourceTrackIDs: uniqueTrackIDsPreservingOrder(trackIDs)
                 )
             )
         }
@@ -306,18 +331,110 @@ public final class TimelineComposition {
 
     private func makeVideoInstructions(
         from renderInstructions: [TimelineRenderInstruction],
-        composition: AVMutableComposition
+        composition: AVMutableComposition,
+        videoLayers: [ClipLayer],
+        allocation: [ObjectIdentifier: CMPersistentTrackID]
     ) -> [AVVideoCompositionInstructionProtocol] {
         renderInstructions.compactMap { instruction in
             let mutableInstruction = AVMutableVideoCompositionInstruction()
             mutableInstruction.timeRange = instruction.timeRange
+            let activeClipLayers = activeVideoLayers(
+                for: instruction.timeRange,
+                from: videoLayers,
+                allocation: allocation
+            )
             let layerInstructions = instruction.sourceTrackIDs.compactMap { trackID -> AVMutableVideoCompositionLayerInstruction? in
                 guard let track = composition.track(withTrackID: trackID) else { return nil }
-                return AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+                let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+                if let activeLayer = activeClipLayers[trackID] {
+                    layerInstruction.setTransform(activeLayer.transform, at: instruction.timeRange.start)
+                    layerInstruction.setOpacity(activeLayer.opacity, at: instruction.timeRange.start)
+                }
+                return layerInstruction
             }
+            applyTransitions(to: layerInstructions, timeRange: instruction.timeRange, activeLayers: activeClipLayers)
             mutableInstruction.layerInstructions = layerInstructions
             return mutableInstruction
         }
+    }
+
+    private func activeVideoLayers(
+        for timeRange: CMTimeRange,
+        from videoLayers: [ClipLayer],
+        allocation: [ObjectIdentifier: CMPersistentTrackID]
+    ) -> [CMPersistentTrackID: ClipLayer] {
+        var result: [CMPersistentTrackID: ClipLayer] = [:]
+        let activeLayers = videoLayers
+            .filter { $0.timeRange.start < timeRange.end && $0.timeRange.end > timeRange.start }
+            .sorted { lhs, rhs in
+                if lhs.layerLevel == rhs.layerLevel {
+                    return lhs.timeRange.start < rhs.timeRange.start
+                }
+                return lhs.layerLevel < rhs.layerLevel
+            }
+
+        for layer in activeLayers {
+            guard let trackID = allocation[ObjectIdentifier(layer)] else { continue }
+            result[trackID] = layer
+        }
+        return result
+    }
+
+    private func applyTransitions(
+        to layerInstructions: [AVMutableVideoCompositionLayerInstruction],
+        timeRange: CMTimeRange,
+        activeLayers: [CMPersistentTrackID: ClipLayer]
+    ) {
+        for transition in transitions {
+            let overlap = CMTimeRangeGetIntersection(timeRange, otherRange: transition.timeRange)
+            guard overlap.isValid, !overlap.isEmpty else { continue }
+            guard let selectedLayers = layersForTransition(transition, activeLayers: activeLayers) else { continue }
+
+            for layerInstruction in layerInstructions {
+                let trackID = layerInstruction.trackID
+                if trackID == selectedLayers.sourceTrackID {
+                    layerInstruction.setOpacityRamp(
+                        fromStartOpacity: selectedLayers.source.opacity,
+                        toEndOpacity: 0,
+                        timeRange: overlap
+                    )
+                } else if trackID == selectedLayers.destinationTrackID {
+                    layerInstruction.setOpacityRamp(
+                        fromStartOpacity: 0,
+                        toEndOpacity: selectedLayers.destination.opacity,
+                        timeRange: overlap
+                    )
+                }
+            }
+        }
+    }
+
+    private func layersForTransition(
+        _ transition: Transition,
+        activeLayers: [CMPersistentTrackID: ClipLayer]
+    ) -> (source: ClipLayer, sourceTrackID: CMPersistentTrackID, destination: ClipLayer, destinationTrackID: CMPersistentTrackID)? {
+        let candidates = activeLayers
+            .map { ($0.key, $0.value) }
+            .sorted { lhs, rhs in
+                if lhs.1.layerLevel == rhs.1.layerLevel {
+                    return lhs.1.timeRange.start < rhs.1.timeRange.start
+                }
+                return lhs.1.layerLevel < rhs.1.layerLevel
+            }
+
+        guard candidates.count >= 2 else { return nil }
+
+        if let sourceLevel = transition.sourceLayerLevel, let destinationLevel = transition.destinationLayerLevel {
+            guard let source = candidates.first(where: { $0.1.layerLevel == sourceLevel }),
+                  let destination = candidates.first(where: { $0.1.layerLevel == destinationLevel }) else {
+                return nil
+            }
+            return (source.1, source.0, destination.1, destination.0)
+        }
+
+        let source = candidates[0]
+        let destination = candidates[1]
+        return (source.1, source.0, destination.1, destination.0)
     }
 
     private func ensureTrack(
