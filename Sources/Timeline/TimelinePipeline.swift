@@ -109,4 +109,43 @@ public final class TimelinePipeline {
     public func makeProcessorChain() -> MediaProcessorChain {
         compile().makeProcessorChain()
     }
+
+    public func makePlayerItem() -> AVPlayerItem {
+        compile().makePlayerItem()
+    }
+
+    public func makeExportJob(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = []
+    ) -> ReaderWriterExportJob {
+        compile().makeExportJob(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors
+        )
+    }
 }
+
+#if canImport(UIKit)
+public extension TimelinePipeline {
+    func makePreviewPipeline(
+        preferredFramesPerSecond: Int = 30,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: @escaping PreviewSink.Handler
+    ) -> PreviewPipeline {
+        PreviewPipeline(
+            player: AVPlayer(playerItem: makePlayerItem()),
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+    }
+}
+#endif

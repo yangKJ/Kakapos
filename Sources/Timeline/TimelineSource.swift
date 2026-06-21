@@ -588,6 +588,33 @@ struct TimelineRenderPlanBuilder {
 }
 
 public extension CompiledTimelineComposition {
+    func makePlayerItem() -> AVPlayerItem {
+        let playerItem = AVPlayerItem(asset: composition)
+        playerItem.videoComposition = videoComposition
+        playerItem.audioMix = audioMix
+        return playerItem
+    }
+
+    func makeExportJob(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = []
+    ) -> ReaderWriterExportJob {
+        ReaderWriterExportJob(
+            asset: composition,
+            outputURL: outputURL,
+            fileType: fileType,
+            timeRange: CMTimeRange(start: .zero, duration: composition.duration),
+            videoComposition: videoComposition,
+            audioMix: audioMix,
+            videoProcessors: videoProcessors,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata
+        )
+    }
+
     func makeAssetSources(
         callbackQueue: DispatchQueue = .main,
         audioOutputSettings: [String: Any]? = nil
