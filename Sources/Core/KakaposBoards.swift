@@ -19,6 +19,10 @@ public enum KakaposBoards {
         KakaposSurface.starterBoards
     }
 
+    public static var guide: KakaposSurfaceGuide {
+        KakaposSurface.guide
+    }
+
     public static var exportBoard: KakaposSurface.ExportBoard {
         KakaposSurface.exportBoard
     }

@@ -73,6 +73,10 @@ public enum KakaposSurface {
         KakaposCapabilityCatalog.starterBoards
     }
 
+    public static var guide: KakaposSurfaceGuide {
+        KakaposCapabilityCatalog.guide
+    }
+
     public static func board(named name: String) -> KakaposCapabilityBoardInfo? {
         KakaposCapabilityCatalog.board(named: name)
     }

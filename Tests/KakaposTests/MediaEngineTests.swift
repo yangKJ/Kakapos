@@ -8,10 +8,16 @@ final class MediaEngineTests: XCTestCase {
     func testCapabilityCatalogGroupsPublicSurfaceIntoFourBoards() {
         let boards = KakaposCapabilityCatalog.boards
         let starterBoards = KakaposCapabilityCatalog.starterBoards
+        let guide = KakaposCapabilityCatalog.guide
 
         XCTAssertEqual(boards.count, 4)
         XCTAssertEqual(starterBoards.map(\.board), boards.map(\.board))
         XCTAssertEqual(boards.map(\.board), [.export, .preview, .record, .timeline])
+        XCTAssertEqual(guide.boardCount, 4)
+        XCTAssertEqual(guide.boardNames, ["Export", "Preview", "Record", "Timeline"])
+        XCTAssertEqual(guide.starterBoardNames, ["Export", "Preview", "Record", "Timeline"])
+        XCTAssertEqual(guide.summaryText, "Kakapos keeps adoption lightweight with 4 boards: Export · Preview · Record · Timeline.")
+        XCTAssertEqual(guide.starterText, "Start from Export · Preview · Record · Timeline when you only need the narrow read-only entry layer.")
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.displayName, "Export")
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "record")?.primaryTypes, ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"])
@@ -34,6 +40,7 @@ final class MediaEngineTests: XCTestCase {
     func testKakaposSurfaceBoardFacadesMirrorTheCapabilityCatalog() {
         XCTAssertEqual(KakaposSurface.starterBoards.map(\.board), KakaposCapabilityCatalog.starterBoards.map(\.board))
         XCTAssertEqual(KakaposSurface.sections.map(\.board), KakaposCapabilityCatalog.boards.map(\.board))
+        XCTAssertEqual(KakaposSurface.guide.summaryText, KakaposCapabilityCatalog.guide.summaryText)
         XCTAssertEqual(KakaposSurface.entries.map(\.id), ["export", "preview", "record", "timeline"])
         XCTAssertEqual(KakaposSurface.entry(.record)?.starterTypesText, "RecordingPipeline · CameraSource · RecorderSink")
         XCTAssertEqual(KakaposSurface.exportBoard.displayName, "Export")
@@ -87,6 +94,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testKakaposSurfaceExposesTheSameBoardCatalogAsTheLegacyAlias() {
         XCTAssertEqual(KakaposSurface.boards.map(\.board), KakaposCapabilityCatalog.boards.map(\.board))
+        XCTAssertEqual(KakaposSurface.guide.boardNamesText, KakaposCapabilityCatalog.guide.boardNamesText)
         XCTAssertEqual(KakaposSurface.board(named: "export")?.starterTypes, ["VideoX", "ReaderWriterExportJob"])
         XCTAssertEqual(KakaposSurface.board(.timeline)?.starterTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition"])
         XCTAssertEqual(KakaposSurface.section(.preview)?.id, "preview")
