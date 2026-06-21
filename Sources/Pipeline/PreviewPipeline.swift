@@ -108,6 +108,10 @@ public final class PreviewPipeline {
         playerSource?.summary.state
     }
 
+    public var playerSourceSummary: PlayerFrameSource.Summary? {
+        playerSource?.summary
+    }
+
     public var playerSourceGeneration: Int64? {
         playerSource?.summary.generation
     }
