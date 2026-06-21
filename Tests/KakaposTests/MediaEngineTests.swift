@@ -1166,6 +1166,70 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertFalse(job.summary.summaryText.contains("error"))
     }
 
+    func testReaderWriterExportJobIgnoresLateSessionCallbacksAfterCompletion() throws {
+        let session = FakeReaderWriterExportSession()
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4"),
+            sessionFactory: { _, _, _ in session }
+        )
+        let completionExpectation = expectation(description: "export completion")
+        let statusExpectation = expectation(description: "status callbacks")
+        statusExpectation.expectedFulfillmentCount = 2
+        var receivedStatuses: [ReaderWriterExportJob.Status] = []
+        var receivedResult: Result<URL, Error>?
+
+        job.statusHandler = { status in
+            receivedStatuses.append(status)
+            statusExpectation.fulfill()
+        }
+
+        job.export { result in
+            receivedResult = result
+            completionExpectation.fulfill()
+        }
+
+        session.emitStatus(.exporting)
+        session.emitProgress(
+            ReaderWriterExportSessionProgress(
+                videoProgress: 0.2,
+                audioProgress: 0.4,
+                hasVideo: true,
+                hasAudio: true,
+                finishWritingProgress: 0.1
+            )
+        )
+        session.finish(with: nil)
+
+        wait(for: [completionExpectation, statusExpectation], timeout: 1)
+        XCTAssertEqual(job.status, .completed)
+        XCTAssertEqual(receivedStatuses, [.exporting, .completed])
+        XCTAssertNotNil(job.lastProgressInfo)
+        XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted ?? -1, 0.29, accuracy: 0.0001)
+        if case .failure(let error)? = receivedResult {
+            XCTFail("Unexpected export failure: \(error)")
+        }
+
+        session.emitStatus(.failed)
+        session.emitProgress(
+            ReaderWriterExportSessionProgress(
+                videoProgress: 0.9,
+                audioProgress: 0.9,
+                hasVideo: true,
+                hasAudio: true,
+                finishWritingProgress: 0.9
+            )
+        )
+
+        XCTAssertEqual(job.status, .completed)
+        XCTAssertEqual(receivedStatuses, [.exporting, .completed])
+        XCTAssertNotNil(job.lastProgressInfo)
+        XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted ?? -1, 0.29, accuracy: 0.0001)
+    }
+
     func testReaderWriterExportJobPauseAndResumeTransitionFromExportingState() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),
@@ -3263,6 +3327,53 @@ private final class TestSink: MediaSink {
 
     func finish(completion: @escaping (Result<Void, Error>) -> Void) {
         completion(.success(()))
+    }
+}
+
+private struct ReaderWriterExportSessionProgress {
+    let videoProgress: Double
+    let audioProgress: Double
+    let hasVideo: Bool
+    let hasAudio: Bool
+    let finishWritingProgress: Double
+}
+
+private final class FakeReaderWriterExportSession: ReaderWriterExportSession {
+    private var progressHandler: ((VideoAssetExportSession.ExportProgress) -> Void)?
+    private var statusHandler: ((VideoAssetExportSession.Status) -> Void)?
+    private var completionHandler: ((Error?) -> Void)?
+
+    func export(
+        progress: ((VideoAssetExportSession.ExportProgress) -> Void)?,
+        status: ((VideoAssetExportSession.Status) -> Void)?,
+        completion: @escaping (Error?) -> Void
+    ) {
+        progressHandler = progress
+        statusHandler = status
+        completionHandler = completion
+    }
+
+    func pause() {}
+    func resume() {}
+    func cancel() {}
+
+    func emitStatus(_ status: VideoAssetExportSession.Status) {
+        statusHandler?(status)
+    }
+
+    func emitProgress(_ snapshot: ReaderWriterExportSessionProgress) {
+        let progress = VideoAssetExportSession.ExportProgress(
+            tracksAudioEncoding: snapshot.hasAudio,
+            tracksVideoEncoding: snapshot.hasVideo
+        )
+        progress.updateVideoEncodingProgress(fractionCompleted: snapshot.videoProgress)
+        progress.updateAudioEncodingProgress(fractionCompleted: snapshot.audioProgress)
+        progress.updateFinishWritingProgress(fractionCompleted: snapshot.finishWritingProgress)
+        progressHandler?(progress)
+    }
+
+    func finish(with error: Error?) {
+        completionHandler?(error)
     }
 }
 

@@ -170,22 +170,47 @@ public final class MediaGraph {
             return
         }
 
-        let group = DispatchGroup()
-        let state = MediaNodeResultState()
+        let lock = NSLock()
+        var remainingBranches = branches.count
+        var capturedError: Error?
+        var didComplete = false
 
-        for branch in branches {
-            group.enter()
-            branch.finish { result in
-                state.capture(result)
-                group.leave()
+        func finishIfNeeded() {
+            lock.lock()
+            guard !didComplete else {
+                lock.unlock()
+                return
+            }
+            let result: Result<Void, Error>
+            if let capturedError {
+                result = .failure(capturedError)
+            } else {
+                result = .success(())
+            }
+            didComplete = true
+            lock.unlock()
+            if case .failure(let error) = result {
+                self.errorHandler?(error)
+            } else {
+                self.completionHandler?()
             }
         }
 
-        group.notify(queue: .main) { [weak self] in
-            if case .failure(let error) = state.result {
-                self?.errorHandler?(error)
-            } else {
-                self?.completionHandler?()
+        for branch in branches {
+            branch.finish { result in
+                lock.lock()
+                if case .failure(let error) = result, capturedError == nil {
+                    capturedError = error
+                }
+                if remainingBranches > 0 {
+                    remainingBranches -= 1
+                }
+                let shouldComplete = remainingBranches == 0
+                lock.unlock()
+
+                if shouldComplete {
+                    finishIfNeeded()
+                }
             }
         }
     }
@@ -280,25 +305,60 @@ final class MediaGraphBranchNode: MediaFrameConsumerNode, MediaFrameSourceNode {
             return
         }
 
-        let group = DispatchGroup()
-        let state = MediaNodeResultState()
+        let lock = NSLock()
+        var remainingChildren = childNodes.count + 1
+        var capturedError: Error?
+        var didComplete = false
 
-        group.enter()
-        chainNode.finish { result in
-            state.capture(result)
-            group.leave()
+        func finishIfNeeded() {
+            lock.lock()
+            guard !didComplete else {
+                lock.unlock()
+                return
+            }
+            let result: Result<Void, Error>
+            if let capturedError {
+                result = .failure(capturedError)
+            } else {
+                result = .success(())
+            }
+            didComplete = true
+            lock.unlock()
+            completion(result)
         }
 
-        for child in childNodes {
-            group.enter()
-            child.finish { result in
-                state.capture(result)
-                group.leave()
+        chainNode.finish { result in
+            lock.lock()
+            if case .failure(let error) = result, capturedError == nil {
+                capturedError = error
+            }
+            if remainingChildren > 0 {
+                remainingChildren -= 1
+            }
+            let shouldComplete = remainingChildren == 0
+            lock.unlock()
+
+            if shouldComplete {
+                finishIfNeeded()
             }
         }
 
-        group.notify(queue: .main) {
-            completion(state.result)
+        for child in childNodes {
+            child.finish { result in
+                lock.lock()
+                if case .failure(let error) = result, capturedError == nil {
+                    capturedError = error
+                }
+                if remainingChildren > 0 {
+                    remainingChildren -= 1
+                }
+                let shouldComplete = remainingChildren == 0
+                lock.unlock()
+
+                if shouldComplete {
+                    finishIfNeeded()
+                }
+            }
         }
     }
 }

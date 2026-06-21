@@ -132,6 +132,8 @@ public final class MediaPipeline {
     private let lifecycleLock = NSLock()
     private var hasFinished = false
     private var acceptsSourceCallbacks = true
+    private var pendingSourceFrameDeliveries = 0
+    private var sourceDidFinish = false
     private var _lastFrameMetadata: FrameMetadata?
     private var _lastErrorDescription: String?
 
@@ -149,6 +151,12 @@ public final class MediaPipeline {
         self.sourceAdapter.frameHandler = { [weak self] frame in
             guard let self, self.canAcceptSourceCallbacks() else { return }
             self.storeLastFrameMetadata(frame.metadata)
+        }
+        self.sourceAdapter.frameTransmissionStartedHandler = { [weak self] in
+            self?.beginSourceFrameDelivery()
+        }
+        self.sourceAdapter.frameTransmissionCompletedHandler = { [weak self] result in
+            self?.completeSourceFrameDelivery(result)
         }
         self.sourceAdapter.errorHandler = { [weak self] error in
             guard let self, self.canAcceptSourceCallbacks() else { return }
@@ -187,7 +195,7 @@ public final class MediaPipeline {
     public func stop() {
         rejectFurtherSourceCallbacks()
         source.stop()
-        finishChain()
+        markSourceFinished()
     }
 
     public func cancel() {
@@ -198,20 +206,7 @@ public final class MediaPipeline {
     }
 
     private func finishChain() {
-        guard transitionIfNeeded(from: [.running, .paused, .idle], to: .finished) else { return }
-        rejectFurtherSourceCallbacks()
-        let shouldFinish = stateQueue.sync { () -> Bool in
-            guard !hasFinished else { return false }
-            hasFinished = true
-            return true
-        }
-        guard shouldFinish else { return }
-
-        chain.finish { [weak self] result in
-            if case .failure(let error) = result {
-                self?.failChain(with: error, allowFromFinished: true, cancelChain: false)
-            }
-        }
+        markSourceFinished()
     }
 
     private func failChain(with error: Error, allowFromFinished: Bool = false, cancelChain: Bool = true) {
@@ -231,6 +226,57 @@ public final class MediaPipeline {
         }
         DispatchQueue.main.async {
             self.errorHandler?(error)
+        }
+    }
+
+    private func beginSourceFrameDelivery() {
+        stateQueue.sync {
+            pendingSourceFrameDeliveries += 1
+        }
+    }
+
+    private func completeSourceFrameDelivery(_ result: Result<Void, Error>) {
+        let shouldFinish = stateQueue.sync { () -> Bool in
+            if pendingSourceFrameDeliveries > 0 {
+                pendingSourceFrameDeliveries -= 1
+            }
+            return sourceDidFinish && pendingSourceFrameDeliveries == 0
+        }
+
+        if case .failure(let error) = result {
+            failChain(with: error)
+            return
+        }
+
+        if shouldFinish {
+            finishChainIfPossible()
+        }
+    }
+
+    private func markSourceFinished() {
+        let shouldFinish = stateQueue.sync { () -> Bool in
+            sourceDidFinish = true
+            return pendingSourceFrameDeliveries == 0
+        }
+        if shouldFinish {
+            finishChainIfPossible()
+        }
+    }
+
+    private func finishChainIfPossible() {
+        guard transitionIfNeeded(from: [.running, .paused, .idle], to: .finished) else { return }
+        rejectFurtherSourceCallbacks()
+        let shouldFinish = stateQueue.sync { () -> Bool in
+            guard !hasFinished else { return false }
+            hasFinished = true
+            return true
+        }
+        guard shouldFinish else { return }
+
+        chain.finish { [weak self] result in
+            if case .failure(let error) = result {
+                self?.failChain(with: error, allowFromFinished: true, cancelChain: false)
+            }
         }
     }
 
