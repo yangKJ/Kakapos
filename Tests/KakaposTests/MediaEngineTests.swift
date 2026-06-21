@@ -1172,6 +1172,123 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertFalse(coordinator.shouldDriveDisplayLink)
     }
 
+    #if canImport(UIKit)
+    func testPlayerFrameSourceTracksPlaybackStateAndWaitingTransitions() {
+        let player = AVPlayer()
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, _ in
+                driver.configuration = configuration
+                return driver
+            }
+        )
+        var states: [PlayerFrameSource.State] = []
+        source.stateChangedHandler = { states.append($0) }
+
+        source.start()
+        XCTAssertEqual(source.state, .active)
+
+        driver.waitingForMediaDataHandler?(CMTime(value: 3, timescale: 30))
+        XCTAssertEqual(source.state, .waitingForMediaData)
+
+        driver.mediaDataWillChangeHandler?()
+        XCTAssertEqual(source.state, .active)
+
+        source.pause()
+        XCTAssertEqual(source.state, .paused)
+
+        source.resume()
+        XCTAssertEqual(source.state, .active)
+
+        source.stop()
+        XCTAssertEqual(source.state, .finished)
+        XCTAssertEqual(states, [.active, .waitingForMediaData, .active, .paused, .active, .finished])
+    }
+
+    func testPlayerFrameSourceRequestFrameUpdateAndRefreshForwardToDriver() {
+        let player = AVPlayer()
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, _ in
+                driver.configuration = configuration
+                return driver
+            }
+        )
+
+        source.start()
+        source.requestFrameUpdate()
+        source.refreshCurrentFrameIfNeeded()
+
+        XCTAssertEqual(driver.setNeedsUpdateCallCount, 1)
+        XCTAssertEqual(driver.updateIfNeededCallCount, 1)
+    }
+
+    func testPlayerFrameSourceCachesLastFrameAndMarksManualRefreshMetadata() throws {
+        let player = AVPlayer()
+        let driver = FakePlayerFrameDriver()
+        let expectation = expectation(description: "player frame emitted")
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let pixelBuffer = try makePixelBuffer(width: 18, height: 12)
+        var receivedFrame: MediaFrame?
+
+        source.frameHandler = { frame in
+            receivedFrame = frame
+            expectation.fulfill()
+        }
+
+        source.start()
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 4, timescale: 30),
+                playerTimestamp: CMTime(value: 4, timescale: 30),
+                requestTimestamp: CMTime(value: 5, timescale: 30),
+                pixelBuffer: pixelBuffer
+            )
+        )
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(source.lastFrame?.metadata.frameIndex, 1)
+        XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(source.lastFrame?.pixelBuffer)), 18)
+        XCTAssertEqual(receivedFrame?.metadata.userInfo[PlayerFrameSource.MetadataKey.frameRequestReason] as? String, "manual")
+    }
+
+    func testPlayerFrameSourceSeekRecordsTargetAndRefreshesDriver() throws {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
+        let driver = FakePlayerFrameDriver()
+        let expectation = expectation(description: "seek completed")
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, _ in
+                driver.configuration = configuration
+                return driver
+            }
+        )
+        let target = CMTime(value: 15, timescale: 30)
+
+        source.start()
+        source.seek(to: target) { finished in
+            XCTAssertTrue(finished)
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 5)
+        XCTAssertEqual(source.lastSeekTargetTime, target)
+        XCTAssertGreaterThanOrEqual(driver.setNeedsUpdateCallCount, 1)
+        XCTAssertGreaterThanOrEqual(driver.updateIfNeededCallCount, 1)
+        XCTAssertEqual(source.state, .active)
+    }
+    #endif
+
     func testRecorderSinkFinishRecordingReturnsRecordedClip() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -1592,6 +1709,29 @@ private final class TestConsumerNode: MediaFrameConsumerNode {
         completion(.success(()))
     }
 }
+
+#if canImport(UIKit)
+private final class FakePlayerFrameDriver: PlayerFrameDriving {
+    var configuration: PlayerFrameOutputDriver.Configuration = .default
+    var waitingForMediaDataHandler: ((CMTime) -> Void)?
+    var mediaDataWillChangeHandler: (() -> Void)?
+    var frameHandler: ((PlayerFrameOutputDriver.VideoFrame) -> Void)?
+    private(set) var setNeedsUpdateCallCount = 0
+    private(set) var updateIfNeededCallCount = 0
+
+    func setNeedsUpdate() {
+        setNeedsUpdateCallCount += 1
+    }
+
+    func updateIfNeeded() {
+        updateIfNeededCallCount += 1
+    }
+
+    func emitFrame(_ frame: PlayerFrameOutputDriver.VideoFrame) {
+        frameHandler?(frame)
+    }
+}
+#endif
 
 private func makePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
     var pixelBuffer: CVPixelBuffer?
