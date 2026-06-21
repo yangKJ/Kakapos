@@ -199,6 +199,28 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recordedClip?.duration, CMTime(value: 1, timescale: 30))
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
     }
+
+    func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
+        var lifecycle = CameraSessionLifecycle(position: .back)
+
+        XCTAssertEqual(lifecycle.handle(.startRequested), .willStart)
+        XCTAssertEqual(lifecycle.state, .starting)
+        XCTAssertEqual(lifecycle.handle(.didStartRunning), .didStart)
+        XCTAssertEqual(lifecycle.state, .running)
+        XCTAssertEqual(lifecycle.handle(.wasInterrupted), .wasInterrupted)
+        XCTAssertEqual(lifecycle.state, .interrupted)
+        XCTAssertEqual(lifecycle.handle(.interruptionEnded), .interruptionEnded)
+        XCTAssertEqual(lifecycle.state, .running)
+        XCTAssertEqual(lifecycle.handle(.didStopRunning), .didStop)
+        XCTAssertEqual(lifecycle.state, .stopped)
+    }
+
+    func testCameraSessionLifecycleTracksCameraPositionChanges() {
+        var lifecycle = CameraSessionLifecycle(position: .back)
+
+        XCTAssertEqual(lifecycle.handle(.positionChanged(.front)), .positionChanged(.front))
+        XCTAssertEqual(lifecycle.position, .front)
+    }
 }
 
 private final class TestSource: MediaSource {
