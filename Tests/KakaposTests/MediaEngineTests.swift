@@ -61,6 +61,66 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(compiled.videoComposition.frameDuration, CMTime(value: 1, timescale: 30))
         XCTAssertEqual(compiled.composition.tracks.count, 0)
         XCTAssertEqual(compiled.audioMix.inputParameters.count, 0)
+        XCTAssertEqual(compiled.renderInstructions.count, 0)
+    }
+
+    func testTimelineCompositionFlattensGroupLayerIntoResolvedLayers() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let child = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let group = GroupLayer(
+            timeRange: CMTimeRange(start: CMTime(value: 60, timescale: 30), duration: CMTime(value: 30, timescale: 30)),
+            layers: [child],
+            layerLevel: 3
+        )
+        let timeline = TimelineComposition(layers: [group])
+
+        let compiled = timeline.compile()
+
+        XCTAssertEqual(compiled.resolvedLayers.videoLayers.count, 1)
+        XCTAssertEqual(compiled.resolvedLayers.videoLayers.first?.timeRange.start, CMTime(value: 60, timescale: 30))
+        XCTAssertEqual(compiled.resolvedLayers.videoLayers.first?.layerLevel, 3)
+    }
+
+    func testTimelineCompositionReusesSingleVideoTrackForNonOverlappingClips() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let first = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let second = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: CMTime(value: 30, timescale: 30), duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: CMTime(value: 30, timescale: 30), duration: CMTime(value: 30, timescale: 30))
+        )
+        let timeline = TimelineComposition(layers: [first, second])
+
+        let compiled = timeline.compile()
+
+        XCTAssertEqual(compiled.composition.tracks(withMediaType: .video).count, 1)
+        XCTAssertEqual(compiled.renderInstructions.count, 2)
+        XCTAssertEqual(compiled.renderInstructions.map(\.sourceTrackIDs.count), [1, 1])
+    }
+
+    func testKeyframeAnimationAppliesEaseInOutInterpolation() throws {
+        let animation = KeyframeAnimation(
+            keyPath: "opacity",
+            values: [0, 1],
+            keyTimes: [.zero, CMTime(value: 10, timescale: 10)],
+            easing: .easeInOut
+        )
+
+        let quarterPoint = try XCTUnwrap(animation.value(at: CMTime(value: 25, timescale: 100)))
+        let lookupValue = try XCTUnwrap(
+            KeyframeAnimation.value(for: "opacity", at: CMTime(value: 25, timescale: 100), animations: [animation])
+        )
+
+        XCTAssertEqual(quarterPoint, 0.125, accuracy: 0.0001)
+        XCTAssertEqual(lookupValue, 0.125, accuracy: 0.0001)
     }
 
     func testReaderWriterProgressInfoUsesVideoProgressWhenAudioTrackIsMissing() {
@@ -505,6 +565,15 @@ private func makePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
 }
 
 private func makeSampleExporter() throws -> VideoX {
+    let sampleURL = try makeSampleAssetURL()
+    XCTAssertTrue(FileManager.default.fileExists(atPath: sampleURL.path))
+    let outputURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("mp4")
+    return VideoX(provider: .init(with: sampleURL, to: outputURL))
+}
+
+private func makeSampleAssetURL() throws -> URL {
     let sampleURL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -512,8 +581,5 @@ private func makeSampleExporter() throws -> VideoX {
         .appendingPathComponent("KakaposExamples")
         .appendingPathComponent("IMG_1388.mp4")
     XCTAssertTrue(FileManager.default.fileExists(atPath: sampleURL.path))
-    let outputURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString)
-        .appendingPathExtension("mp4")
-    return VideoX(provider: .init(with: sampleURL, to: outputURL))
+    return sampleURL
 }
