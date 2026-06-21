@@ -8,10 +8,12 @@
 import Foundation
 import AVFoundation
 import CoreGraphics
+import QuartzCore
 
 public enum TimelineLayerKind: Equatable {
     case clip
     case image
+    case text
     case effect
 }
 
@@ -37,6 +39,7 @@ public struct TimelineRenderInstruction {
 public struct ResolvedTimelineLayers {
     public let videoLayers: [ClipLayer]
     public let imageLayers: [ImageLayer]
+    public let textLayers: [TextLayer]
     public let audioLayers: [AudioLayer]
     public let effectLayers: [EffectLayer]
 }
@@ -48,6 +51,7 @@ public struct CompiledTimelineComposition {
     public let renderInstructions: [TimelineRenderInstruction]
     public let resolvedLayers: ResolvedTimelineLayers
     public let renderPlan: TimelineRenderPlan
+    public let overlayLayer: CALayer?
 }
 
 public final class TimelineComposition {

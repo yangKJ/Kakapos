@@ -12,6 +12,7 @@ import CoreGraphics
 public enum TimelineSourceKind: Equatable {
     case assetClip
     case stillImage
+    case text
     case audioClip
     case effect
 }
@@ -95,6 +96,25 @@ public struct EffectSource: TimelineSourceDescriptor {
     }
 }
 
+public struct TextClipSource: TimelineSourceDescriptor {
+    public let attributedText: NSAttributedString
+    public let frame: CGRect
+    public let animationStyle: TimelineTextAnimationStyle
+
+    public var kind: TimelineSourceKind { .text }
+    public var nominalDuration: CMTime? { nil }
+
+    public init(
+        attributedText: NSAttributedString,
+        frame: CGRect,
+        animationStyle: TimelineTextAnimationStyle = .none
+    ) {
+        self.attributedText = attributedText
+        self.frame = frame
+        self.animationStyle = animationStyle
+    }
+}
+
 public struct TimelineAssetSegment {
     public var source: AssetClipSource
     public var destinationTimeRange: CMTimeRange
@@ -167,6 +187,28 @@ public struct TimelineImageSegment {
     }
 }
 
+public struct TimelineTextSegment {
+    public var source: TextClipSource
+    public var destinationTimeRange: CMTimeRange
+    public var layerLevel: Int
+    public var opacity: Float
+    public var transform: CGAffineTransform
+
+    public init(
+        source: TextClipSource,
+        destinationTimeRange: CMTimeRange,
+        layerLevel: Int,
+        opacity: Float,
+        transform: CGAffineTransform
+    ) {
+        self.source = source
+        self.destinationTimeRange = destinationTimeRange
+        self.layerLevel = layerLevel
+        self.opacity = opacity
+        self.transform = transform
+    }
+}
+
 public struct TimelineProcessorSegment {
     public var source: EffectSource
     public var destinationTimeRange: CMTimeRange
@@ -197,17 +239,20 @@ public struct TimelineRenderPlan {
         public var timeRange: CMTimeRange
         public var assetSegments: [TimelineAssetSegment]
         public var imageSegments: [TimelineImageSegment]
+        public var textSegments: [TimelineTextSegment]
         public var processorSegments: [TimelineProcessorSegment]
 
         public init(
             timeRange: CMTimeRange,
             assetSegments: [TimelineAssetSegment],
             imageSegments: [TimelineImageSegment],
+            textSegments: [TimelineTextSegment],
             processorSegments: [TimelineProcessorSegment]
         ) {
             self.timeRange = timeRange
             self.assetSegments = assetSegments
             self.imageSegments = imageSegments
+            self.textSegments = textSegments
             self.processorSegments = processorSegments
         }
     }
@@ -215,6 +260,7 @@ public struct TimelineRenderPlan {
     public var assetSegments: [TimelineAssetSegment]
     public var audioSegments: [TimelineAudioSegment]
     public var imageSegments: [TimelineImageSegment]
+    public var textSegments: [TimelineTextSegment]
     public var processorSegments: [TimelineProcessorSegment]
     public var transitions: [Transition]
     public var visualIntervals: [VisualInterval]
@@ -223,6 +269,7 @@ public struct TimelineRenderPlan {
         assetSegments: [TimelineAssetSegment],
         audioSegments: [TimelineAudioSegment],
         imageSegments: [TimelineImageSegment],
+        textSegments: [TimelineTextSegment],
         processorSegments: [TimelineProcessorSegment],
         transitions: [Transition],
         visualIntervals: [VisualInterval]
@@ -230,6 +277,7 @@ public struct TimelineRenderPlan {
         self.assetSegments = assetSegments
         self.audioSegments = audioSegments
         self.imageSegments = imageSegments
+        self.textSegments = textSegments
         self.processorSegments = processorSegments
         self.transitions = transitions
         self.visualIntervals = visualIntervals
@@ -289,6 +337,20 @@ struct TimelineRenderPlanBuilder {
             )
         }
 
+        let textSegments = resolvedLayers.textLayers.map { layer in
+            TimelineTextSegment(
+                source: TextClipSource(
+                    attributedText: layer.attributedText,
+                    frame: layer.frame,
+                    animationStyle: layer.animationStyle
+                ),
+                destinationTimeRange: layer.timeRange,
+                layerLevel: layer.layerLevel,
+                opacity: layer.opacity,
+                transform: layer.transform
+            )
+        }
+
         let processorSegments = resolvedLayers.effectLayers.map { layer in
             TimelineProcessorSegment(
                 source: layer.effectSource,
@@ -305,6 +367,9 @@ struct TimelineRenderPlanBuilder {
             let imageSegmentsForInstruction = imageSegments
                 .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
                 .sorted { $0.layerLevel < $1.layerLevel }
+            let textSegmentsForInstruction = textSegments
+                .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
+                .sorted { $0.layerLevel < $1.layerLevel }
             let processorSegmentsForInstruction = processorSegments
                 .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
                 .sorted { $0.layerLevel < $1.layerLevel }
@@ -313,6 +378,7 @@ struct TimelineRenderPlanBuilder {
                 timeRange: instruction.timeRange,
                 assetSegments: assetSegmentsForInstruction,
                 imageSegments: imageSegmentsForInstruction,
+                textSegments: textSegmentsForInstruction,
                 processorSegments: processorSegmentsForInstruction
             )
         }
@@ -321,6 +387,7 @@ struct TimelineRenderPlanBuilder {
             assetSegments: assetSegments,
             audioSegments: audioSegments,
             imageSegments: imageSegments,
+            textSegments: textSegments,
             processorSegments: processorSegments,
             transitions: transitions,
             visualIntervals: visualIntervals
