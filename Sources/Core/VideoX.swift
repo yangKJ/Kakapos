@@ -29,6 +29,27 @@ public struct VideoX {
         }
         return exportSession
     }
+
+    /// Build a controllable export job when the configured pipeline is `.readerWriter`.
+    /// Returns `nil` for the legacy `AVAssetExportSession` route.
+    public func makeExportJob(
+        options: [VideoX.Option: Any] = [:],
+        instructions: [CompositionInstruction]
+    ) throws -> ReaderWriterExportJob? {
+        guard VideoX.Option.setupExportPipeline(options: options) == .readerWriter else {
+            return nil
+        }
+        return try makeReaderWriterExportJob(options: options, instructions: instructions)
+    }
+
+    /// Build a reader/writer export job directly.
+    /// Use this when you need explicit pause, resume, cancel, and status control.
+    public func makeReaderWriterExportJob(
+        options: [VideoX.Option: Any] = [:],
+        instructions: [CompositionInstruction]
+    ) throws -> ReaderWriterExportJob {
+        try buildReaderWriterExportJob(options: options, instructions: instructions)
+    }
     
     /// Export the video.
     /// - Parameters:
@@ -43,8 +64,7 @@ public struct VideoX {
         progress: ((Float) -> Void)? = nil
     ) -> AVAssetExportSession? {
         do {
-            if VideoX.Option.setupExportPipeline(options: options) == .readerWriter {
-                let exportJob = try makeReaderWriterExportJob(options: options, instructions: instructions)
+            if let exportJob = try makeExportJob(options: options, instructions: instructions) {
                 if let progress {
                     exportJob.progressHandler = { info in
                         progress(Float(info.fractionCompleted))
@@ -204,7 +224,7 @@ extension VideoX {
         )
     }
 
-    private func makeReaderWriterExportJob(options: [VideoX.Option: Any], instructions: [CompositionInstruction]) throws -> ReaderWriterExportJob {
+    private func buildReaderWriterExportJob(options: [VideoX.Option: Any], instructions: [CompositionInstruction]) throws -> ReaderWriterExportJob {
         guard let avFileType = self.provider.fileType?.avFileType else {
             throw VideoX.Error.unsupportedFileType
         }
