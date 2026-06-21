@@ -29,26 +29,26 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable {
     public var summary: String {
         switch self {
         case .export:
-            return "Offline export and compatibility entry points for VideoX, Provider, and instructions."
+            return "Offline export for asset-based workflows."
         case .preview:
-            return "Player frame sourcing and preview routing through PreviewPipeline, MediaPipeline, and PreviewSink."
+            return "Player-frame preview and custom source routing through a lightweight pipeline."
         case .record:
-            return "Camera capture, recording, and sink lifecycle through RecordingPipeline, CameraSource, and RecorderSink."
+            return "Camera capture and recording with a stable session lifecycle."
         case .timeline:
-            return "Layer composition, keyframes, transitions, export tasks, and audio mix through TimelinePipeline and TimelineComposition."
+            return "Layered composition, keyframes, transitions, and audio mix for export planning."
         }
     }
 
     public var usageHint: String {
         switch self {
         case .export:
-            return "Start with VideoX when you already have an asset and need offline export compatibility."
+            return "Start here when you already have an asset and need offline export."
         case .preview:
-            return "Start with PreviewPipeline when you want player frames or a custom source routed to preview."
+            return "Start here when you want player frames or a custom source to render into preview."
         case .record:
-            return "Start with RecordingPipeline when you want camera capture or a source recorded to a file."
+            return "Start here when you need camera capture or recording to file."
         case .timeline:
-            return "Start with TimelinePipeline when you need layered composition, keyframes, and export planning."
+            return "Start here when you need layered composition and export planning."
         }
     }
 
