@@ -10,6 +10,11 @@ import AVFoundation
 import CoreVideo
 
 extension VideoX {
+
+    public enum ExportPipeline: Equatable {
+        case assetExportSession
+        case readerWriter
+    }
     
     /// VideoX with options.
     public struct Option : Hashable, Equatable, RawRepresentable, @unchecked Sendable {
@@ -50,6 +55,9 @@ extension VideoX.Option {
     /// If NO, 2 such compositions would yield the same frame.
     /// The media pipeline may be able to avoid some duplicate processing when containsTweening is NO
     public static let VideoCompositionInstructionContainsTweening: VideoX.Option = .init(rawValue: 1 << 5)
+
+    /// Choose the export pipeline. The default keeps using `AVAssetExportSession`.
+    public static let ExportPipeline: VideoX.Option = .init(rawValue: 1 << 6)
     
     /// Specifies a time range to be exported from the source.  meaning that the full duration of the asset will be exported.
     /// Use the `TimeRangeType`, The default timeRange of an export session is kCMTimeZero..kCMTimePositiveInfinity.
@@ -96,6 +104,13 @@ extension VideoX.Option {
             return value
         }
         return true
+    }
+
+    static func setupExportPipeline(options: [VideoX.Option: Any]) -> VideoX.ExportPipeline {
+        guard let value = VideoX.Option.ExportPipeline.has(with: options) as? VideoX.ExportPipeline else {
+            return .assetExportSession
+        }
+        return value
     }
     
     static func setupExportSessionTimeRange(duration: CMTime, options: [VideoX.Option: Any]) -> CMTimeRange {

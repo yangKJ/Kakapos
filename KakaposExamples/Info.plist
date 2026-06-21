@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict/>
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Kakapos uses the camera to demonstrate real-time media pipelines.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kakapos uses the microphone when recording camera media.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Kakapos saves exported videos to the photo library when requested.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Kakapos reads and writes media only for demo workflows you start.</string>
+</dict>
 </plist>
