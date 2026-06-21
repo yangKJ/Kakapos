@@ -104,6 +104,10 @@ public enum KakaposCapabilityCatalog {
         boards
     }
 
+    public static var guide: KakaposSurfaceGuide {
+        KakaposSurfaceGuide(boards: boards, starterBoards: starterBoards)
+    }
+
     public static func board(named name: String) -> KakaposCapabilityBoardInfo? {
         boards.first { $0.board.rawValue == name }
     }
