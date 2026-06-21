@@ -45,6 +45,10 @@ public struct VideoX {
             readerWriterJob?.lastProgressInfo
         }
 
+        public var configurationSummaryText: String? {
+            readerWriterJob?.configurationSummaryText
+        }
+
         public var summaryText: String {
             if let readerWriterJob {
                 return readerWriterJob.summary.summaryText

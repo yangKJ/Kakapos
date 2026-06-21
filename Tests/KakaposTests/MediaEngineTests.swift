@@ -1162,6 +1162,33 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    func testReaderWriterExportJobConfigurationSummaryDescribesExportInputs() {
+        let asset = AVMutableComposition()
+        let metadataItem = AVMutableMetadataItem()
+        metadataItem.identifier = .commonIdentifierTitle
+        metadataItem.value = "Kakapos" as NSString
+
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mov"),
+            fileType: .mov,
+            timeRange: CMTimeRange(start: CMTime(value: 15, timescale: 30), duration: CMTime(value: 60, timescale: 30)),
+            videoComposition: AVMutableVideoComposition(),
+            audioMix: AVMutableAudioMix(),
+            videoProcessors: [PassthroughFrameProcessor()],
+            shouldOptimizeForNetworkUse: false,
+            metadata: [metadataItem]
+        )
+
+        XCTAssertEqual(
+            job.configurationSummaryText,
+            "file mov · range 0.50s→2.50s · processors 1 · metadata 1 · network no · videoComposition yes · audioMix yes"
+        )
+        XCTAssertTrue(job.summary.summaryText.contains("tracks 0/0"))
+    }
+
     func testExportSessionProgressObserverTracksKvoProgressChanges() {
         let session = ObservableProgressSession()
         var receivedValues: [Float] = []
@@ -1633,6 +1660,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(exportTask.supportsPauseResume)
         XCTAssertEqual(exportTask.status, .idle)
         XCTAssertEqual(exportTask.summaryText, "state idle · tracks 1/1 · processors 1 · progress n/a · phase idle")
+        XCTAssertEqual(
+            exportTask.configurationSummaryText,
+            "file mov · range full · processors 1 · metadata 0 · network yes · videoComposition yes · audioMix yes"
+        )
 
         exportTask.pause()
         XCTAssertEqual(exportTask.status, .idle)
