@@ -15,6 +15,16 @@ public final class RecordingPipeline {
         public let pipelineState: MediaPipeline.State
         public let recorderState: RecorderSink.State
         public let sourceSnapshot: MediaSourceSnapshot?
+#if canImport(UIKit) && !os(watchOS)
+        public let cameraSourceState: CameraSessionState?
+        public let cameraSourcePosition: CameraPosition?
+        public let cameraSourceAuthorizationStatus: CameraAuthorizationStatus?
+        public let cameraSourceIsPaused: Bool?
+        public let cameraSourceCaptureMode: CameraCaptureMode?
+        public let cameraSourceLastFrameIndex: Int64?
+        public let cameraSourceLastPresentationTime: CMTime?
+        public let cameraSourceLastMediaType: String?
+#endif
         public let clipCount: Int
         public let totalDuration: CMTime
         public let currentClipDuration: CMTime
@@ -55,6 +65,34 @@ public final class RecordingPipeline {
 
     public var summary: Summary {
         let snapshot = recorderSink.snapshot
+#if canImport(UIKit) && !os(watchOS)
+        let cameraSummary = cameraSource?.summary
+        return Summary(
+            sourceTypeName: String(describing: type(of: source)),
+            processorCount: processors.count,
+            pipelineState: pipeline.state,
+            recorderState: recorderSink.state,
+            sourceSnapshot: pipeline.summary.sourceSnapshot,
+            cameraSourceState: cameraSummary?.state,
+            cameraSourcePosition: cameraSummary?.position,
+            cameraSourceAuthorizationStatus: cameraSummary?.authorizationStatus,
+            cameraSourceIsPaused: cameraSummary?.isPaused,
+            cameraSourceCaptureMode: cameraSummary?.captureMode,
+            cameraSourceLastFrameIndex: cameraSummary?.lastFrameIndex,
+            cameraSourceLastPresentationTime: cameraSummary?.lastPresentationTime,
+            cameraSourceLastMediaType: cameraSummary?.lastMediaType,
+            clipCount: snapshot.clipCount,
+            totalDuration: snapshot.totalDuration,
+            currentClipDuration: snapshot.currentClipDuration,
+            hasRecordedClip: snapshot.hasRecordedClip,
+            currentClipHasStarted: snapshot.currentClipHasStarted,
+            currentClipHasVideo: snapshot.currentClipHasVideo,
+            currentClipHasAudio: snapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: snapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: snapshot.recordedAudioSegmentCount,
+            lastErrorDescription: pipeline.lastErrorDescription
+        )
+#else
         return Summary(
             sourceTypeName: String(describing: type(of: source)),
             processorCount: processors.count,
@@ -72,6 +110,7 @@ public final class RecordingPipeline {
             recordedAudioSegmentCount: snapshot.recordedAudioSegmentCount,
             lastErrorDescription: pipeline.lastErrorDescription
         )
+#endif
     }
 
     public var lastErrorDescription: String? {
