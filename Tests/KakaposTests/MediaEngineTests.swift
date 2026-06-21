@@ -1102,6 +1102,42 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(task.status, .completed)
     }
 
+    func testVideoXExportTaskForwardsReaderWriterProgressSnapshots() throws {
+        let exporter = try makeSampleExporter()
+        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
+        let exportTask = try exporter.makeExportTask(
+            options: [
+                .ExportPipeline: VideoX.ExportPipeline.readerWriter,
+                .ExportSessionTimeRange: TimeRangeType.range(0...0.2)
+            ],
+            instructions: [instruction]
+        )
+
+        let progressExpectation = expectation(description: "progress snapshot")
+        let completionExpectation = expectation(description: "reader writer export finished")
+        progressExpectation.assertForOverFulfill = false
+        var receivedProgressInfo: ReaderWriterExportJob.ProgressInfo?
+
+        exportTask.start(
+            complete: { result in
+                if case .failure(let error) = result {
+                    XCTFail("Unexpected reader/writer export failure: \(error)")
+                }
+                completionExpectation.fulfill()
+            },
+            progress: nil,
+            progressInfo: { info in
+                receivedProgressInfo = info
+                progressExpectation.fulfill()
+            }
+        )
+
+        wait(for: [progressExpectation, completionExpectation], timeout: 15)
+        XCTAssertNotNil(receivedProgressInfo)
+        XCTAssertGreaterThanOrEqual(receivedProgressInfo?.overallFractionCompleted ?? 0, 0)
+        XCTAssertLessThanOrEqual(receivedProgressInfo?.overallFractionCompleted ?? 0, 1)
+    }
+
     func testPreviewSinkBuildsPreviewImageAndPreservesMetadata() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
         let metadata = FrameMetadata(
