@@ -957,6 +957,38 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lastProgressInfo.overallFractionCompleted, progress.overallFractionCompleted, accuracy: 0.0001)
     }
 
+    func testReaderWriterExportJobSummaryReflectsTracksProcessorsAndProgress() {
+        let asset = AVMutableComposition()
+        let videoTrack = asset.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+        let audioTrack = asset.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+        XCTAssertNotNil(videoTrack)
+        XCTAssertNotNil(audioTrack)
+
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4"),
+            videoProcessors: [PassthroughFrameProcessor()]
+        )
+        job._setProgressInfoForTesting(
+            ReaderWriterExportJob.ProgressInfo(
+                videoProgress: 0.4,
+                audioProgress: 0.8,
+                hasVideo: true,
+                hasAudio: true,
+                finishWritingProgress: 0.2
+            )
+        )
+        job._setStatusForTesting(.exporting)
+
+        XCTAssertEqual(job.summary.videoTrackCount, 1)
+        XCTAssertEqual(job.summary.audioTrackCount, 1)
+        XCTAssertEqual(job.summary.processorCount, 1)
+        XCTAssertEqual(job.summary.status, .exporting)
+        XCTAssertEqual(job.summary.summaryText, "state exporting · tracks 1/1 · processors 1 · progress 58%")
+    }
+
     func testReaderWriterExportJobKeepsStableStatusOutsideExportingState() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),
@@ -1135,6 +1167,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNil(exportTask.readerWriterJob)
         XCTAssertFalse(exportTask.supportsPauseResume)
         XCTAssertEqual(exportTask.status, .idle)
+
+        XCTAssertEqual(exportTask.summaryText, "state idle · assetExportSession")
     }
 
     func testVideoXMakeExportTaskReturnsReaderWriterTaskWhenConfigured() throws {
@@ -1150,6 +1184,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNotNil(exportTask.readerWriterJob)
         XCTAssertTrue(exportTask.supportsPauseResume)
         XCTAssertEqual(exportTask.status, .idle)
+        XCTAssertEqual(exportTask.summaryText, "state idle · tracks 1/1 · processors 1 · progress n/a")
 
         exportTask.pause()
         XCTAssertEqual(exportTask.status, .idle)
