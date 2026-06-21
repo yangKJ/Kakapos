@@ -17,37 +17,38 @@ public final class CameraSource: NSObject, MediaSource {
     }
 
     public weak var delegate: MediaSourceDelegate?
-    public let session: AVCaptureSession
+    public var session: AVCaptureSession { realtime.captureSession ?? fallbackSession }
+    public var previewLayer: AVCaptureVideoPreviewLayer { realtime.previewLayer }
     public private(set) var isPaused: Bool = false
     public private(set) var state: CameraSessionState = .idle
     public private(set) var currentPosition: CameraPosition
     public var sessionEventHandler: ((CameraSessionEvent) -> Void)?
 
     private let queue = DispatchQueue(label: "com.condy.kakapos.camera-source")
-    private var frameIndex: Int64 = 0
-    private let videoOutput = AVCaptureVideoDataOutput()
-    private let audioOutput = AVCaptureAudioDataOutput()
-    private var videoInput: AVCaptureDeviceInput?
+    private let realtime: KakaposRealtime
+    private let fallbackSession = AVCaptureSession()
     private var lifecycle: CameraSessionLifecycle
+    private var frameIndex: Int64 = 0
 
     public init(sessionPreset: AVCaptureSession.Preset = .high, position: AVCaptureDevice.Position = .back) throws {
-        self.session = AVCaptureSession()
+        self.realtime = KakaposRealtime()
         self.currentPosition = Self.cameraPosition(from: position)
         self.lifecycle = CameraSessionLifecycle(position: Self.cameraPosition(from: position))
         super.init()
-        try configure(sessionPreset: sessionPreset, position: position)
-        addObservers()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
+        configure(position: position, sessionPreset: sessionPreset)
     }
 
     public func start() {
         publish(.startRequested)
         queue.async {
-            self.session.startRunning()
-            self.publish(.didStartRunning)
+            do {
+                try self.realtime.start()
+            } catch {
+                self.publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
+                DispatchQueue.main.async {
+                    self.delegate?.mediaSource(self, didFail: error)
+                }
+            }
         }
     }
 
@@ -61,9 +62,7 @@ public final class CameraSource: NSObject, MediaSource {
 
     public func stop() {
         queue.async {
-            self.session.stopRunning()
-            self.publish(.didStopRunning)
-            DispatchQueue.main.async { self.delegate?.mediaSourceDidFinish(self) }
+            self.realtime.stop()
         }
     }
 
@@ -71,106 +70,52 @@ public final class CameraSource: NSObject, MediaSource {
         stop()
     }
 
-    private func configure(sessionPreset: AVCaptureSession.Preset, position: AVCaptureDevice.Position) throws {
-        session.beginConfiguration()
-        session.sessionPreset = sessionPreset
-        defer { session.commitConfiguration() }
-
-        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
-            throw VideoX.Error.videoTrackEmpty
-        }
-        let videoInput = try AVCaptureDeviceInput(device: videoDevice)
-        if session.canAddInput(videoInput) {
-            session.addInput(videoInput)
-            self.videoInput = videoInput
-        }
-
-        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        videoOutput.setSampleBufferDelegate(self, queue: queue)
-        if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
-
-        if let audioDevice = AVCaptureDevice.default(for: .audio), let audioInput = try? AVCaptureDeviceInput(device: audioDevice), session.canAddInput(audioInput) {
-            session.addInput(audioInput)
-            audioOutput.setSampleBufferDelegate(self, queue: queue)
-            if session.canAddOutput(audioOutput) { session.addOutput(audioOutput) }
-        }
-    }
-
     @discardableResult
     public func switchCameraPosition() -> Bool {
-        queue.sync {
-            guard let currentInput = videoInput else { return false }
-            let nextPosition: AVCaptureDevice.Position = currentInput.device.position == .back ? .front : .back
-            guard let nextDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: nextPosition),
-                  let nextInput = try? AVCaptureDeviceInput(device: nextDevice) else {
-                return false
-            }
-            session.beginConfiguration()
-            session.removeInput(currentInput)
-            guard session.canAddInput(nextInput) else {
-                session.addInput(currentInput)
-                session.commitConfiguration()
-                return false
-            }
-            session.addInput(nextInput)
-            session.commitConfiguration()
-            videoInput = nextInput
-            publish(.positionChanged(Self.cameraPosition(from: nextPosition)))
-            return true
+        realtime.flipCaptureDevicePosition()
+        let nextPosition: CameraPosition = currentPosition == .back ? .front : .back
+        publish(.positionChanged(nextPosition))
+        return true
+    }
+
+    private func configure(position: AVCaptureDevice.Position, sessionPreset: AVCaptureSession.Preset) {
+        realtime.delegate = self
+        realtime.videoDelegate = self
+        realtime.captureMode = .video
+        realtime.devicePosition = position
+        realtime.previewLayer.videoGravity = .resizeAspectFill
+        realtime.videoConfiguration.preset = sessionPreset
+        realtime.rawVideoSampleBufferHandler = { [weak self] sampleBuffer, _ in
+            self?.emit(sampleBuffer: sampleBuffer, mediaType: .video)
+        }
+        realtime.rawAudioSampleBufferHandler = { [weak self] sampleBuffer, _ in
+            self?.emit(sampleBuffer: sampleBuffer, mediaType: .audio)
         }
     }
 
-    @objc private func handleSessionWasInterrupted(_ notification: Notification) {
-        publish(.wasInterrupted)
-    }
-
-    @objc private func handleSessionInterruptionEnded(_ notification: Notification) {
-        publish(.interruptionEnded)
-    }
-
-    @objc private func handleSessionRuntimeError(_ notification: Notification) {
-        let nsError = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
-        let avError = nsError.flatMap { AVError(_nsError: $0) }
-        let isRecoverable = avError?.code == .mediaServicesWereReset
-        let description = avError?.localizedDescription ?? nsError?.localizedDescription
-        publish(.runtimeError(isRecoverable: isRecoverable, description: description))
-        if let avError {
-            DispatchQueue.main.async {
-                self.delegate?.mediaSource(self, didFail: avError)
-            }
-        } else if let nsError {
-            DispatchQueue.main.async {
-                self.delegate?.mediaSource(self, didFail: nsError)
-            }
+    private func emit(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
+        guard !isPaused else { return }
+        frameIndex += 1
+        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let duration = CMSampleBufferGetDuration(sampleBuffer)
+        var frame = MediaFrame(
+            sampleBuffer: sampleBuffer,
+            metadata: FrameMetadata(
+                presentationTime: presentationTime,
+                duration: duration.isValid ? duration : nil,
+                sourceTime: presentationTime,
+                frameIndex: frameIndex,
+                userInfo: [
+                    MetadataKey.mediaType: mediaType.rawValue,
+                    MetadataKey.cameraPosition: String(describing: currentPosition),
+                    MetadataKey.sessionState: String(describing: state)
+                ]
+            )
+        )
+        frame.metadata.frameIndex = frameIndex
+        DispatchQueue.main.async {
+            self.delegate?.mediaSource(self, didOutput: frame)
         }
-        guard isRecoverable, lifecycle.shouldAttemptRecovery else { return }
-        queue.async {
-            guard !self.session.isRunning else { return }
-            self.publish(.startRequested)
-            self.session.startRunning()
-            self.publish(.didStartRunning)
-        }
-    }
-
-    private func addObservers() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSessionWasInterrupted(_:)),
-            name: AVCaptureSession.wasInterruptedNotification,
-            object: session
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSessionInterruptionEnded(_:)),
-            name: AVCaptureSession.interruptionEndedNotification,
-            object: session
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSessionRuntimeError(_:)),
-            name: AVCaptureSession.runtimeErrorNotification,
-            object: session
-        )
     }
 
     private func publish(_ action: CameraLifecycleAction) {
@@ -194,27 +139,66 @@ public final class CameraSource: NSObject, MediaSource {
     }
 }
 
-extension CameraSource: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
-    public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard !isPaused else { return }
-        frameIndex += 1
-        let mediaType = output === videoOutput ? AVMediaType.video.rawValue : AVMediaType.audio.rawValue
-        var frame = MediaFrame(
-            sampleBuffer: sampleBuffer,
-            metadata: FrameMetadata(
-                presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
-                duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
-                sourceTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
-                frameIndex: frameIndex,
-                userInfo: [
-                    MetadataKey.mediaType: mediaType,
-                    MetadataKey.cameraPosition: String(describing: currentPosition),
-                    MetadataKey.sessionState: String(describing: state)
-                ]
-            )
-        )
-        frame.metadata.frameIndex = frameIndex
-        DispatchQueue.main.async { self.delegate?.mediaSource(self, didOutput: frame) }
+extension CameraSource: KakaposRealtimeDelegate {
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didUpdateVideoConfiguration videoConfiguration: KakaposRealtimeVideoConfiguration) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didUpdateAudioConfiguration audioConfiguration: KakaposRealtimeAudioConfiguration) {}
+
+    public func kakaposRealtimeSessionWillStart(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtimeSessionDidStart(_ kakaposRealtime: KakaposRealtime) {
+        publish(.didStartRunning)
     }
+
+    public func kakaposRealtimeSessionDidStop(_ kakaposRealtime: KakaposRealtime) {
+        publish(.didStopRunning)
+        delegate?.mediaSourceDidFinish(self)
+    }
+
+    public func kakaposRealtimeSessionWasInterrupted(_ kakaposRealtime: KakaposRealtime) {
+        publish(.wasInterrupted)
+    }
+
+    public func kakaposRealtimeSessionInterruptionEnded(_ kakaposRealtime: KakaposRealtime) {
+        publish(.interruptionEnded)
+    }
+
+    public func kakaposRealtimeCaptureModeWillChange(_ kakaposRealtime: KakaposRealtime) {}
+
+    public func kakaposRealtimeCaptureModeDidChange(_ kakaposRealtime: KakaposRealtime) {}
+}
+
+extension CameraSource: KakaposRealtimeVideoDelegate {
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didUpdateVideoZoomFactor videoZoomFactor: Float) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, willProcessRawVideoSampleBuffer sampleBuffer: CMSampleBuffer, onQueue queue: DispatchQueue) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, renderToCustomContextWithImageBuffer imageBuffer: CVPixelBuffer, onQueue queue: DispatchQueue) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, willProcessFrame frame: AnyObject, timestamp: TimeInterval, onQueue queue: DispatchQueue) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didSetupVideoInSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didSetupAudioInSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didStartClipInSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didCompleteClip clip: KakaposRealtimeClip, inSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didAppendVideoSampleBuffer sampleBuffer: CMSampleBuffer, inSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didSkipVideoSampleBuffer sampleBuffer: CMSampleBuffer, inSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didAppendVideoPixelBuffer pixelBuffer: CVPixelBuffer, timestamp: TimeInterval, inSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didSkipVideoPixelBuffer pixelBuffer: CVPixelBuffer, timestamp: TimeInterval, inSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didAppendAudioSampleBuffer sampleBuffer: CMSampleBuffer, inSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didSkipAudioSampleBuffer sampleBuffer: CMSampleBuffer, inSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didCompleteSession session: KakaposRealtimeSession) {}
+
+    public func kakaposRealtime(_ kakaposRealtime: KakaposRealtime, didCompletePhotoCaptureFromVideoFrame photoDict: [String : Any]?) {}
 }
 #endif
