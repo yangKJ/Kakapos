@@ -158,14 +158,20 @@ public final class MediaPipeline {
 
         chain.finish { [weak self] result in
             if case .failure(let error) = result {
-                self?.failChain(with: error)
+                self?.failChain(with: error, allowFromFinished: true, cancelChain: false)
             }
         }
     }
 
-    private func failChain(with error: Error) {
-        guard transitionIfNeeded(from: [.running, .paused, .idle], to: .failed) else { return }
-        chain.cancel()
+    private func failChain(with error: Error, allowFromFinished: Bool = false, cancelChain: Bool = true) {
+        var allowedStates: [State] = [.running, .paused, .idle]
+        if allowFromFinished {
+            allowedStates.append(.finished)
+        }
+        guard transitionIfNeeded(from: allowedStates, to: .failed) else { return }
+        if cancelChain {
+            chain.cancel()
+        }
         DispatchQueue.main.async {
             self.errorHandler?(error)
         }
