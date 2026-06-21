@@ -70,6 +70,7 @@ public struct AppendAudioResult: Sendable {
 /// - `beginClipIfNeeded()` instead of `if !isReady { beginClip() }`
 /// - `setupVideoIfNeeded()` instead of `if !isVideoSetup { setupVideo() }`
 /// - `getState()` for atomic multi-property snapshots
+@available(*, deprecated, message: "Use RecorderSink and RecordingPipeline.")
 public actor KakaposRealtimeSession {
 
     /// Output directory for a session.

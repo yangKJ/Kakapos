@@ -317,6 +317,7 @@ private let KakaposRealtimeRequiredMinimumStorageSpaceInBytes: UInt64 = 49999872
 // MARK: - KakaposRealtime state
 
 /// ⬆️ KakaposRealtime, Rad Media Capture in Swift (Kakapos)
+@available(*, deprecated, message: "Use CameraSource, RecorderSink, RecordingPipeline, and TimelinePipeline.")
 public class KakaposRealtime: NSObject, @unchecked Sendable {
 
     // MARK: - Delegates
