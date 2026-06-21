@@ -258,6 +258,7 @@ public final class ReaderWriterExportJob {
         }
 
         do {
+            removePartialOutputIfNeeded()
             let configuration = try makeConfiguration()
             let session = try sessionFactory(asset, outputURL, configuration)
             exportSession = session
