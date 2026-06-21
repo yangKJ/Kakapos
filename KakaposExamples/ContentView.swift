@@ -417,6 +417,14 @@ private struct CameraRecordView: View {
             Text("Session State: \(sessionStateText)").font(.subheadline).foregroundColor(.secondary)
             Text("Recorder State: \(recorderStateText)").font(.subheadline).foregroundColor(.secondary)
             Text("Recorder Snapshot: \(recorderSnapshotText)").font(.footnote).foregroundColor(.secondary)
+            #if canImport(UIKit) && !os(watchOS)
+            Text(cameraSource?.summaryText ?? "state idle · position unspecified · auth notDetermined · paused no · mode video")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            Text(recorder?.summaryText ?? "state idle · clips 0 · total 0.00s · clip 0.00s · recorded no")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+            #endif
             Text("Last Output: \(lastOutputText)").font(.subheadline).foregroundColor(.secondary)
             HStack {
                 Button("Start Camera") { startCamera() }
@@ -561,6 +569,9 @@ private struct CameraRecordView: View {
         sessionStateText = "stopped"
         recorderStateText = "finished"
         recorderSnapshotText = "segments: 0 · duration: 0.00s"
+        cameraSource = nil
+        recorder = nil
+        pipeline = nil
         #else
         message = "CameraSource is unavailable here"
         #endif
