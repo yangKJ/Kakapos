@@ -27,6 +27,33 @@ struct ContentView: View {
     }
 }
 
+private struct BoardHeaderView: View {
+    let board: KakaposCapabilityBoard
+
+    private var info: KakaposCapabilityBoardInfo? {
+        KakaposCapabilityCatalog.board(named: board.rawValue)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(info?.displayName ?? board.displayName)
+                    .font(.headline)
+                Text((info?.starterTypes ?? board.starterTypes).joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            Text(info?.summary ?? board.summary)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 private struct OfflineExportView: View {
     @State private var player: AVPlayer?
     @State private var outputURL: URL?
@@ -40,6 +67,7 @@ private struct OfflineExportView: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            BoardHeaderView(board: .export)
             VideoPlayer(player: player)
                 .frame(maxHeight: 280)
                 .background(Color.black.opacity(0.08))
@@ -59,7 +87,7 @@ private struct OfflineExportView: View {
                 .foregroundColor(.secondary)
 
             HStack {
-                Button("Export with Harbeth") { exportVideo() }
+                Button("Export") { exportVideo() }
                     .disabled(isProcessing)
                 Button("Cancel") { cancelExport() }
                     .disabled(exportTask == nil || !isProcessing)
@@ -244,6 +272,7 @@ private struct PlayerPreviewView: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            BoardHeaderView(board: .preview)
             Group {
                 if let previewImage {
                     Image(decorative: previewImage, scale: 1)
@@ -400,6 +429,7 @@ private struct CameraRecordView: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            BoardHeaderView(board: .record)
             Group {
                 if let livePreviewImage {
                     Image(decorative: livePreviewImage, scale: 1)
@@ -626,6 +656,7 @@ private struct TimelineExportView: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            BoardHeaderView(board: .timeline)
             VideoPlayer(player: player)
                 .frame(maxHeight: 280)
                 .background(Color.black.opacity(0.08))
