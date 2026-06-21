@@ -99,7 +99,6 @@ public final class TimelineExportTask {
         progress: ((Float) -> Void)? = nil,
         progressInfo: ((ReaderWriterExportJob.ProgressInfo) -> Void)? = nil
     ) {
-        progress?(0.0)
         readerWriterJob.progressHandler = { info in
             progress?(Float(info.overallFractionCompleted))
             progressInfo?(info)
@@ -107,12 +106,11 @@ public final class TimelineExportTask {
         readerWriterJob.export { result in
             switch result {
             case .success(let outputURL):
-                progress?(1.0)
+                if let lastProgressInfo = self.readerWriterJob.lastProgressInfo {
+                    progress?(Float(lastProgressInfo.overallFractionCompleted))
+                }
                 complete(.success(outputURL))
             case .failure(let error):
-                if case VideoX.Error.exportCancelled = VideoX.Error.toError(error) {
-                    progress?(0.0)
-                }
                 complete(.failure(VideoX.Error.toError(error)))
             }
         }

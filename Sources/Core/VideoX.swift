@@ -87,12 +87,11 @@ public struct VideoX {
                 readerWriterJob.export { result in
                     switch result {
                     case .success(let outputURL):
-                        progress?(1.0)
+                        if let lastProgress = readerWriterJob.lastProgressInfo {
+                            progress?(Float(lastProgress.overallFractionCompleted))
+                        }
                         complete(.success(outputURL))
                     case .failure(let error):
-                        if case VideoX.Error.exportCancelled = VideoX.Error.toError(error) {
-                            progress?(0.0)
-                        }
                         complete(.failure(VideoX.Error.toError(error)))
                     }
                 }
