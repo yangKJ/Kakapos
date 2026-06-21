@@ -37,6 +37,33 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(boards.allSatisfy { $0.primaryTypes.isEmpty == false })
     }
 
+    func testCapabilityCatalogGuideIsCodableForLightweightExternalConsumption() throws {
+        let guide = KakaposCapabilityCatalog.guide
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(guide)
+        let decoded = try JSONDecoder().decode(KakaposSurfaceGuide.self, from: data)
+
+        XCTAssertEqual(decoded.boardCount, guide.boardCount)
+        XCTAssertEqual(decoded.boardNames, guide.boardNames)
+        XCTAssertEqual(decoded.starterBoardNames, guide.starterBoardNames)
+        XCTAssertEqual(decoded.summaryText, guide.summaryText)
+        XCTAssertEqual(decoded.starterText, guide.starterText)
+    }
+
+    func testSurfaceSectionIsCodableForCompactBoardManifests() throws {
+        let section = try XCTUnwrap(KakaposSurface.section(.preview))
+        let data = try JSONEncoder().encode(section)
+        let decoded = try JSONDecoder().decode(KakaposSurfaceSection.self, from: data)
+
+        XCTAssertEqual(decoded.id, section.id)
+        XCTAssertEqual(decoded.displayName, section.displayName)
+        XCTAssertEqual(decoded.summary, section.summary)
+        XCTAssertEqual(decoded.usageHint, section.usageHint)
+        XCTAssertEqual(decoded.primaryTypes, section.primaryTypes)
+        XCTAssertEqual(decoded.starterTypes, section.starterTypes)
+    }
+
     func testKakaposSurfaceBoardFacadesMirrorTheCapabilityCatalog() {
         XCTAssertEqual(KakaposSurface.starterBoards.map(\.board), KakaposCapabilityCatalog.starterBoards.map(\.board))
         XCTAssertEqual(KakaposSurface.sections.map(\.board), KakaposCapabilityCatalog.boards.map(\.board))
