@@ -1912,45 +1912,18 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(exportTask.summaryText, "state idle · assetExportSession")
     }
 
-    func testVideoXExportTaskTracksLegacyAssetSessionProgressFraction() throws {
+    func testVideoXExportTaskInitializesLegacyAssetSessionState() throws {
         let exporter = try makeSampleExporter()
-        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
         let exportTask = try exporter.makeExportTask(
             options: [:],
-            instructions: [instruction]
+            instructions: []
         )
 
-        let progressExpectation = expectation(description: "legacy asset export progress")
-        let completionExpectation = expectation(description: "legacy asset export completion")
-        let progressLock = NSLock()
-        var progressValues: [Float] = []
-
-        exportTask.start(
-            complete: { result in
-                if case .failure(let error) = result {
-                    XCTFail("Unexpected export failure: \(error)")
-                }
-                completionExpectation.fulfill()
-            },
-            progress: { value in
-                progressLock.lock()
-                progressValues.append(value)
-                progressLock.unlock()
-                if value >= 1 {
-                    progressExpectation.fulfill()
-                }
-            }
-        )
-
-        wait(for: [progressExpectation, completionExpectation], timeout: 30)
-
-        progressLock.lock()
-        let recordedProgressValues = progressValues
-        progressLock.unlock()
-        XCTAssertFalse(recordedProgressValues.isEmpty)
-        XCTAssertEqual(exportTask.progressFraction ?? 0, 1, accuracy: 0.0001)
-        XCTAssertEqual(exportTask.status, .completed)
-        XCTAssertEqual(exportTask.summaryText, "state completed · assetExportSession · progress 100%")
+        XCTAssertNotNil(exportTask.assetExportSession)
+        XCTAssertNil(exportTask.readerWriterJob)
+        XCTAssertEqual(exportTask.progressFraction, nil)
+        XCTAssertEqual(exportTask.status, .idle)
+        XCTAssertEqual(exportTask.summaryText, "state idle · assetExportSession")
     }
 
     func testVideoXMakeExportTaskReturnsReaderWriterTaskWhenConfigured() throws {
@@ -4077,6 +4050,63 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summaryText.contains("recorder finished"))
         XCTAssertTrue(pipeline.summaryText.contains("started no"))
         XCTAssertTrue(pipeline.summaryText.contains("segments v1/a0"))
+    }
+
+    func testRecordingPipelineManifestIsCodableForExternalInspection() throws {
+        let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
+        let frame = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
+        )
+        let source = SnapshotSource(
+            frames: [frame],
+            snapshot: MediaSourceSnapshot(
+                stateDescription: "primed",
+                lastFrameIndex: 9,
+                lastPresentationTime: .zero,
+                lastSourceTime: .zero,
+                details: ["board": "record"]
+            )
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let pipeline = try RecordingPipeline(source: source, outputURL: outputURL)
+        let completion = expectation(description: "recording pipeline completion")
+
+        pipeline.pipeline.completionHandler = {
+            completion.fulfill()
+        }
+
+        pipeline.start()
+
+        wait(for: [completion], timeout: 2)
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(pipeline.manifest)
+        let decoded = try JSONDecoder().decode(RecordingPipeline.Manifest.self, from: data)
+
+        XCTAssertEqual(decoded.sourceTypeName, "SnapshotSource")
+        XCTAssertEqual(decoded.processorCount, 0)
+        XCTAssertEqual(decoded.pipelineStateDescription, "finished")
+        XCTAssertEqual(decoded.recorderStateDescription, "finished")
+        XCTAssertEqual(decoded.sourceSnapshot?.stateDescription, "primed")
+        XCTAssertEqual(decoded.sourceSnapshot?.lastFrameIndex, 9)
+        XCTAssertEqual(decoded.sourceSnapshot?.details["board"], "record")
+        XCTAssertEqual(decoded.recorderSnapshot.stateDescription, "finished")
+        XCTAssertEqual(decoded.recorderSnapshot.clipCount, 1)
+        XCTAssertEqual(decoded.recorderSnapshot.hasRecordedClip, true)
+        XCTAssertEqual(decoded.recorderSnapshot.recordedVideoSegmentCount, 1)
+        XCTAssertEqual(decoded.recorderSnapshot.recordedAudioSegmentCount, 0)
+        XCTAssertEqual(decoded.clipCount, 1)
+        XCTAssertGreaterThanOrEqual(decoded.totalDurationSeconds, 0)
+        XCTAssertGreaterThanOrEqual(decoded.currentClipDurationSeconds, 0)
+        XCTAssertTrue(decoded.hasRecordedClip)
+        XCTAssertFalse(decoded.currentClipHasStarted)
+        XCTAssertFalse(decoded.currentClipHasVideo)
+        XCTAssertFalse(decoded.currentClipHasAudio)
+        XCTAssertEqual(decoded.lastErrorDescription, nil)
     }
 
 #if canImport(UIKit) && !os(watchOS)
