@@ -13,6 +13,8 @@ public final class MediaPipeline: MediaSourceDelegate {
     public var sinks: [MediaSink]
     public var errorHandler: ((Error) -> Void)?
     public var completionHandler: (() -> Void)?
+    private var hasFinishedSinks = false
+    private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-pipeline.state")
 
     public init(source: MediaSource, processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
         self.source = source
@@ -82,6 +84,12 @@ public final class MediaPipeline: MediaSourceDelegate {
     }
 
     private func finishSinks() {
+        let shouldFinish = stateQueue.sync { () -> Bool in
+            guard !hasFinishedSinks else { return false }
+            hasFinishedSinks = true
+            return true
+        }
+        guard shouldFinish else { return }
         guard !sinks.isEmpty else {
             completionHandler?()
             return

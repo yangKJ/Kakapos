@@ -9,6 +9,20 @@ import Foundation
 import AVFoundation
 import CoreVideo
 
+public struct RecordedClip: Equatable {
+    public let outputURL: URL
+    public let duration: CMTime
+    public let startedAt: CMTime?
+    public let endedAt: CMTime?
+
+    public init(outputURL: URL, duration: CMTime, startedAt: CMTime?, endedAt: CMTime?) {
+        self.outputURL = outputURL
+        self.duration = duration
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+    }
+}
+
 public final class RecorderSink: MediaSink {
     public enum State {
         case idle
@@ -19,6 +33,7 @@ public final class RecorderSink: MediaSink {
 
     public let outputURL: URL
     public private(set) var state: State = .idle
+    public private(set) var recordedClip: RecordedClip?
     public var durationChangedHandler: ((CMTime) -> Void)?
 
     private let writer: AVAssetWriter
@@ -26,6 +41,7 @@ public final class RecorderSink: MediaSink {
     private var audioInput: AVAssetWriterInput?
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var startTime: CMTime?
+    private var lastPresentationTime: CMTime?
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
 
     public init(outputURL: URL, fileType: AVFileType = .mp4) throws {
@@ -46,10 +62,31 @@ public final class RecorderSink: MediaSink {
     }
 
     public func finish(completion: @escaping (Result<Void, Error>) -> Void) {
+        finishRecording { result in
+            switch result {
+            case .success:
+                completion(.success(()))
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+
+    public func finishRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
         queue.async {
+            if self.state == .cancelled {
+                completion(.failure(VideoX.Error.exportCancelled))
+                return
+            }
+            if self.state == .finished, let recordedClip = self.recordedClip {
+                completion(.success(recordedClip))
+                return
+            }
             guard self.state == .recording else {
                 self.state = .finished
-                completion(.success(()))
+                let clip = RecordedClip(outputURL: self.outputURL, duration: .zero, startedAt: self.startTime, endedAt: self.lastPresentationTime)
+                self.recordedClip = clip
+                completion(.success(clip))
                 return
             }
             self.videoInput?.markAsFinished()
@@ -59,7 +96,9 @@ public final class RecorderSink: MediaSink {
                 if let error = self.writer.error {
                     completion(.failure(error))
                 } else {
-                    completion(.success(()))
+                    let clip = self.makeRecordedClip()
+                    self.recordedClip = clip
+                    completion(.success(clip))
                 }
             }
         }
@@ -69,6 +108,7 @@ public final class RecorderSink: MediaSink {
         queue.async {
             self.writer.cancelWriting()
             self.state = .cancelled
+            self.recordedClip = nil
         }
     }
 
@@ -82,6 +122,7 @@ public final class RecorderSink: MediaSink {
         try startIfNeeded(at: frame.metadata.presentationTime)
         guard let input = videoInput, let adaptor = pixelBufferAdaptor, input.isReadyForMoreMediaData else { return }
         adaptor.append(pixelBuffer, withPresentationTime: frame.metadata.presentationTime)
+        updateLastPresentationTime(frame.metadata.presentationTime)
         if let startTime = startTime {
             durationChangedHandler?(frame.metadata.presentationTime - startTime)
         }
@@ -114,6 +155,7 @@ public final class RecorderSink: MediaSink {
         try startIfNeeded(at: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
         guard let input = audioInput, input.isReadyForMoreMediaData else { return }
         input.append(sampleBuffer)
+        updateLastPresentationTime(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
     }
 
     private func setupAudioIfNeeded(sampleBuffer: CMSampleBuffer) throws {
@@ -131,6 +173,35 @@ public final class RecorderSink: MediaSink {
         guard writer.startWriting() else { throw writer.error ?? VideoX.Error.unknown }
         writer.startSession(atSourceTime: time)
         startTime = time
+        lastPresentationTime = time
         state = .recording
+    }
+
+    private func updateLastPresentationTime(_ time: CMTime) {
+        guard time.isValid else { return }
+        if let lastPresentationTime {
+            if time > lastPresentationTime {
+                self.lastPresentationTime = time
+            }
+        } else {
+            lastPresentationTime = time
+        }
+    }
+
+    private func makeRecordedClip() -> RecordedClip {
+        let startedAt = startTime
+        let endedAt = lastPresentationTime
+        let duration: CMTime
+        if let startedAt, let endedAt, startedAt.isValid, endedAt.isValid {
+            duration = CMTimeSubtract(endedAt, startedAt)
+        } else {
+            duration = .zero
+        }
+        return RecordedClip(
+            outputURL: outputURL,
+            duration: duration,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
     }
 }

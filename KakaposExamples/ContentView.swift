@@ -211,6 +211,7 @@ private struct PlayerPreviewView: View {
 private struct CameraRecordView: View {
     @State private var player: AVPlayer?
     @State private var frameCount = 0
+    @State private var recordedDurationText = "0.00s"
     @State private var message = "Camera recording requires device camera permission"
     #if canImport(UIKit) && !os(watchOS)
     @State private var pipeline: MediaPipeline?
@@ -225,6 +226,7 @@ private struct CameraRecordView: View {
                 .background(Color.black.opacity(0.08))
                 .cornerRadius(8)
             Text("Captured Frames: \(frameCount)").font(.headline)
+            Text("Recorded Duration: \(recordedDurationText)").font(.subheadline).foregroundColor(.secondary)
             HStack {
                 Button("Start Camera") { startCamera() }
                 Button("Stop") { stopCamera() }
@@ -248,6 +250,11 @@ private struct CameraRecordView: View {
                     let source = try CameraSource()
                     let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
                     let recorder = try RecorderSink(outputURL: outputURL)
+                    recorder.durationChangedHandler = { duration in
+                        DispatchQueue.main.async {
+                            recordedDurationText = String(format: "%.2fs", duration.seconds)
+                        }
+                    }
                     let counter = PixelBufferSink { _ in frameCount += 1 }
                     let pipeline = MediaPipeline(
                         source: source,
@@ -255,14 +262,17 @@ private struct CameraRecordView: View {
                         sinks: [counter, recorder]
                     )
                     pipeline.completionHandler = {
-                        player = AVPlayer(url: outputURL)
+                        let clip = recorder.recordedClip ?? RecordedClip(outputURL: outputURL, duration: .zero, startedAt: nil, endedAt: nil)
+                        player = AVPlayer(url: clip.outputURL)
                         player?.play()
-                        message = "Recorded: \(outputURL.lastPathComponent)"
+                        recordedDurationText = String(format: "%.2fs", clip.duration.seconds)
+                        message = "Recorded: \(clip.outputURL.lastPathComponent)"
                     }
                     self.cameraSource = source
                     self.recorder = recorder
                     self.pipeline = pipeline
                     frameCount = 0
+                    recordedDurationText = "0.00s"
                     pipeline.start()
                     message = "Recording camera frames"
                 } catch {
