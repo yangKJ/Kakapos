@@ -10,7 +10,27 @@ import AVFoundation
 import CoreVideo
 
 public final class RecorderSink: MediaSink {
-    public enum State: Equatable {
+    public struct Snapshot: Equatable, Sendable {
+        public let state: State
+        public let outputURL: URL
+        public let recordedClipURL: URL?
+        public let totalDuration: CMTime
+        public let currentClipDuration: CMTime
+        public let clipCount: Int
+        public let currentClipHasStarted: Bool
+        public let currentClipHasVideo: Bool
+        public let currentClipHasAudio: Bool
+        public let recordedVideoSegmentCount: Int
+        public let recordedAudioSegmentCount: Int
+        public let lastPresentationTime: CMTime?
+        public let pausedAt: CMTime?
+
+        public var hasRecordedClip: Bool {
+            recordedClipURL != nil
+        }
+    }
+
+    public enum State: Equatable, Sendable {
         case idle
         case recording
         case paused
@@ -25,6 +45,26 @@ public final class RecorderSink: MediaSink {
     public var stateChangedHandler: ((State) -> Void)?
     public var droppedFrameHandler: ((FrameMetadata) -> Void)?
     public var runtimeErrorHandler: ((Error) -> Void)?
+    public var snapshot: Snapshot {
+        queue.sync {
+            let recordingSnapshot = session.snapshot()
+            return Snapshot(
+                state: state,
+                outputURL: outputURL,
+                recordedClipURL: recordedClip?.outputURL,
+                totalDuration: recordingSnapshot.totalDuration,
+                currentClipDuration: recordingSnapshot.currentClipDuration,
+                clipCount: recordingSnapshot.clipCount,
+                currentClipHasStarted: recordingSnapshot.currentClipHasStarted,
+                currentClipHasVideo: recordingSnapshot.currentClipHasVideo,
+                currentClipHasAudio: recordingSnapshot.currentClipHasAudio,
+                recordedVideoSegmentCount: recordingSnapshot.recordedVideoSegmentCount,
+                recordedAudioSegmentCount: recordingSnapshot.recordedAudioSegmentCount,
+                lastPresentationTime: lastPresentationTime,
+                pausedAt: pausedAt
+            )
+        }
+    }
 
     private let writer: AVAssetWriter
     private let session = RecordingSession()

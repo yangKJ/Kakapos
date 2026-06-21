@@ -374,6 +374,7 @@ private struct CameraRecordView: View {
     @State private var recordedDurationText = "0.00s"
     @State private var sessionStateText = "idle"
     @State private var recorderStateText = "idle"
+    @State private var recorderSnapshotText = "segments: 0 · duration: 0.00s"
     @State private var lastOutputText = "none"
     @State private var message = "Camera recording requires device camera permission"
     #if canImport(UIKit) && !os(watchOS)
@@ -400,6 +401,7 @@ private struct CameraRecordView: View {
             Text("Recorded Duration: \(recordedDurationText)").font(.subheadline).foregroundColor(.secondary)
             Text("Session State: \(sessionStateText)").font(.subheadline).foregroundColor(.secondary)
             Text("Recorder State: \(recorderStateText)").font(.subheadline).foregroundColor(.secondary)
+            Text("Recorder Snapshot: \(recorderSnapshotText)").font(.footnote).foregroundColor(.secondary)
             Text("Last Output: \(lastOutputText)").font(.subheadline).foregroundColor(.secondary)
             HStack {
                 Button("Start Camera") { startCamera() }
@@ -468,10 +470,12 @@ private struct CameraRecordView: View {
                     recorder.durationChangedHandler = { duration in
                         DispatchQueue.main.async {
                             recordedDurationText = String(format: "%.2fs", duration.seconds)
+                            recorderSnapshotText = snapshotText(for: recorder.snapshot)
                         }
                     }
                     recorder.stateChangedHandler = { state in
                         recorderStateText = String(describing: state)
+                        recorderSnapshotText = snapshotText(for: recorder.snapshot)
                     }
                     let counter = PixelBufferSink { _ in frameCount += 1 }
                     let preview = PixelBufferSink { frame in
@@ -506,6 +510,7 @@ private struct CameraRecordView: View {
                         livePreviewImage = nil
                         recordedDurationText = String(format: "%.2fs", clip.duration.seconds)
                         recorderStateText = String(describing: recorder.state)
+                        recorderSnapshotText = snapshotText(for: recorder.snapshot)
                         lastOutputText = clipURL.lastPathComponent
                         message = "Recorded: \(clipURL.lastPathComponent)"
                     }
@@ -518,6 +523,7 @@ private struct CameraRecordView: View {
                     recordedDurationText = "0.00s"
                     sessionStateText = String(describing: source.state)
                     recorderStateText = String(describing: recorder.state)
+                    recorderSnapshotText = snapshotText(for: recorder.snapshot)
                     lastOutputText = "awaiting frames"
                     pipeline.start()
                     message = "Starting camera session"
@@ -539,6 +545,7 @@ private struct CameraRecordView: View {
         livePreviewImage = nil
         sessionStateText = "stopped"
         recorderStateText = "finished"
+        recorderSnapshotText = "segments: 0 · duration: 0.00s"
         #else
         message = "CameraSource is unavailable here"
         #endif
@@ -549,6 +556,9 @@ private struct CameraRecordView: View {
         cameraSource?.pause()
         recorder?.pauseRecording()
         recorderStateText = "paused"
+        if let recorder {
+            recorderSnapshotText = snapshotText(for: recorder.snapshot)
+        }
         message = "Recording paused"
         #endif
     }
@@ -558,6 +568,9 @@ private struct CameraRecordView: View {
         cameraSource?.resume()
         recorder?.resumeRecording()
         recorderStateText = "recording"
+        if let recorder {
+            recorderSnapshotText = snapshotText(for: recorder.snapshot)
+        }
         message = "Recording resumed"
         #endif
     }
@@ -572,6 +585,11 @@ private struct CameraRecordView: View {
             lastOutputText = "camera: \(String(describing: cameraSource.currentPosition))"
         }
         #endif
+    }
+
+    private func snapshotText(for snapshot: RecorderSink.Snapshot) -> String {
+        let duration = String(format: "%.2fs", snapshot.totalDuration.seconds)
+        return "segments: \(snapshot.clipCount) · video: \(snapshot.recordedVideoSegmentCount) · audio: \(snapshot.recordedAudioSegmentCount) · duration: \(duration)"
     }
 }
 
