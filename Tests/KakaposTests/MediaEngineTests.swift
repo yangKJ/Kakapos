@@ -1165,6 +1165,57 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(Double(job.progressFraction ?? 0), progress.overallFractionCompleted, accuracy: 0.0001)
     }
 
+    func testReaderWriterExportJobSnapshotTracksConfigurationAndRuntimeState() {
+        let asset = AVMutableComposition()
+        let metadataItem = AVMutableMetadataItem()
+        metadataItem.identifier = .commonIdentifierTitle
+        metadataItem.value = "Kakapos" as NSString
+
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mov"),
+            fileType: .mov,
+            timeRange: CMTimeRange(start: CMTime(value: 15, timescale: 30), duration: CMTime(value: 60, timescale: 30)),
+            videoComposition: AVMutableVideoComposition(),
+            audioMix: AVMutableAudioMix(),
+            videoProcessors: [PassthroughFrameProcessor()],
+            shouldOptimizeForNetworkUse: false,
+            metadata: [metadataItem]
+        )
+        let progress = ReaderWriterExportJob.ProgressInfo(
+            videoProgress: 0.25,
+            audioProgress: 0.75,
+            hasVideo: true,
+            hasAudio: true,
+            finishWritingProgress: 0.5,
+            phase: .finishing
+        )
+
+        job._setStatusForTesting(.exporting)
+        job._setProgressInfoForTesting(progress)
+
+        let snapshot = job.snapshot
+
+        XCTAssertEqual(snapshot.status, .exporting)
+        XCTAssertEqual(snapshot.fileType, .mov)
+        XCTAssertEqual(snapshot.timeRange, CMTimeRange(start: CMTime(value: 15, timescale: 30), duration: CMTime(value: 60, timescale: 30)))
+        XCTAssertFalse(snapshot.shouldOptimizeForNetworkUse)
+        XCTAssertEqual(snapshot.metadataCount, 1)
+        XCTAssertEqual(snapshot.videoTrackCount, 0)
+        XCTAssertEqual(snapshot.audioTrackCount, 0)
+        XCTAssertEqual(snapshot.processorCount, 1)
+        XCTAssertTrue(snapshot.hasVideoComposition)
+        XCTAssertTrue(snapshot.hasAudioMix)
+        XCTAssertEqual(snapshot.lastPhase, .finishing)
+        XCTAssertEqual(snapshot.progressFraction ?? 0, progress.overallFractionCompleted, accuracy: 0.0001)
+        XCTAssertEqual(snapshot.lastErrorDescription, nil)
+        XCTAssertEqual(job.summary.status, snapshot.status)
+        XCTAssertEqual(job.summary.lastPhase, snapshot.lastPhase)
+        XCTAssertEqual(job.summary.lastProgressInfo, snapshot.lastProgressInfo)
+    }
+
     func testReaderWriterExportJobSummaryReflectsTracksProcessorsAndProgress() {
         let asset = AVMutableComposition()
         let videoTrack = asset.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
