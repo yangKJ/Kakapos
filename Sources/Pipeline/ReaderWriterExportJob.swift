@@ -20,7 +20,7 @@ protocol ReaderWriterExportSession {
 }
 
 public final class ReaderWriterExportJob {
-    public enum Status: Equatable {
+    public enum Status: Equatable, Sendable {
         case idle
         case exporting
         case paused
@@ -29,7 +29,7 @@ public final class ReaderWriterExportJob {
         case failed
     }
 
-    public struct ProgressInfo {
+    public struct ProgressInfo: Equatable, Sendable {
         public enum Phase: String, Sendable {
             case idle
             case videoEncoding
@@ -70,6 +70,26 @@ public final class ReaderWriterExportJob {
         public var overallFractionCompleted: Double {
             guard hasVideo || hasAudio else { return finishWritingProgress }
             return max(fractionCompleted, finishWritingProgress)
+        }
+    }
+
+    public struct Snapshot: Equatable, Sendable {
+        public let status: Status
+        public let fileType: AVFileType
+        public let timeRange: CMTimeRange
+        public let shouldOptimizeForNetworkUse: Bool
+        public let metadataCount: Int
+        public let videoTrackCount: Int
+        public let audioTrackCount: Int
+        public let processorCount: Int
+        public let hasVideoComposition: Bool
+        public let hasAudioMix: Bool
+        public let lastPhase: ProgressInfo.Phase
+        public let lastProgressInfo: ProgressInfo?
+        public let lastErrorDescription: String?
+
+        public var progressFraction: Double? {
+            lastProgressInfo.map(\.overallFractionCompleted)
         }
     }
 
@@ -159,8 +179,8 @@ public final class ReaderWriterExportJob {
         stateQueue.sync { _status }
     }
 
-    public var summary: Summary {
-        Summary(
+    public var snapshot: Snapshot {
+        Snapshot(
             status: status,
             fileType: fileType,
             timeRange: timeRange ?? CMTimeRange(start: .zero, duration: .positiveInfinity),
@@ -174,6 +194,25 @@ public final class ReaderWriterExportJob {
             lastPhase: lastProgressInfo?.phase ?? .idle,
             lastProgressInfo: lastProgressInfo,
             lastErrorDescription: lastErrorDescription
+        )
+    }
+
+    public var summary: Summary {
+        let currentSnapshot = snapshot
+        return Summary(
+            status: currentSnapshot.status,
+            fileType: currentSnapshot.fileType,
+            timeRange: currentSnapshot.timeRange,
+            shouldOptimizeForNetworkUse: currentSnapshot.shouldOptimizeForNetworkUse,
+            metadataCount: currentSnapshot.metadataCount,
+            videoTrackCount: currentSnapshot.videoTrackCount,
+            audioTrackCount: currentSnapshot.audioTrackCount,
+            processorCount: currentSnapshot.processorCount,
+            hasVideoComposition: currentSnapshot.hasVideoComposition,
+            hasAudioMix: currentSnapshot.hasAudioMix,
+            lastPhase: currentSnapshot.lastPhase,
+            lastProgressInfo: currentSnapshot.lastProgressInfo,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
         )
     }
 
