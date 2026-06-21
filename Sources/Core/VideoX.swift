@@ -40,6 +40,10 @@ public struct VideoX {
             readerWriterJob != nil
         }
 
+        public var progressInfo: ReaderWriterExportJob.ProgressInfo? {
+            readerWriterJob?.lastProgressInfo
+        }
+
         public var status: Status {
             if let readerWriterJob {
                 return Self.status(for: readerWriterJob.status)
@@ -62,13 +66,13 @@ public struct VideoX {
 
         public func start(
             complete: @escaping ExportComplete,
-            progress: ((Float) -> Void)? = nil
+            progress: ((Float) -> Void)? = nil,
+            progressInfo: ((ReaderWriterExportJob.ProgressInfo) -> Void)? = nil
         ) {
             if let readerWriterJob {
-                if let progress {
-                    readerWriterJob.progressHandler = { info in
-                        progress(Float(info.overallFractionCompleted))
-                    }
+                readerWriterJob.progressHandler = { info in
+                    progress?(Float(info.overallFractionCompleted))
+                    progressInfo?(info)
                 }
                 readerWriterJob.export { result in
                     switch result {

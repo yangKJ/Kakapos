@@ -33,6 +33,7 @@ private struct OfflineExportView: View {
     @State private var exportTask: VideoX.ExportTask?
     @State private var isProcessing = false
     @State private var progress: Float = 0
+    @State private var progressDetail = "Progress detail unavailable"
     @State private var message = "Ready"
     @State private var taskStatus = "idle"
     @State private var selectedRotation: RotationAngle = .angle0
@@ -53,6 +54,9 @@ private struct OfflineExportView: View {
             .pickerStyle(.segmented)
 
             ProgressView(value: progress, total: 1)
+            Text(progressDetail)
+                .font(.footnote)
+                .foregroundColor(.secondary)
 
             HStack {
                 Button("Export with Harbeth") { exportVideo() }
@@ -90,6 +94,7 @@ private struct OfflineExportView: View {
         }
         isProcessing = true
         progress = 0
+        progressDetail = "Starting export..."
         let processor = HarbethFrameProcessor(filters: [C7LookupTable(name: "lut_abao"), C7Contrast(contrast: 0.9)])
         let filtering = FilterInstruction(processor: processor)
         let watermark = WatermarkInstruction(type: .text("Kakapos", font: .boldSystemFont(ofSize: 80), color: .red), position: .bottomRight, margin: 20, opacity: 0.8)
@@ -129,6 +134,10 @@ private struct OfflineExportView: View {
                 }
             }, progress: { value in
                 DispatchQueue.main.async { progress = value }
+            }, progressInfo: { info in
+                DispatchQueue.main.async {
+                    progressDetail = progressDetailText(for: info)
+                }
             })
         } catch {
             isProcessing = false
@@ -185,6 +194,17 @@ private struct OfflineExportView: View {
         case .failed:
             return "failed"
         }
+    }
+
+    private func progressDetailText(for info: ReaderWriterExportJob.ProgressInfo) -> String {
+        let videoText = info.hasVideo ? Self.percentageText(info.videoProgress) : "n/a"
+        let audioText = info.hasAudio ? Self.percentageText(info.audioProgress) : "n/a"
+        let finishText = Self.percentageText(info.finishWritingProgress)
+        return "Video \(videoText) · Audio \(audioText) · Finish \(finishText)"
+    }
+
+    private static func percentageText(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
     }
 
     private func saveVideo() {
