@@ -170,7 +170,7 @@ public final class MediaPipeline {
         self.init(source: source, processors: branch.processors, sinks: branch.sinks)
     }
 
-    #if canImport(UIKit)
+    #if canImport(UIKit) || os(macOS)
     public convenience init(player: AVPlayer, processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
         self.init(source: PlayerFrameSource(player: player), processors: processors, sinks: sinks)
     }

@@ -57,7 +57,7 @@ public enum KakaposBoards {
         )
     }
 
-#if canImport(UIKit)
+#if canImport(UIKit) || os(macOS)
     public static func preview(
         player: AVPlayer,
         preferredFramesPerSecond: Int = 30,

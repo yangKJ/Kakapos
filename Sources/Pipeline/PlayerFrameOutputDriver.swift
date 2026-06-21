@@ -10,6 +10,7 @@ import AVFoundation
 
 #if canImport(UIKit)
 import UIKit
+#endif
 
 protocol PlayerFrameDriving: AnyObject {
     var configuration: PlayerFrameOutputDriver.Configuration { get set }
@@ -18,6 +19,89 @@ protocol PlayerFrameDriving: AnyObject {
     func setNeedsUpdate()
     func updateIfNeeded()
 }
+
+private protocol PlayerFrameTicking: AnyObject {
+    var preferredFramesPerSecond: Int { get set }
+    var isPaused: Bool { get set }
+    func invalidate()
+}
+
+private final class TickerHandlerTarget {
+    private let handler: () -> Void
+
+    init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    @objc func tick() {
+        handler()
+    }
+}
+
+#if canImport(UIKit)
+private final class DisplayLinkTicker: NSObject, PlayerFrameTicking {
+    var preferredFramesPerSecond: Int {
+        didSet {
+            displayLink.preferredFramesPerSecond = preferredFramesPerSecond
+        }
+    }
+
+    var isPaused: Bool {
+        get { displayLink.isPaused }
+        set { displayLink.isPaused = newValue }
+    }
+
+    private let displayLink: CADisplayLink
+    private let target: TickerHandlerTarget
+
+    init(preferredFramesPerSecond: Int, handler: @escaping () -> Void) {
+        self.preferredFramesPerSecond = preferredFramesPerSecond
+        self.target = TickerHandlerTarget(handler: handler)
+        self.displayLink = CADisplayLink(target: target, selector: #selector(TickerHandlerTarget.tick))
+        super.init()
+        self.displayLink.preferredFramesPerSecond = preferredFramesPerSecond
+        self.displayLink.add(to: .main, forMode: .common)
+    }
+
+    func invalidate() {
+        displayLink.invalidate()
+    }
+}
+#else
+private final class DispatchTicker: PlayerFrameTicking {
+    var preferredFramesPerSecond: Int {
+        didSet {
+            reschedule()
+        }
+    }
+
+    var isPaused: Bool = true
+
+    private let timer: DispatchSourceTimer
+    private let target: TickerHandlerTarget
+
+    init(preferredFramesPerSecond: Int, handler: @escaping () -> Void) {
+        self.preferredFramesPerSecond = preferredFramesPerSecond
+        self.target = TickerHandlerTarget(handler: handler)
+        self.timer = DispatchSource.makeTimerSource(queue: .main)
+        self.timer.setEventHandler { [weak target] in
+            target?.tick()
+        }
+        self.timer.resume()
+        reschedule()
+    }
+
+    func invalidate() {
+        timer.cancel()
+    }
+
+    private func reschedule() {
+        let fps = max(preferredFramesPerSecond, 1)
+        let interval = DispatchTimeInterval.nanoseconds(Int(1_000_000_000 / fps))
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(1))
+    }
+}
+#endif
 
 final class PlayerFrameOutputDriver: NSObject {
 
@@ -38,7 +122,7 @@ final class PlayerFrameOutputDriver: NSObject {
 
     var configuration = Configuration() {
         didSet {
-            displayLink?.preferredFramesPerSecond = configuration.preferredFramesPerSecond
+            ticker?.preferredFramesPerSecond = configuration.preferredFramesPerSecond
         }
     }
 
@@ -58,7 +142,7 @@ final class PlayerFrameOutputDriver: NSObject {
         }
     }
 
-    private var displayLink: CADisplayLink?
+    private var ticker: PlayerFrameTicking?
     private var playerItemStatusObservation: NSKeyValueObservation?
     private var playerItemObservation: NSKeyValueObservation?
     private var playerItem: AVPlayerItem?
@@ -85,7 +169,7 @@ final class PlayerFrameOutputDriver: NSObject {
     }
 
     func setNeedsUpdate() {
-        displayLink?.isPaused = false
+        ticker?.isPaused = false
         forceUpdate = true
     }
 
@@ -110,8 +194,8 @@ final class PlayerFrameOutputDriver: NSObject {
     }
 
     private func updatePlayerItem(_ playerItem: AVPlayerItem?) {
-        displayLink?.invalidate()
-        displayLink = nil
+        ticker?.invalidate()
+        ticker = nil
 
         if let output = playerItemOutput, let playerItem, playerItem.outputs.contains(output) {
             playerItem.remove(output)
@@ -140,22 +224,28 @@ final class PlayerFrameOutputDriver: NSObject {
         output.setDelegate(self, queue: .main)
         playerItem.add(output)
         playerItemOutput = output
-        setupDisplayLink()
+        setupTicker()
     }
 
-    private func setupDisplayLink() {
-        displayLink?.invalidate()
-        displayLink = nil
-
+    private func setupTicker() {
+        ticker?.invalidate()
+        ticker = nil
         guard playerItemOutput != nil else { return }
-        let displayLink = CADisplayLink(target: self, selector: #selector(handleDisplayLinkUpdate(_:)))
-        displayLink.preferredFramesPerSecond = configuration.preferredFramesPerSecond
-        displayLink.add(to: .main, forMode: .common)
-        self.displayLink = displayLink
+        #if canImport(UIKit)
+        ticker = DisplayLinkTicker(
+            preferredFramesPerSecond: configuration.preferredFramesPerSecond,
+            handler: { [weak self] in self?.handleTick() }
+        )
+        #else
+        ticker = DispatchTicker(
+            preferredFramesPerSecond: configuration.preferredFramesPerSecond,
+            handler: { [weak self] in self?.handleTick() }
+        )
+        #endif
     }
 
-    @objc
-    private func handleDisplayLinkUpdate(_ sender: CADisplayLink) {
+    private func handleTick() {
+        guard ticker?.isPaused == false || forceUpdate else { return }
         guard let player else { return }
         if player.rate != 0 {
             forceUpdate = true
@@ -171,7 +261,7 @@ final class PlayerFrameOutputDriver: NSObject {
         guard requestTime >= .zero else { return }
 
         if !forced && !output.hasNewPixelBuffer(forItemTime: requestTime) {
-            displayLink?.isPaused = true
+            ticker?.isPaused = true
             waitingForMediaDataHandler?(requestTime)
             output.requestNotificationOfMediaDataChange(withAdvanceInterval: advanceInterval)
             return
@@ -195,10 +285,9 @@ final class PlayerFrameOutputDriver: NSObject {
 
 extension PlayerFrameOutputDriver: AVPlayerItemOutputPullDelegate {
     func outputMediaDataWillChange(_ sender: AVPlayerItemOutput) {
-        displayLink?.isPaused = false
+        ticker?.isPaused = false
         mediaDataWillChangeHandler?()
     }
 }
 
 extension PlayerFrameOutputDriver: PlayerFrameDriving {}
-#endif

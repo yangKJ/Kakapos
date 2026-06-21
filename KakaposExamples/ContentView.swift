@@ -263,7 +263,7 @@ private struct PlayerPreviewView: View {
     @State private var message = "Tap Start to pull player frames into PreviewSink"
     @State private var previewStateText = "idle"
     @State private var previewGeneration: Int64 = 0
-    #if canImport(UIKit)
+    #if canImport(UIKit) || os(macOS)
     @State private var previewPipeline: PreviewPipeline?
     #endif
 
@@ -295,7 +295,7 @@ private struct PlayerPreviewView: View {
             Text("State: \(previewStateText)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            #if canImport(UIKit)
+            #if canImport(UIKit) || os(macOS)
             Text(previewPipeline?.playerSource?.summaryText ?? "state idle · generation 0 · frame 0 · lastFrame no · seekTarget no · fps 30")
                 .font(.footnote)
                 .foregroundColor(.secondary)
@@ -345,7 +345,7 @@ private struct PlayerPreviewView: View {
         currentTimeText = "0.00s"
         previewStateText = "starting"
         previewGeneration = 0
-        #if canImport(UIKit)
+        #if canImport(UIKit) || os(macOS)
         let pipeline = KakaposSurface.preview(
             player: player,
             processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.15)])]
@@ -370,7 +370,7 @@ private struct PlayerPreviewView: View {
 
     private func pausePreview() {
         player?.pause()
-        #if canImport(UIKit)
+        #if canImport(UIKit) || os(macOS)
         previewPipeline?.pause()
         #endif
         previewStateText = "paused"
@@ -378,7 +378,7 @@ private struct PlayerPreviewView: View {
     }
 
     private func resumePreview() {
-        #if canImport(UIKit)
+        #if canImport(UIKit) || os(macOS)
         previewPipeline?.resume()
         #endif
         player?.play()
@@ -391,7 +391,7 @@ private struct PlayerPreviewView: View {
     }
 
     private func seekPreview(to time: CMTime, message: String = "Preview seeked") {
-        #if canImport(UIKit)
+        #if canImport(UIKit) || os(macOS)
         previewPipeline?.seek(to: time) { finished in
             guard finished else { return }
             DispatchQueue.main.async {
@@ -419,7 +419,7 @@ private struct PlayerPreviewView: View {
 
     private func stopPreview() {
         player?.pause()
-        #if canImport(UIKit)
+        #if canImport(UIKit) || os(macOS)
         previewPipeline?.stop()
         previewPipeline = nil
         #endif

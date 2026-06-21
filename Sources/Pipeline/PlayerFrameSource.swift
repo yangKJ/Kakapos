@@ -8,9 +8,7 @@
 import Foundation
 import AVFoundation
 
-#if canImport(UIKit)
-import UIKit
-
+#if canImport(UIKit) || os(macOS)
 public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNode, MediaSourceSnapshotProviding {
     public struct Summary {
         public let state: State
@@ -161,6 +159,8 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         lastErrorDescription = nil
         _ = coordinator.start(with: player.currentItem)
         updateState(from: coordinator.playbackState)
+        lastFrameRequestReason = "playback"
+        itemChangedHandler?(player.currentItem)
         observeAttachedItem(player.currentItem)
         ensureDriver()
         driver?.setNeedsUpdate()
@@ -270,10 +270,15 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             MetadataKey.generation: coordinator.generation
         ]
         if let seekTargetTime {
+            let didReachSeekTarget = CMTimeCompare(frame.requestTimestamp, seekTargetTime) == 0
+                || CMTimeCompare(presentationTime, seekTargetTime) == 0
+                || CMTimeCompare(playerItemTime, seekTargetTime) == 0
             userInfo[MetadataKey.seekTargetTime] = seekTargetTime
             userInfo[MetadataKey.frameRequestReason] = "seek"
-            lastSeekTargetTime = nil
             lastFrameRequestReason = "seek"
+            if didReachSeekTarget {
+                lastSeekTargetTime = nil
+            }
         } else if player.rate == 0 {
             userInfo[MetadataKey.frameRequestReason] = "manual"
             lastFrameRequestReason = "manual"
@@ -299,7 +304,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     private func observePlayerIfNeeded() {
         guard currentItemObservation == nil else { return }
-        currentItemObservation = player.observe(\.currentItem, options: [.initial, .new]) { [weak self] _, change in
+        currentItemObservation = player.observe(\.currentItem, options: [.new]) { [weak self] _, change in
             self?.handleCurrentItemChange(change.newValue ?? nil)
         }
     }
@@ -319,6 +324,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         if didChange {
             coordinator.resume()
             updateState(from: coordinator.playbackState)
+            lastFrameRequestReason = "playback"
             driver?.setNeedsUpdate()
         }
     }
