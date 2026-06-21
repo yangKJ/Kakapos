@@ -89,4 +89,24 @@ public final class TimelinePipeline {
     public func compile() -> CompiledTimelineComposition {
         composition.compile()
     }
+
+    public func makeAssetSources(
+        callbackQueue: DispatchQueue = .main,
+        audioOutputSettings: [String: Any]? = nil
+    ) -> [AssetSource] {
+        compile().makeAssetSources(
+            callbackQueue: callbackQueue,
+            audioOutputSettings: audioOutputSettings
+        )
+    }
+
+    public func makeImageSource(
+        callbackQueue: DispatchQueue = .main
+    ) -> ImageSource? {
+        compile().makeImageSource(callbackQueue: callbackQueue)
+    }
+
+    public func makeProcessorChain() -> MediaProcessorChain {
+        compile().makeProcessorChain()
+    }
 }
