@@ -2458,7 +2458,12 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.summary.totalDuration, .zero)
         XCTAssertEqual(sink.summary.currentClipDuration, expectedClipDuration)
         XCTAssertEqual(sink.summary.hasRecordedClip, false)
-        XCTAssertEqual(sink.summary.summaryText, "state recording · clips 0 · total 0.00s · clip 0.00s · recorded no")
+        XCTAssertEqual(sink.summary.lastPresentationTime, .zero)
+        XCTAssertNil(sink.summary.pausedAt)
+        XCTAssertEqual(
+            sink.summary.summaryText,
+            "state recording · clips 0 · total 0.00s · clip 0.00s · recorded no · presentation 0.00s"
+        )
     }
 
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
