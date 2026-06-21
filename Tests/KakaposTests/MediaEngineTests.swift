@@ -3923,6 +3923,20 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let pipeline = try RecordingPipeline(configuration: configuration, outputURL: outputURL)
 
+        XCTAssertEqual(pipeline.snapshot.sourceTypeName, pipeline.summary.sourceTypeName)
+        XCTAssertEqual(pipeline.snapshot.processorCount, pipeline.summary.processorCount)
+        XCTAssertEqual(pipeline.snapshot.pipelineState, pipeline.summary.pipelineState)
+        XCTAssertEqual(pipeline.snapshot.recorderState, pipeline.summary.recorderState)
+        XCTAssertEqual(pipeline.snapshot.clipCount, pipeline.summary.clipCount)
+        XCTAssertEqual(pipeline.snapshot.totalDuration, pipeline.summary.totalDuration)
+        XCTAssertEqual(pipeline.snapshot.currentClipDuration, pipeline.summary.currentClipDuration)
+        XCTAssertEqual(pipeline.snapshot.hasRecordedClip, pipeline.summary.hasRecordedClip)
+        XCTAssertEqual(pipeline.snapshot.currentClipHasStarted, pipeline.summary.currentClipHasStarted)
+        XCTAssertEqual(pipeline.snapshot.currentClipHasVideo, pipeline.summary.currentClipHasVideo)
+        XCTAssertEqual(pipeline.snapshot.currentClipHasAudio, pipeline.summary.currentClipHasAudio)
+        XCTAssertEqual(pipeline.snapshot.recordedVideoSegmentCount, pipeline.summary.recordedVideoSegmentCount)
+        XCTAssertEqual(pipeline.snapshot.recordedAudioSegmentCount, pipeline.summary.recordedAudioSegmentCount)
+        XCTAssertEqual(pipeline.snapshot.lastErrorDescription, pipeline.summary.lastErrorDescription)
         XCTAssertEqual(pipeline.summary.cameraSourceState, .idle)
         XCTAssertEqual(pipeline.summary.cameraSourcePosition, .front)
         XCTAssertEqual(pipeline.summary.cameraSourceAuthorizationStatus, pipeline.cameraSource?.authorizationStatus)
@@ -3931,6 +3945,11 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNil(pipeline.summary.cameraSourceLastFrameIndex)
         XCTAssertNil(pipeline.summary.cameraSourceLastPresentationTime)
         XCTAssertNil(pipeline.summary.cameraSourceLastMediaType)
+        XCTAssertEqual(pipeline.snapshot.cameraSourceSnapshot?.state, .idle)
+        XCTAssertEqual(pipeline.snapshot.cameraSourceSnapshot?.position, .front)
+        XCTAssertEqual(pipeline.snapshot.cameraSourceSnapshot?.authorizationStatus, pipeline.cameraSource?.authorizationStatus)
+        XCTAssertEqual(pipeline.snapshot.cameraSourceSnapshot?.isPaused, false)
+        XCTAssertEqual(pipeline.snapshot.cameraSourceSnapshot?.captureMode, .videoWithoutAudio)
     }
 #endif
 
@@ -4328,6 +4347,13 @@ final class MediaEngineTests: XCTestCase {
         )
         let source = try CameraSource(configuration: configuration)
 
+        XCTAssertEqual(source.snapshot.state, source.summary.state)
+        XCTAssertEqual(source.snapshot.position, source.summary.position)
+        XCTAssertEqual(source.snapshot.authorizationStatus, source.summary.authorizationStatus)
+        XCTAssertEqual(source.snapshot.isPaused, source.summary.isPaused)
+        XCTAssertEqual(source.snapshot.captureMode, source.summary.captureMode)
+        XCTAssertEqual(source.snapshot.deviceOrientation, source.summary.deviceOrientation)
+        XCTAssertEqual(source.snapshot.isMirrored, source.summary.isMirrored)
         XCTAssertEqual(source.summary.state, .idle)
         XCTAssertEqual(source.summary.position, .front)
         XCTAssertEqual(source.summary.authorizationStatus, source.authorizationStatus)
@@ -4364,6 +4390,9 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.summary.lastFrameIndex, 1)
         XCTAssertEqual(source.summary.lastPresentationTime, CMTime(value: 1, timescale: 30))
         XCTAssertEqual(source.summary.lastMediaType, AVMediaType.video.rawValue)
+        XCTAssertEqual(source.snapshot.lastFrameIndex, source.summary.lastFrameIndex)
+        XCTAssertEqual(source.snapshot.lastPresentationTime, source.summary.lastPresentationTime)
+        XCTAssertEqual(source.snapshot.lastMediaType, source.summary.lastMediaType)
         XCTAssertTrue(source.summary.summaryText.contains("frame 1"))
         XCTAssertTrue(source.summary.summaryText.contains("presentation 0.03s"))
         XCTAssertTrue(source.summary.summaryText.contains("mediaType video"))
@@ -4384,6 +4413,9 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.summary.lastFrameIndex, 2)
         XCTAssertEqual(source.summary.lastPresentationTime, CMTime(value: 2, timescale: 30))
         XCTAssertEqual(source.summary.lastMediaType, AVMediaType.video.rawValue)
+        XCTAssertEqual(source.snapshot.lastFrameIndex, source.summary.lastFrameIndex)
+        XCTAssertEqual(source.snapshot.lastPresentationTime, source.summary.lastPresentationTime)
+        XCTAssertEqual(source.snapshot.lastMediaType, source.summary.lastMediaType)
     }
 
     func testCameraSourceIgnoresLateFramesAfterStopAndCancel() throws {
