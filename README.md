@@ -26,6 +26,7 @@ Kakapos is not a filter-kernel library. It owns media lifecycle, frame sourcing,
 ### Lightweight Boards
 
 Kakapos stays easier to adopt when the public surface is used in four small boards instead of one large API surface.
+`KakaposSurface` is the thinnest recommended starting point; `KakaposBoards` remains as a compatibility alias.
 
 Start with the smallest entry points:
 
