@@ -2604,6 +2604,76 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNil(sink.recordedClip)
     }
 
+    func testRecorderSinkIgnoresLateFramesAfterCancelAndFinish() throws {
+        let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
+        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30)))
+
+        let cancelledOutputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let cancelledSink = try RecorderSink(outputURL: cancelledOutputURL)
+        let cancelAppendExpectation = expectation(description: "append before cancel")
+        let cancelStateExpectation = expectation(description: "cancel state callback")
+        cancelledSink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            cancelAppendExpectation.fulfill()
+        }
+        wait(for: [cancelAppendExpectation], timeout: 2)
+        cancelledSink.stateChangedHandler = { state in
+            if state == .cancelled {
+                cancelStateExpectation.fulfill()
+            }
+        }
+        cancelledSink.cancel()
+        cancelledSink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected cancelled recorder failure: \(error)")
+            }
+        }
+        wait(for: [cancelStateExpectation], timeout: 5)
+        XCTAssertEqual(cancelledSink.state, .cancelled)
+        XCTAssertNil(cancelledSink.recordedClip)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cancelledOutputURL.path))
+
+        let finishedOutputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let finishedSink = try RecorderSink(outputURL: finishedOutputURL)
+        let finishAppendExpectation = expectation(description: "append before finish")
+        let finishExpectation = expectation(description: "finish state callback")
+        var recordedClip: RecordedClip?
+        finishedSink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            finishAppendExpectation.fulfill()
+        }
+        wait(for: [finishAppendExpectation], timeout: 2)
+        finishedSink.finishRecording { result in
+            switch result {
+            case .success(let clip):
+                recordedClip = clip
+            case .failure(let error):
+                XCTFail("Unexpected finish recording failure: \(error)")
+            }
+            finishExpectation.fulfill()
+        }
+        finishedSink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected finished recorder failure: \(error)")
+            }
+        }
+        wait(for: [finishExpectation], timeout: 5)
+        XCTAssertEqual(finishedSink.state, .finished)
+        XCTAssertEqual(recordedClip?.startedAt, .zero)
+        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 1, timescale: 600))
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 1, timescale: 600))
+        XCTAssertTrue(recordedClip?.fileExists == true)
+    }
+
     func testRecorderSinkSnapshotTracksActiveSegmentAndPausedState() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

@@ -120,6 +120,8 @@ public final class RecorderSink: MediaSink {
     private var hasWrittenFirstVideoFrame = false
     private var pendingLeadingAudioBuffers: [CMSampleBuffer] = []
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
+    private let lifecycleLock = NSLock()
+    private var acceptsFrames = true
 
     public init(outputURL: URL, fileType: AVFileType = .mp4) throws {
         self.outputURL = outputURL
@@ -128,6 +130,10 @@ public final class RecorderSink: MediaSink {
     }
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard canAcceptFrames() else {
+            completion(.success(()))
+            return
+        }
         queue.async {
             do {
                 try self.consumeOnQueue(frame)
@@ -151,6 +157,7 @@ public final class RecorderSink: MediaSink {
     }
 
     public func finishRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
+        rejectFurtherFrames()
         queue.async {
             if self.state == .cancelled {
                 completion(.failure(VideoX.Error.exportCancelled))
@@ -197,6 +204,7 @@ public final class RecorderSink: MediaSink {
     }
 
     public func cancel() {
+        rejectFurtherFrames()
         queue.async {
             self.writer.cancelWriting()
             try? FileManager.default.removeItem(at: self.outputURL)
@@ -239,6 +247,7 @@ public final class RecorderSink: MediaSink {
     }
 
     private func consumeOnQueue(_ frame: MediaFrame) throws {
+        guard canAcceptFrames() else { return }
         guard state != .paused else { return }
         guard state != .cancelled && state != .finished else { return }
         if let sampleBuffer = frame.sampleBuffer, CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
@@ -422,5 +431,18 @@ public final class RecorderSink: MediaSink {
         DispatchQueue.main.async {
             self.stateChangedHandler?(newState)
         }
+    }
+
+    private func rejectFurtherFrames() {
+        lifecycleLock.lock()
+        acceptsFrames = false
+        lifecycleLock.unlock()
+    }
+
+    private func canAcceptFrames() -> Bool {
+        lifecycleLock.lock()
+        let result = acceptsFrames
+        lifecycleLock.unlock()
+        return result
     }
 }
