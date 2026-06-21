@@ -837,6 +837,31 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(info.overallFractionCompleted, 0.95, accuracy: 0.0001)
     }
 
+    func testReaderWriterExportJobStoresLatestProgressSnapshot() {
+        let job = ReaderWriterExportJob(
+            asset: AVMutableComposition(),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+        )
+        let progress = ReaderWriterExportJob.ProgressInfo(
+            videoProgress: 0.25,
+            audioProgress: 0.75,
+            hasVideo: true,
+            hasAudio: true,
+            finishWritingProgress: 0.5
+        )
+
+        job._setProgressInfoForTesting(progress)
+
+        XCTAssertNotNil(job.lastProgressInfo)
+        guard let lastProgressInfo = job.lastProgressInfo else { return }
+        XCTAssertEqual(lastProgressInfo.videoProgress, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(lastProgressInfo.audioProgress, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(lastProgressInfo.finishWritingProgress, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(lastProgressInfo.overallFractionCompleted, progress.overallFractionCompleted, accuracy: 0.0001)
+    }
+
     func testReaderWriterExportJobKeepsStableStatusOutsideExportingState() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),

@@ -54,6 +54,9 @@ public final class ReaderWriterExportJob {
 
     public var progressHandler: ((ProgressInfo) -> Void)?
     public var statusHandler: ((Status) -> Void)?
+    public var lastProgressInfo: ProgressInfo? {
+        stateQueue.sync { _lastProgressInfo }
+    }
 
     public var status: Status {
         stateQueue.sync { _status }
@@ -70,6 +73,7 @@ public final class ReaderWriterExportJob {
     private let metadata: [AVMetadataItem]
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.reader-writer-export.state")
     private var _status: Status = .idle
+    private var _lastProgressInfo: ProgressInfo?
     private var exportSession: VideoAssetExportSession?
 
     public init(
@@ -117,6 +121,7 @@ public final class ReaderWriterExportJob {
                 },
                 completion: { [weak self] error in
                     guard let self else { return }
+                    self.exportSession = nil
                     if let error {
                         let mappedError = Self.mapError(error)
                         if case VideoX.Error.exportCancelled = VideoX.Error.toError(mappedError) {
@@ -175,6 +180,10 @@ public final class ReaderWriterExportJob {
         setStatus(status)
     }
 
+    func _setProgressInfoForTesting(_ info: ProgressInfo) {
+        storeProgress(info)
+    }
+
     var _videoProcessorCountForTesting: Int {
         videoProcessors.count
     }
@@ -224,6 +233,7 @@ public final class ReaderWriterExportJob {
             hasAudio: progress.audioProgress != nil,
             finishWritingProgress: progress.finishWritingProgress.fractionCompleted
         )
+        storeProgress(info)
         DispatchQueue.main.async {
             self.progressHandler?(info)
         }
@@ -231,6 +241,12 @@ public final class ReaderWriterExportJob {
 
     private func removePartialOutputIfNeeded() {
         try? FileManager.default.removeItem(at: outputURL)
+    }
+
+    private func storeProgress(_ info: ProgressInfo) {
+        stateQueue.sync {
+            _lastProgressInfo = info
+        }
     }
 
     private func setStatus(_ status: Status) {
