@@ -1184,7 +1184,7 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertEqual(
             job.configurationSummaryText,
-            "file mov · range 0.50s→2.50s · processors 1 · metadata 1 · network no · videoComposition yes · audioMix yes"
+            "file com.apple.quicktime-movie · range 0.50s→2.50s · processors 1 · metadata 1 · network no · videoComposition yes · audioMix yes"
         )
         XCTAssertTrue(job.summary.summaryText.contains("tracks 0/0"))
     }
@@ -1662,7 +1662,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(exportTask.summaryText, "state idle · tracks 1/1 · processors 1 · progress n/a · phase idle")
         XCTAssertEqual(
             exportTask.configurationSummaryText,
-            "file mov · range full · processors 1 · metadata 0 · network yes · videoComposition yes · audioMix yes"
+            "file com.apple.quicktime-movie · range 0.00s→10.07s · processors 1 · metadata 0 · network yes · videoComposition no · audioMix yes"
         )
 
         exportTask.pause()
@@ -1906,7 +1906,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.summary.pendingFrameRequestReason, "seek")
         XCTAssertEqual(
             pipeline.summary.summaryText,
-            "source ManualSource · processors 0 · pipeline paused · preview paused · frame 1 · presentation 0.00s · sourceTime 0.00s · pendingFrame 2 · pendingPresentation 0.03s · pendingSourceTime 0.03s · pendingReason seek"
+            "source ManualSource · processors 0 · pipeline paused · preview paused · frame 1 · presentation 0.00s · pendingFrame 2 · pendingPresentation 0.03s · pendingSourceTime 0.03s · pendingReason seek"
         )
     }
 
@@ -2145,6 +2145,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(source.summaryText.contains("sourceSnapshot state active"))
         XCTAssertTrue(source.summaryText.contains("generation 1"))
         XCTAssertTrue(source.summaryText.contains("reason playback"))
+        XCTAssertTrue(source.summaryText.contains("playerRate 0.00"))
+        XCTAssertTrue(source.summaryText.contains("playbackState running"))
         XCTAssertTrue(source.summaryText.contains("seekTarget no"))
 
         source.pause()
@@ -2172,6 +2174,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(source.summary.summaryText.contains("itemTime 0.00s"))
         XCTAssertTrue(source.summaryText.contains("sourceSnapshot state paused"))
         XCTAssertTrue(source.summaryText.contains("sourceTime 0.00s"))
+        XCTAssertTrue(source.summaryText.contains("itemTime 0.00s"))
     }
     #endif
 
@@ -2714,6 +2717,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.summary.lastPresentationTime, target)
         XCTAssertEqual(source.summary.lastPlayerItemTime, target)
         XCTAssertTrue(source.summary.summaryText.contains("reason seek"))
+        XCTAssertTrue(source.summaryText.contains("seekTarget no"))
+        XCTAssertTrue(source.sourceSnapshot.details["seekTargetTime"] == "n/a")
     }
 
     func testPlayerFrameSourceResetsSeekTargetAndLastFrameWhenCurrentItemChanges() throws {
@@ -3445,11 +3450,16 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.summary.totalDuration, .zero)
         XCTAssertEqual(sink.summary.currentClipDuration, expectedClipDuration)
         XCTAssertEqual(sink.summary.hasRecordedClip, false)
+        XCTAssertTrue(sink.summary.currentClipHasStarted)
+        XCTAssertTrue(sink.summary.currentClipHasVideo)
+        XCTAssertFalse(sink.summary.currentClipHasAudio)
+        XCTAssertEqual(sink.summary.recordedVideoSegmentCount, 0)
+        XCTAssertEqual(sink.summary.recordedAudioSegmentCount, 0)
         XCTAssertEqual(sink.summary.lastPresentationTime, .zero)
         XCTAssertNil(sink.summary.pausedAt)
         XCTAssertEqual(
             sink.summary.summaryText,
-            "state recording · clips 0 · total 0.00s · clip 0.00s · recorded no · presentation 0.00s"
+            "state recording · clips 0 · total 0.00s · clip 0.00s · recorded no · started yes · video yes · audio no · segments v0/a0 · presentation 0.00s"
         )
     }
 
@@ -3491,12 +3501,19 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.summary.recorderState, .finished)
         XCTAssertEqual(pipeline.summary.clipCount, 1)
         XCTAssertTrue(pipeline.summary.hasRecordedClip)
+        XCTAssertFalse(pipeline.summary.currentClipHasStarted)
+        XCTAssertFalse(pipeline.summary.currentClipHasVideo)
+        XCTAssertFalse(pipeline.summary.currentClipHasAudio)
+        XCTAssertEqual(pipeline.summary.recordedVideoSegmentCount, 1)
+        XCTAssertEqual(pipeline.summary.recordedAudioSegmentCount, 0)
         XCTAssertEqual(pipeline.summary.sourceSnapshot?.stateDescription, "primed")
         XCTAssertEqual(pipeline.summary.sourceSnapshot?.details["board"], "record")
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertTrue(pipeline.summaryText.contains("sourceSnapshot state primed"))
         XCTAssertTrue(pipeline.summaryText.contains("board record"))
         XCTAssertTrue(pipeline.summaryText.contains("recorder finished"))
+        XCTAssertTrue(pipeline.summaryText.contains("started no"))
+        XCTAssertTrue(pipeline.summaryText.contains("segments v1/a0"))
     }
 
     func testRecordingPipelineSummaryIncludesFailureDescriptionFromUnderlyingPipeline() throws {

@@ -16,12 +16,14 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         public let authorizationStatus: CameraAuthorizationStatus
         public let isPaused: Bool
         public let captureMode: CameraCaptureMode
+        public let deviceOrientation: AVCaptureVideoOrientation
+        public let isMirrored: Bool
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
         public let lastMediaType: String?
 
         public var summaryText: String {
-            var text = "state \(state) · position \(position) · auth \(authorizationStatus) · paused \(isPaused ? "yes" : "no") · mode \(captureMode)"
+            var text = "state \(state) · position \(position) · auth \(authorizationStatus) · paused \(isPaused ? "yes" : "no") · mode \(captureMode) · orientation \(deviceOrientation) · mirrored \(isMirrored ? "yes" : "no")"
             if let lastFrameIndex {
                 text += " · frame \(lastFrameIndex)"
             }
@@ -61,6 +63,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             authorizationStatus: authorizationStatus,
             isPaused: isPaused,
             captureMode: configuration.captureMode,
+            deviceOrientation: currentOrientation,
+            isMirrored: configuration.effectiveMirroringValue(for: currentPosition),
             lastFrameIndex: frameIndex > 0 ? frameIndex : nil,
             lastPresentationTime: lastPresentationTime,
             lastMediaType: lastMediaType
@@ -78,10 +82,13 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             lastPresentationTime: summary.lastPresentationTime,
             lastSourceTime: summary.lastPresentationTime,
             details: [
+                "sessionState": String(describing: summary.state),
                 "position": String(describing: summary.position),
                 "auth": String(describing: summary.authorizationStatus),
                 "paused": summary.isPaused ? "yes" : "no",
                 "mode": String(describing: summary.captureMode),
+                "orientation": String(describing: summary.deviceOrientation),
+                "mirrored": summary.isMirrored ? "yes" : "no",
                 "mediaType": summary.lastMediaType ?? "n/a"
             ]
         )

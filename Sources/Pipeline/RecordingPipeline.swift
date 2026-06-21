@@ -19,12 +19,17 @@ public final class RecordingPipeline {
         public let totalDuration: CMTime
         public let currentClipDuration: CMTime
         public let hasRecordedClip: Bool
+        public let currentClipHasStarted: Bool
+        public let currentClipHasVideo: Bool
+        public let currentClipHasAudio: Bool
+        public let recordedVideoSegmentCount: Int
+        public let recordedAudioSegmentCount: Int
         public let lastErrorDescription: String?
 
         public var summaryText: String {
             let totalText = String(format: "%.2fs", totalDuration.seconds)
             let currentText = String(format: "%.2fs", currentClipDuration.seconds)
-            var text = "source \(sourceTypeName) · processors \(processorCount) · pipeline \(pipelineState) · recorder \(recorderState) · clips \(clipCount) · total \(totalText) · clip \(currentText) · recorded \(hasRecordedClip ? "yes" : "no")"
+            var text = "source \(sourceTypeName) · processors \(processorCount) · pipeline \(pipelineState) · recorder \(recorderState) · clips \(clipCount) · total \(totalText) · clip \(currentText) · recorded \(hasRecordedClip ? "yes" : "no") · started \(currentClipHasStarted ? "yes" : "no") · video \(currentClipHasVideo ? "yes" : "no") · audio \(currentClipHasAudio ? "yes" : "no") · segments v\(recordedVideoSegmentCount)/a\(recordedAudioSegmentCount)"
             if let sourceSnapshot {
                 text += " · sourceSnapshot \(sourceSnapshot.summaryText)"
             }
@@ -60,6 +65,11 @@ public final class RecordingPipeline {
             totalDuration: snapshot.totalDuration,
             currentClipDuration: snapshot.currentClipDuration,
             hasRecordedClip: snapshot.hasRecordedClip,
+            currentClipHasStarted: snapshot.currentClipHasStarted,
+            currentClipHasVideo: snapshot.currentClipHasVideo,
+            currentClipHasAudio: snapshot.currentClipHasAudio,
+            recordedVideoSegmentCount: snapshot.recordedVideoSegmentCount,
+            recordedAudioSegmentCount: snapshot.recordedAudioSegmentCount,
             lastErrorDescription: pipeline.lastErrorDescription
         )
     }
