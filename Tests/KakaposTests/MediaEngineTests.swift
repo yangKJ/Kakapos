@@ -30,6 +30,8 @@ final class MediaEngineTests: XCTestCase {
     func testKakaposSurfaceBoardFacadesMirrorTheCapabilityCatalog() {
         XCTAssertEqual(KakaposSurface.starterBoards.map(\.board), KakaposCapabilityCatalog.starterBoards.map(\.board))
         XCTAssertEqual(KakaposSurface.sections.map(\.board), KakaposCapabilityCatalog.boards.map(\.board))
+        XCTAssertEqual(KakaposSurface.entries.map(\.id), ["export", "preview", "record", "timeline"])
+        XCTAssertEqual(KakaposSurface.entry(.record)?.starterTypesText, "RecordingPipeline · CameraSource · RecorderSink")
         XCTAssertEqual(KakaposSurface.exportBoard.displayName, "Export")
         XCTAssertEqual(KakaposSurface.previewBoard.displayName, "Preview")
         XCTAssertEqual(KakaposSurface.recordBoard.displayName, "Record")
@@ -81,6 +83,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposSurface.board(.timeline)?.starterTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition"])
         XCTAssertEqual(KakaposSurface.section(.preview)?.id, "preview")
         XCTAssertEqual(KakaposSurface.section(.export)?.starterTypesText, "VideoX · ReaderWriterExportJob")
+        XCTAssertEqual(KakaposSurface.starterEntries.map(\.id), ["export", "preview", "record", "timeline"])
     }
 
     func testKakaposSurfaceAndBoardsProduceTheSameTimelineExportTaskSummary() throws {

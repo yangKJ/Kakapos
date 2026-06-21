@@ -13,8 +13,56 @@ import AVFoundation
 /// This surface does not add new media behavior. It only groups the
 /// existing engine types into a smaller, easier-to-scan entry layer.
 public enum KakaposSurface {
+    public struct Entry: Sendable {
+        public let board: KakaposCapabilityBoardInfo
+        public let section: KakaposSurfaceSection
+
+        public var id: String {
+            section.id
+        }
+
+        public var displayName: String {
+            section.displayName
+        }
+
+        public var summary: String {
+            section.summary
+        }
+
+        public var usageHint: String {
+            section.usageHint
+        }
+
+        public var primaryTypes: [String] {
+            section.primaryTypes
+        }
+
+        public var starterTypes: [String] {
+            section.starterTypes
+        }
+
+        public var primaryTypesText: String {
+            section.primaryTypesText
+        }
+
+        public var starterTypesText: String {
+            section.starterTypesText
+        }
+    }
+
     public static var sections: [KakaposSurfaceSection] {
         KakaposCapabilityCatalog.boards.map(KakaposSurfaceSection.init(info:))
+    }
+
+    public static var entries: [Entry] {
+        KakaposCapabilityCatalog.boards.compactMap { info in
+            guard let section = section(info.board) else { return nil }
+            return Entry(board: info, section: section)
+        }
+    }
+
+    public static var starterEntries: [Entry] {
+        entries
     }
 
     public static var boards: [KakaposCapabilityBoardInfo] {
@@ -39,6 +87,13 @@ public enum KakaposSurface {
 
     public static func section(_ board: KakaposCapabilityBoard) -> KakaposSurfaceSection? {
         sections.first { $0.board == board }
+    }
+
+    public static func entry(_ board: KakaposCapabilityBoard) -> Entry? {
+        guard let boardInfo = KakaposSurface.board(board), let section = KakaposSurface.section(board) else {
+            return nil
+        }
+        return Entry(board: boardInfo, section: section)
     }
 
     public static var exportBoard: ExportBoard {
