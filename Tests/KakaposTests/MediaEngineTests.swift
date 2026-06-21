@@ -1844,6 +1844,41 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    func testPreviewPipelineSummarySurfacesPendingFrameReasonWhilePaused() throws {
+        let firstBuffer = try makePixelBuffer(width: 10, height: 8)
+        let secondBuffer = try makePixelBuffer(width: 14, height: 12)
+        let first = MediaFrame(
+            pixelBuffer: firstBuffer,
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        )
+        let pendingMetadata = FrameMetadata(
+            presentationTime: CMTime(value: 1, timescale: 30),
+            sourceTime: CMTime(value: 1, timescale: 30),
+            frameIndex: 2,
+            userInfo: [PlayerFrameSource.MetadataKey.frameRequestReason: "seek"]
+        )
+        let source = ManualSource()
+        let pipeline = PreviewPipeline(source: source) { _, _ in }
+
+        pipeline.start()
+        source.emit(first)
+        pipeline.pause()
+        pipeline.previewSink.consume(MediaFrame(pixelBuffer: secondBuffer, metadata: pendingMetadata)) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected paused preview sink failure: \(error)")
+            }
+        }
+
+        XCTAssertEqual(pipeline.previewSink.summary.state, .paused)
+        XCTAssertEqual(pipeline.summary.previewState, .paused)
+        XCTAssertEqual(pipeline.summary.pendingFrameIndex, 2)
+        XCTAssertEqual(pipeline.summary.pendingFrameRequestReason, "seek")
+        XCTAssertEqual(
+            pipeline.summary.summaryText,
+            "source ManualSource · processors 0 · pipeline paused · preview paused · frame 1 · presentation 0.00s · sourceTime 0.00s · pendingFrame 2 · pendingPresentation 0.03s · pendingSourceTime 0.03s · pendingReason seek"
+        )
+    }
+
     func testPreviewSinkCachesLatestFrameWhilePausedAndFlushesOnResume() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)

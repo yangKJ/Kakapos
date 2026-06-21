@@ -19,6 +19,10 @@ public final class PreviewPipeline {
         public let lastPresentationTime: CMTime?
         public let lastSourceTime: CMTime?
         public let lastFrameRequestReason: String?
+        public let pendingFrameIndex: Int64?
+        public let pendingFramePresentationTime: CMTime?
+        public let pendingFrameSourceTime: CMTime?
+        public let pendingFrameRequestReason: String?
         public let lastErrorDescription: String?
 
         public var summaryText: String {
@@ -37,6 +41,16 @@ public final class PreviewPipeline {
             }
             if let lastFrameRequestReason {
                 text += " · reason \(lastFrameRequestReason)"
+            }
+            if let pendingFrameIndex, let pendingFrameRequestReason {
+                text += " · pendingFrame \(pendingFrameIndex)"
+                if let pendingFramePresentationTime {
+                    text += " · pendingPresentation \(String(format: "%.2fs", pendingFramePresentationTime.seconds))"
+                }
+                if let pendingFrameSourceTime {
+                    text += " · pendingSourceTime \(String(format: "%.2fs", pendingFrameSourceTime.seconds))"
+                }
+                text += " · pendingReason \(pendingFrameRequestReason)"
             }
             if let lastErrorDescription {
                 text += " · error \(lastErrorDescription)"
@@ -69,6 +83,10 @@ public final class PreviewPipeline {
             lastPresentationTime: previewSink.lastFrame?.metadata.presentationTime,
             lastSourceTime: previewSink.lastFrame?.metadata.sourceTime,
             lastFrameRequestReason: previewSink.summary.lastFrameRequestReason,
+            pendingFrameIndex: previewSink.summary.pendingFrameIndex,
+            pendingFramePresentationTime: previewSink.summary.pendingFramePresentationTime,
+            pendingFrameSourceTime: previewSink.summary.pendingFrameSourceTime,
+            pendingFrameRequestReason: previewSink.summary.pendingFrameRequestReason,
             lastErrorDescription: pipeline.lastErrorDescription
         )
     }
