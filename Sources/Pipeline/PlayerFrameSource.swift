@@ -77,10 +77,13 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     public func start() {
         observePlayerIfNeeded()
+        lastSeekTargetTime = nil
+        lastFrame = nil
         _ = coordinator.start(with: player.currentItem)
         updateState(from: coordinator.playbackState)
         observeAttachedItem(player.currentItem)
         ensureDriver()
+        driver?.setNeedsUpdate()
     }
 
     public func pause() {
