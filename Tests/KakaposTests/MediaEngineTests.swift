@@ -1838,6 +1838,47 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNotNil(pipeline.playerSource)
         XCTAssertEqual(pipeline.summary.sourceTypeName, "PlayerFrameSource")
     }
+
+    func testPreviewPipelineExposesPlayerSourceStateSnapshot() throws {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
+        let driver = FakePlayerFrameDriver()
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, handler in
+                driver.configuration = configuration
+                driver.frameHandler = handler
+                return driver
+            }
+        )
+        let previewExpectation = expectation(description: "preview frame emitted")
+        var receivedFrameIndex: Int64?
+        let pipeline = PreviewPipeline(source: source) { _, metadata in
+            receivedFrameIndex = metadata.frameIndex
+            previewExpectation.fulfill()
+        }
+
+        pipeline.start()
+
+        XCTAssertEqual(pipeline.playerSourceState, .active)
+        XCTAssertEqual(pipeline.playerSourceGeneration, 1)
+        XCTAssertEqual(pipeline.playerSourceFrameIndex, 0)
+
+        driver.emitFrame(
+            .init(
+                preferredTrackTransform: .identity,
+                presentationTimestamp: CMTime(value: 2, timescale: 30),
+                playerTimestamp: CMTime(value: 2, timescale: 30),
+                requestTimestamp: CMTime(value: 2, timescale: 30),
+                pixelBuffer: try makePixelBuffer(width: 18, height: 12)
+            )
+        )
+
+        wait(for: [previewExpectation], timeout: 1)
+        XCTAssertEqual(receivedFrameIndex, 1)
+        XCTAssertEqual(pipeline.playerSourceState, .active)
+        XCTAssertEqual(pipeline.playerSourceGeneration, 1)
+        XCTAssertEqual(pipeline.playerSourceFrameIndex, 1)
+    }
     #endif
 
     #if canImport(UIKit)

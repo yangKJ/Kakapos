@@ -76,6 +76,20 @@ public final class PreviewPipeline {
         summary.summaryText
     }
 
+#if canImport(UIKit)
+    public var playerSourceState: PlayerFrameSource.State? {
+        playerSource?.summary.state
+    }
+
+    public var playerSourceGeneration: Int64? {
+        playerSource?.summary.generation
+    }
+
+    public var playerSourceFrameIndex: Int64? {
+        playerSource?.summary.frameIndex
+    }
+#endif
+
     public init(
         source: MediaSource,
         processors: [FrameProcessor] = [],
