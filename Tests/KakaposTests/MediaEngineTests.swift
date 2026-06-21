@@ -1022,7 +1022,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(job.summary.audioTrackCount, 1)
         XCTAssertEqual(job.summary.processorCount, 1)
         XCTAssertEqual(job.summary.status, .exporting)
-        XCTAssertEqual(job.summary.summaryText, "state exporting · tracks 1/1 · processors 1 · progress 58%")
+        XCTAssertEqual(
+            job.summary.summaryText,
+            "state exporting · tracks 1/1 · processors 1 · progress 58% · video 40% · audio 80% · finish 20%"
+        )
     }
 
     func testReaderWriterExportJobSummaryIncludesFailureDescription() {
