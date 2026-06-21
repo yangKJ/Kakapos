@@ -29,8 +29,16 @@ public enum KakaposSurface {
         KakaposCapabilityCatalog.board(named: name)
     }
 
+    public static func board(_ board: KakaposCapabilityBoard) -> KakaposCapabilityBoardInfo? {
+        KakaposCapabilityCatalog.board(named: board.rawValue)
+    }
+
     public static func section(named name: String) -> KakaposSurfaceSection? {
         sections.first { $0.board.rawValue == name }
+    }
+
+    public static func section(_ board: KakaposCapabilityBoard) -> KakaposSurfaceSection? {
+        sections.first { $0.board == board }
     }
 
     public static var exportBoard: ExportBoard {

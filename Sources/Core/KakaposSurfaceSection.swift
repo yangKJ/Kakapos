@@ -11,13 +11,25 @@ import Foundation
 ///
 /// This type mirrors the capability catalog but gives external code a
 /// smaller surface to scan when it only needs the recommended boards.
-public struct KakaposSurfaceSection: Sendable, Hashable {
+public struct KakaposSurfaceSection: Sendable, Hashable, Identifiable {
     public let board: KakaposCapabilityBoard
     public let displayName: String
     public let summary: String
     public let usageHint: String
     public let primaryTypes: [String]
     public let starterTypes: [String]
+
+    public var id: String {
+        board.rawValue
+    }
+
+    public var starterTypesText: String {
+        starterTypes.joined(separator: " · ")
+    }
+
+    public var primaryTypesText: String {
+        primaryTypes.joined(separator: " · ")
+    }
 
     public init(info: KakaposCapabilityBoardInfo) {
         self.board = info.board

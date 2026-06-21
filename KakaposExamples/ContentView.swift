@@ -30,7 +30,11 @@ private struct BoardHeaderView: View {
     let board: KakaposCapabilityBoard
 
     private var info: KakaposCapabilityBoardInfo? {
-        KakaposSurface.board(named: board.rawValue)
+        KakaposSurface.board(board)
+    }
+
+    private var section: KakaposSurfaceSection? {
+        KakaposSurface.section(board)
     }
 
     var body: some View {
@@ -38,7 +42,7 @@ private struct BoardHeaderView: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(info?.displayName ?? board.displayName)
                     .font(.headline)
-                Text((info?.starterTypes ?? board.starterTypes).joined(separator: " · "))
+                Text(section?.starterTypesText ?? board.starterTypes.joined(separator: " · "))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)

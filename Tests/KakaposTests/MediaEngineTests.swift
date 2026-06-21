@@ -78,6 +78,9 @@ final class MediaEngineTests: XCTestCase {
     func testKakaposSurfaceExposesTheSameBoardCatalogAsTheLegacyAlias() {
         XCTAssertEqual(KakaposSurface.boards.map(\.board), KakaposCapabilityCatalog.boards.map(\.board))
         XCTAssertEqual(KakaposSurface.board(named: "export")?.starterTypes, ["VideoX", "ReaderWriterExportJob"])
+        XCTAssertEqual(KakaposSurface.board(.timeline)?.starterTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition"])
+        XCTAssertEqual(KakaposSurface.section(.preview)?.id, "preview")
+        XCTAssertEqual(KakaposSurface.section(.export)?.starterTypesText, "VideoX · ReaderWriterExportJob")
     }
 
     func testKakaposSurfaceAndBoardsProduceTheSameTimelineExportTaskSummary() throws {
