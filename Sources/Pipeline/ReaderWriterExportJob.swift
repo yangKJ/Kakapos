@@ -321,15 +321,22 @@ public final class ReaderWriterExportJob {
         }
         if let exportSession {
             setStatus(.cancelled)
+            stateQueue.sync {
+                _didDeliverCompletion = true
+            }
+            removePartialOutputIfNeeded()
+            self.exportSession = nil
             exportSession.cancel()
             return
         }
         let shouldCancel = stateQueue.sync { () -> Bool in
             guard _status != .completed && _status != .cancelled && _status != .failed else { return false }
             _status = .cancelled
+            _didDeliverCompletion = true
             return true
         }
         guard shouldCancel else { return }
+        removePartialOutputIfNeeded()
         DispatchQueue.main.async {
             self.statusHandler?(.cancelled)
         }
