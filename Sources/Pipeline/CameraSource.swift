@@ -215,6 +215,14 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode {
         }
     }
 
+    func _emitForTesting(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
+        emit(sampleBuffer: sampleBuffer, mediaType: mediaType)
+    }
+
+    func _setStateForTesting(_ state: CameraSessionState) {
+        self.state = state
+    }
+
     private func publish(_ action: CameraLifecycleAction) {
         guard let event = lifecycle.handle(action) else { return }
         state = lifecycle.state
