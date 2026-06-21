@@ -1389,6 +1389,11 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recordedClip?.startedAt, .zero)
         XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 1, timescale: 30))
         XCTAssertEqual(recordedClip?.duration, CMTime(value: 1, timescale: 30))
+        XCTAssertTrue(recordedClip?.fileExists == true)
+        XCTAssertNotNil(recordedClip?.asset)
+        XCTAssertEqual(recordedClip?.segments.first?.containsVideo, true)
+        XCTAssertEqual(recordedClip?.segments.first?.containsAudio, false)
+        XCTAssertEqual(recordedClip?.representationDictionary?[RecordedClipFilenameKey] as? String, outputURL.lastPathComponent)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
@@ -1440,6 +1445,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recordedClip?.duration, CMTime(value: 30, timescale: 30))
         XCTAssertEqual(recordedClip?.segments.count, 2)
         XCTAssertEqual(recordedClip?.segments.first?.duration, CMTime(value: 30, timescale: 30))
+        XCTAssertEqual(recordedClip?.segments.allSatisfy(\.containsVideo), true)
     }
 
     func testRecorderSinkFinishWhilePausedKeepsRecordedDuration() throws {
@@ -1572,6 +1578,45 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recordedClip?.duration, CMTime(value: 601, timescale: 600))
         XCTAssertEqual(durations.last, CMTime(value: 601, timescale: 600))
         XCTAssertEqual(recordedClip?.segments.count, 2)
+        XCTAssertEqual(recordedClip?.segments.last?.containsVideo, true)
+    }
+
+    func testRecordedClipRepresentationCanRoundTripAndRemoveBackingFile() throws {
+        let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let outputURL = directoryURL.appendingPathComponent("segment").appendingPathExtension("mp4")
+        FileManager.default.createFile(atPath: outputURL.path, contents: Data("kakapos".utf8))
+
+        let clip = RecordedClip(
+            outputURL: outputURL,
+            duration: CMTime(value: 3, timescale: 30),
+            startedAt: .zero,
+            endedAt: CMTime(value: 3, timescale: 30),
+            segments: [
+                RecordedClipSegment(
+                    index: 0,
+                    startedAt: .zero,
+                    endedAt: CMTime(value: 3, timescale: 30),
+                    duration: CMTime(value: 3, timescale: 30),
+                    containsVideo: true,
+                    containsAudio: true
+                )
+            ],
+            infoDictionary: ["origin": "unit-test"]
+        )
+
+        XCTAssertTrue(clip.fileExists)
+        XCTAssertEqual(clip.representationDictionary?[RecordedClipFilenameKey] as? String, outputURL.lastPathComponent)
+        XCTAssertEqual((clip.representationDictionary?[RecordedClipInfoDictionaryKey] as? [String: String])?["origin"], "unit-test")
+
+        let restored = RecordedClip(directoryPath: directoryURL.path, representationDictionary: clip.representationDictionary)
+        XCTAssertEqual(restored.outputURL, outputURL)
+        XCTAssertTrue(restored.fileExists)
+        XCTAssertEqual((restored.infoDictionary as? [String: String])?["origin"], "unit-test")
+
+        restored.removeFile()
+        XCTAssertNil(restored.outputURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
     func testRecorderSinkCancelMakesFinishReturnExportCancelled() throws {
