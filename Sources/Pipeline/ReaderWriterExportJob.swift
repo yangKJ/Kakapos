@@ -52,6 +52,24 @@ public final class ReaderWriterExportJob {
         }
     }
 
+    public struct Summary {
+        public let status: Status
+        public let videoTrackCount: Int
+        public let audioTrackCount: Int
+        public let processorCount: Int
+        public let lastProgressInfo: ProgressInfo?
+
+        public var summaryText: String {
+            let progressText: String
+            if let lastProgressInfo {
+                progressText = "\(Int((lastProgressInfo.overallFractionCompleted * 100).rounded()))%"
+            } else {
+                progressText = "n/a"
+            }
+            return "state \(status) · tracks \(videoTrackCount)/\(audioTrackCount) · processors \(processorCount) · progress \(progressText)"
+        }
+    }
+
     public var progressHandler: ((ProgressInfo) -> Void)?
     public var statusHandler: ((Status) -> Void)?
     public var lastProgressInfo: ProgressInfo? {
@@ -60,6 +78,16 @@ public final class ReaderWriterExportJob {
 
     public var status: Status {
         stateQueue.sync { _status }
+    }
+
+    public var summary: Summary {
+        Summary(
+            status: status,
+            videoTrackCount: asset.tracks(withMediaType: .video).count,
+            audioTrackCount: asset.tracks(withMediaType: .audio).count,
+            processorCount: videoProcessors.count,
+            lastProgressInfo: lastProgressInfo
+        )
     }
 
     private let asset: AVAsset

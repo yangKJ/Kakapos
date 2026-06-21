@@ -81,6 +81,9 @@ private struct OfflineExportView: View {
             Text("Task Status: \(taskStatus)")
                 .font(.footnote)
                 .foregroundColor(.secondary)
+            Text(exportTask?.summaryText ?? "state idle · pipeline unavailable")
+                .font(.footnote)
+                .foregroundColor(.secondary)
             Text(message).font(.footnote).foregroundColor(.secondary)
             Spacer()
         }

@@ -44,6 +44,16 @@ public struct VideoX {
             readerWriterJob?.lastProgressInfo
         }
 
+        public var summaryText: String {
+            if let readerWriterJob {
+                return readerWriterJob.summary.summaryText
+            }
+            guard assetExportSession != nil else {
+                return "state idle · pipeline unavailable"
+            }
+            return "state \(status) · assetExportSession"
+        }
+
         public var status: Status {
             if let readerWriterJob {
                 return Self.status(for: readerWriterJob.status)
