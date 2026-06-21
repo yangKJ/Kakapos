@@ -13,6 +13,10 @@ import AVFoundation
 /// This surface does not add new media behavior. It only groups the
 /// existing engine types into a smaller, easier-to-scan entry layer.
 public enum KakaposSurface {
+    public static var sections: [KakaposSurfaceSection] {
+        KakaposCapabilityCatalog.boards.map(KakaposSurfaceSection.init(info:))
+    }
+
     public static var boards: [KakaposCapabilityBoardInfo] {
         KakaposCapabilityCatalog.boards
     }
@@ -23,6 +27,10 @@ public enum KakaposSurface {
 
     public static func board(named name: String) -> KakaposCapabilityBoardInfo? {
         KakaposCapabilityCatalog.board(named: name)
+    }
+
+    public static func section(named name: String) -> KakaposSurfaceSection? {
+        sections.first { $0.board.rawValue == name }
     }
 
     public static var exportBoard: ExportBoard {

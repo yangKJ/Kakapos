@@ -29,6 +29,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testKakaposSurfaceBoardFacadesMirrorTheCapabilityCatalog() {
         XCTAssertEqual(KakaposSurface.starterBoards.map(\.board), KakaposCapabilityCatalog.starterBoards.map(\.board))
+        XCTAssertEqual(KakaposSurface.sections.map(\.board), KakaposCapabilityCatalog.boards.map(\.board))
         XCTAssertEqual(KakaposSurface.exportBoard.displayName, "Export")
         XCTAssertEqual(KakaposSurface.previewBoard.displayName, "Preview")
         XCTAssertEqual(KakaposSurface.recordBoard.displayName, "Record")
@@ -47,6 +48,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposSurface.previewBoard.summary, KakaposCapabilityCatalog.board(named: "preview")?.summary)
         XCTAssertEqual(KakaposSurface.recordBoard.summary, KakaposCapabilityCatalog.board(named: "record")?.summary)
         XCTAssertEqual(KakaposSurface.timelineBoard.summary, KakaposCapabilityCatalog.board(named: "timeline")?.summary)
+        XCTAssertEqual(KakaposSurface.section(named: "export")?.starterTypes, ["VideoX", "ReaderWriterExportJob"])
+        XCTAssertEqual(KakaposSurface.section(named: "timeline")?.primaryTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"])
     }
 
     func testKakaposBoardsBuildLightweightEntryPoints() throws {
