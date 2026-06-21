@@ -23,6 +23,9 @@ public final class PreviewPipeline {
 
         public var summaryText: String {
             var text = "source \(sourceTypeName) · processors \(processorCount) · pipeline \(pipelineState) · preview \(previewState)"
+            if let sourceSnapshot {
+                text += " · sourceSnapshot \(sourceSnapshot.summaryText)"
+            }
             if let lastFrameIndex {
                 text += " · frame \(lastFrameIndex)"
             }
