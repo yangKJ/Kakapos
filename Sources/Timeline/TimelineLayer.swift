@@ -8,6 +8,13 @@
 import Foundation
 import AVFoundation
 import CoreGraphics
+import QuartzCore
+
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 open class TimelineLayer {
     public var timeRange: CMTimeRange
@@ -136,6 +143,117 @@ public final class ImageLayer: TimelineLayer {
         shifted.transform = transform
         shifted.keyframes = keyframes
         return shifted
+    }
+}
+
+public enum TimelineTextAnimationStyle: Equatable {
+    case none
+    case opacity
+}
+
+public final class TextLayer: TimelineLayer {
+    public let attributedText: NSAttributedString
+    public var frame: CGRect
+    public var animationStyle: TimelineTextAnimationStyle
+    public var contentsScale: CGFloat
+    public var cornerRadius: CGFloat
+    public var masksToBounds: Bool
+    public var backgroundColor: CGColor?
+    public var alignmentMode: CATextLayerAlignmentMode
+
+    public init(
+        attributedText: NSAttributedString,
+        frame: CGRect,
+        timeRange: CMTimeRange,
+        layerLevel: Int = 0,
+        animationStyle: TimelineTextAnimationStyle = .none,
+        contentsScale: CGFloat = 2,
+        cornerRadius: CGFloat = 0,
+        masksToBounds: Bool = false,
+        backgroundColor: CGColor? = nil,
+        alignmentMode: CATextLayerAlignmentMode = .left
+    ) {
+        self.attributedText = attributedText
+        self.frame = frame
+        self.animationStyle = animationStyle
+        self.contentsScale = contentsScale
+        self.cornerRadius = cornerRadius
+        self.masksToBounds = masksToBounds
+        self.backgroundColor = backgroundColor
+        self.alignmentMode = alignmentMode
+        super.init(timeRange: timeRange, layerLevel: layerLevel)
+    }
+
+    public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
+        let shifted = TextLayer(
+            attributedText: attributedText,
+            frame: frame,
+            timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
+            layerLevel: layerLevel + inheritedLevel,
+            animationStyle: animationStyle,
+            contentsScale: contentsScale,
+            cornerRadius: cornerRadius,
+            masksToBounds: masksToBounds,
+            backgroundColor: backgroundColor,
+            alignmentMode: alignmentMode
+        )
+        shifted.opacity = opacity
+        shifted.transform = transform
+        shifted.keyframes = keyframes
+        return shifted
+    }
+
+    func makePresentationLayer(duration: CFTimeInterval) -> CALayer {
+        #if canImport(UIKit)
+        let container: CALayer
+        switch animationStyle {
+        case .none:
+            let textLayer = CATextLayer()
+            textLayer.string = attributedText
+            textLayer.alignmentMode = alignmentMode
+            textLayer.contentsScale = contentsScale
+            textLayer.isWrapped = true
+            textLayer.frame = boundsForPresentation()
+            container = textLayer
+        case .opacity:
+            let textLayer = TimelineTextOpacityAnimationLayer()
+            textLayer.attributedText = attributedText
+            textLayer.frame = boundsForPresentation()
+            container = textLayer
+        }
+        #else
+        let textLayer = CATextLayer()
+        textLayer.string = attributedText
+        textLayer.alignmentMode = alignmentMode
+        textLayer.contentsScale = contentsScale
+        textLayer.isWrapped = true
+        textLayer.frame = boundsForPresentation()
+        let container: CALayer = textLayer
+        #endif
+
+        container.opacity = opacity
+        container.backgroundColor = backgroundColor
+        container.cornerRadius = cornerRadius
+        container.masksToBounds = masksToBounds
+        container.anchorPoint = .zero
+        container.position = frame.origin
+        container.setAffineTransform(transform)
+
+        let beginTime = AVCoreAnimationBeginTimeAtZero + timeRange.start.seconds
+        let endTime = beginTime + timeRange.duration.seconds
+        let visibility = CAKeyframeAnimation(keyPath: "opacity")
+        visibility.keyTimes = [0, NSNumber(value: beginTime / max(duration, 0.0001)), NSNumber(value: endTime / max(duration, 0.0001)), 1]
+        visibility.values = [0, opacity, opacity, 0]
+        visibility.duration = duration
+        visibility.beginTime = AVCoreAnimationBeginTimeAtZero
+        visibility.fillMode = .both
+        visibility.isRemovedOnCompletion = false
+        container.add(visibility, forKey: "timelineVisibility")
+        return container
+    }
+
+    private func boundsForPresentation() -> CGRect {
+        CGRect(origin: .zero, size: frame.size)
     }
 }
 
@@ -275,13 +393,25 @@ public struct AudioVolumeRamp {
     public var startVolume: Float
     public var endVolume: Float
     public var timeRange: CMTimeRange
-    public var easing: TimelineEasing
+    public var timingFunction: TimelineEasing
 
     public init(startVolume: Float, endVolume: Float, timeRange: CMTimeRange, easing: TimelineEasing = .linear) {
         self.startVolume = startVolume
         self.endVolume = endVolume
         self.timeRange = timeRange
-        self.easing = easing
+        self.timingFunction = easing
+    }
+
+    public init(startVolume: Float, endVolume: Float, timeRange: CMTimeRange, timingFunction: TimelineEasing) {
+        self.startVolume = startVolume
+        self.endVolume = endVolume
+        self.timeRange = timeRange
+        self.timingFunction = timingFunction
+    }
+
+    public var easing: TimelineEasing {
+        get { timingFunction }
+        set { timingFunction = newValue }
     }
 
     public func applyingOffset(_ offset: CMTime) -> AudioVolumeRamp {
@@ -289,7 +419,7 @@ public struct AudioVolumeRamp {
             startVolume: startVolume,
             endVolume: endVolume,
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
-            easing: easing
+            timingFunction: timingFunction
         )
     }
 }

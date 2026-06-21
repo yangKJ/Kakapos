@@ -467,6 +467,26 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lookupValue, 0.125, accuracy: 0.0001)
     }
 
+    func testKeyframeAnimationSupportsPerSegmentTimingFunctions() throws {
+        let animation = KeyframeAnimation(
+            keyPath: "opacity",
+            values: [0, 1, 0.5],
+            keyTimes: [
+                .zero,
+                CMTime(value: 10, timescale: 10),
+                CMTime(value: 20, timescale: 10)
+            ],
+            timingFunctions: [.cubicEaseOut, .bounceEaseOut]
+        )
+
+        let firstSegment = try XCTUnwrap(animation.value(at: CMTime(value: 5, timescale: 10)))
+        let secondSegment = try XCTUnwrap(animation.value(at: CMTime(value: 15, timescale: 10)))
+
+        XCTAssertGreaterThan(firstSegment, 0.5)
+        XCTAssertLessThan(secondSegment, 1.0)
+        XCTAssertGreaterThan(secondSegment, 0.5)
+    }
+
     func testTimelineCompositionCompilesKeyframedOpacityRamp() throws {
         let asset = AVAsset(url: try makeSampleAssetURL())
         let clip = ClipLayer(
@@ -645,6 +665,36 @@ final class MediaEngineTests: XCTestCase {
             0.75,
             accuracy: 0.0001
         )
+    }
+
+    func testTimelineCompositionIncludesTextLayersInOverlayAndRenderPlan() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 45, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 45, timescale: 30)),
+            layerLevel: 0
+        )
+        let text = TextLayer(
+            attributedText: NSAttributedString(string: "Kakapos"),
+            frame: CGRect(x: 24, y: 36, width: 180, height: 48),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 45, timescale: 30)),
+            layerLevel: 2,
+            animationStyle: .opacity
+        )
+        let timeline = TimelineComposition(layers: [clip, text])
+
+        let compiled = timeline.compile()
+        let firstInstruction = try XCTUnwrap(compiled.renderInstructions.first)
+        let textState = try XCTUnwrap(firstInstruction.layerStates.first(where: { $0.kind == .text }))
+
+        XCTAssertEqual(compiled.resolvedLayers.textLayers.count, 1)
+        XCTAssertEqual(compiled.renderPlan.textSegments.count, 1)
+        XCTAssertEqual(compiled.renderPlan.visualIntervals.first?.textSegments.count, 1)
+        XCTAssertNotNil(compiled.overlayLayer)
+        XCTAssertNotNil(compiled.videoComposition.animationTool)
+        XCTAssertNil(textState.trackID)
+        XCTAssertEqual(textState.layerLevel, 2)
     }
 
     func testCompiledTimelineCompositionBuildsImageSourceAndProcessorChain() throws {

@@ -8,6 +8,7 @@
 import Foundation
 import AVFoundation
 import CoreGraphics
+import QuartzCore
 
 internal final class TimelineCompiler {
     private let compositionModel: TimelineRenderCompositionNode
@@ -43,6 +44,7 @@ internal final class TimelineCompiler {
         let renderInstructions = buildRenderInstructions(
             videoLayers: resolvedLayers.videoLayers,
             imageLayers: resolvedLayers.imageLayers,
+            textLayers: resolvedLayers.textLayers,
             effectLayers: resolvedLayers.effectLayers,
             allocation: videoAllocation
         )
@@ -59,6 +61,22 @@ internal final class TimelineCompiler {
             videoAllocation: videoAllocation,
             audioAllocation: audioAllocation
         )
+        let overlayLayer = makeOverlayLayer(
+            textLayers: resolvedLayers.textLayers,
+            renderSize: compositionModel.renderSize
+        )
+        if let overlayLayer, !resolvedLayers.videoLayers.isEmpty {
+            let videoLayer = CALayer()
+            videoLayer.frame = CGRect(origin: .zero, size: compositionModel.renderSize)
+            let parentLayer = CALayer()
+            parentLayer.frame = videoLayer.frame
+            parentLayer.addSublayer(videoLayer)
+            parentLayer.addSublayer(overlayLayer)
+            videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
+                postProcessingAsVideoLayer: videoLayer,
+                in: parentLayer
+            )
+        }
 
         return CompiledTimelineComposition(
             composition: composition,
@@ -66,7 +84,8 @@ internal final class TimelineCompiler {
             audioMix: audioMix,
             renderInstructions: renderInstructions,
             resolvedLayers: resolvedLayers,
-            renderPlan: renderPlan
+            renderPlan: renderPlan,
+            overlayLayer: overlayLayer
         )
     }
 
@@ -80,6 +99,7 @@ internal final class TimelineCompiler {
         return ResolvedTimelineLayers(
             videoLayers: sortedLayers.compactMap { $0 as? ClipLayer },
             imageLayers: sortedLayers.compactMap { $0 as? ImageLayer },
+            textLayers: sortedLayers.compactMap { $0 as? TextLayer },
             audioLayers: sortedLayers.compactMap { $0 as? AudioLayer },
             effectLayers: sortedLayers.compactMap { $0 as? EffectLayer }
         )
@@ -293,10 +313,11 @@ internal final class TimelineCompiler {
     private func buildRenderInstructions(
         videoLayers: [ClipLayer],
         imageLayers: [ImageLayer],
+        textLayers: [TextLayer],
         effectLayers: [EffectLayer],
         allocation: [ObjectIdentifier: CMPersistentTrackID]
     ) -> [TimelineRenderInstruction] {
-        let visualLayers = (videoLayers as [TimelineLayer]) + imageLayers + effectLayers
+        let visualLayers = (videoLayers as [TimelineLayer]) + imageLayers + textLayers + effectLayers
         let activeLayers = visualLayers.filter { !$0.timeRange.isEmpty }
         let cutPoints = uniqueSortedTimes(activeLayers.flatMap { [$0.timeRange.start, $0.timeRange.end] })
         guard cutPoints.count >= 2 else { return [] }
@@ -480,6 +501,12 @@ internal final class TimelineCompiler {
             image = imageLayer.image
             processor = nil
             effectIntensity = nil
+        } else if layer is TextLayer {
+            kind = .text
+            trackID = nil
+            image = nil
+            processor = nil
+            effectIntensity = nil
         } else if let effectLayer = layer as? EffectLayer {
             kind = .effect
             trackID = nil
@@ -535,6 +562,21 @@ internal final class TimelineCompiler {
             .translatedBy(x: CGFloat(translationX), y: CGFloat(translationY))
             .rotated(by: CGFloat(rotation))
             .scaledBy(x: CGFloat(scaleX), y: CGFloat(scaleY))
+    }
+
+    private func makeOverlayLayer(
+        textLayers: [TextLayer],
+        renderSize: CGSize
+    ) -> CALayer? {
+        guard !textLayers.isEmpty else { return nil }
+        let overlayLayer = CALayer()
+        overlayLayer.frame = CGRect(origin: .zero, size: renderSize)
+        let totalDuration = textLayers.map(\.timeRange.end).max()?.seconds ?? 0
+        let overlayDuration = max(totalDuration, compositionModel.frameDuration.seconds)
+        for textLayer in textLayers.sorted(by: { $0.layerLevel < $1.layerLevel }) {
+            overlayLayer.addSublayer(textLayer.makePresentationLayer(duration: overlayDuration))
+        }
+        return overlayLayer
     }
 
     private func uniqueSortedTimes(_ times: [CMTime]) -> [CMTime] {
