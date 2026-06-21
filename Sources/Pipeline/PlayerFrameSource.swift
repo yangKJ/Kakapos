@@ -22,6 +22,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         public let lastPresentationTime: CMTime?
         public let lastPlayerItemTime: CMTime?
         public let preferredFramesPerSecond: Int
+        public let lastErrorDescription: String?
 
         public var summaryText: String {
             var text = "state \(state) · generation \(generation) · frame \(frameIndex) · lastFrame \(hasLastFrame ? "yes" : "no") · seekTarget \(hasSeekTarget ? "yes" : "no") · fps \(preferredFramesPerSecond)"
@@ -33,6 +34,9 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             }
             if let lastPlayerItemTime {
                 text += " · itemTime \(String(format: "%.2fs", lastPlayerItemTime.seconds))"
+            }
+            if let lastErrorDescription {
+                text += " · error \(lastErrorDescription)"
             }
             return text
         }
@@ -63,6 +67,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     public private(set) var lastFrameRequestReason: String?
     public private(set) var lastPresentationTime: CMTime?
     public private(set) var lastPlayerItemTime: CMTime?
+    public private(set) var lastErrorDescription: String?
     public var frameHandler: ((MediaFrame) -> Void)?
     public var stateChangedHandler: ((State) -> Void)?
     public var itemChangedHandler: ((AVPlayerItem?) -> Void)?
@@ -82,7 +87,8 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             lastFrameRequestReason: lastFrameRequestReason,
             lastPresentationTime: lastPresentationTime,
             lastPlayerItemTime: lastPlayerItemTime,
-            preferredFramesPerSecond: preferredFramesPerSecond
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            lastErrorDescription: lastErrorDescription
         )
     }
 
@@ -93,6 +99,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     private var coordinator = PlayerFrameCoordinator()
     private var currentItemObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
+    private var failureObserver: NSObjectProtocol?
     private var timeJumpObserver: NSObjectProtocol?
     private var driver: PlayerFrameDriving?
     private let outputNode = MediaOutputNode()
@@ -132,6 +139,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         lastFrameRequestReason = nil
         lastPresentationTime = nil
         lastPlayerItemTime = nil
+        lastErrorDescription = nil
         _ = coordinator.start(with: player.currentItem)
         updateState(from: coordinator.playbackState)
         observeAttachedItem(player.currentItem)
@@ -158,6 +166,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         lastFrameRequestReason = nil
         lastPresentationTime = nil
         lastPlayerItemTime = nil
+        lastErrorDescription = nil
         invalidateObservers()
         delegate?.mediaSourceDidFinish(self)
     }
@@ -284,6 +293,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             lastFrameRequestReason = nil
             lastPresentationTime = nil
             lastPlayerItemTime = nil
+            lastErrorDescription = nil
         }
         itemChangedHandler?(item)
         observeAttachedItem(item)
@@ -298,6 +308,10 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
             self.endObserver = nil
+        }
+        if let failureObserver {
+            NotificationCenter.default.removeObserver(failureObserver)
+            self.failureObserver = nil
         }
         if let timeJumpObserver {
             NotificationCenter.default.removeObserver(timeJumpObserver)
@@ -315,6 +329,16 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             self.updateState(from: self.coordinator.playbackState)
             self.delegate?.mediaSourceDidFinish(self)
         }
+        failureObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+                ?? NSError(domain: "com.condy.kakapos.player-frame-source", code: -1, userInfo: [NSLocalizedDescriptionKey: "Player item failed to play to end time."])
+            self.handlePlayerItemFailure(error)
+        }
         timeJumpObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemTimeJumped,
             object: item,
@@ -327,12 +351,24 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         }
     }
 
+    private func handlePlayerItemFailure(_ error: Error) {
+        lastErrorDescription = Self.errorDescription(for: error)
+        rejectFurtherFrames()
+        coordinator.stop()
+        updateState(from: coordinator.playbackState)
+        delegate?.mediaSource(self, didFail: error)
+    }
+
     private func invalidateObservers() {
         currentItemObservation?.invalidate()
         currentItemObservation = nil
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
             self.endObserver = nil
+        }
+        if let failureObserver {
+            NotificationCenter.default.removeObserver(failureObserver)
+            self.failureObserver = nil
         }
         if let timeJumpObserver {
             NotificationCenter.default.removeObserver(timeJumpObserver)
@@ -358,6 +394,11 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         guard state != nextState else { return }
         state = nextState
         stateChangedHandler?(nextState)
+    }
+
+    private static func errorDescription(for error: Error) -> String {
+        let nsError = error as NSError
+        return "\(nsError.domain)#\(nsError.code)"
     }
 
     private func resetFrameAcceptance() {
