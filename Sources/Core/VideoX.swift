@@ -105,7 +105,11 @@ public struct VideoX {
                 return
             }
             if let progress {
-                let progressObserver = ExportSessionProgressObserver(session: assetExportSession, handler: progress)
+                let progressObserver = ExportSessionProgressObserver(
+                    session: assetExportSession,
+                    keyPath: \.progress,
+                    handler: progress
+                )
                 progressObserver.start()
                 assetExportSession.exportAsynchronously(completionHandler: { [weak assetExportSession] in
                     progressObserver.stop()
@@ -447,34 +451,31 @@ extension VideoX {
     }
 }
 
-private final class ExportSessionProgressObserver {
-    private weak var session: AVAssetExportSession?
+final class ExportSessionProgressObserver<Session: NSObject> {
+    private weak var session: Session?
     private let handler: (Float) -> Void
-    private let queue = DispatchQueue(label: "com.condy.kakapos.export-progress")
-    private var timer: DispatchSourceTimer?
+    private let keyPath: KeyPath<Session, Float>
+    private var observation: NSKeyValueObservation?
 
-    init(session: AVAssetExportSession, handler: @escaping (Float) -> Void) {
+    init(session: Session, keyPath: KeyPath<Session, Float>, handler: @escaping (Float) -> Void) {
         self.session = session
+        self.keyPath = keyPath
         self.handler = handler
     }
 
     func start() {
         handler(0.0)
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(100))
-        timer.setEventHandler { [weak self] in
-            guard let self, let session = self.session else { return }
-            let progress = min(max(session.progress, 0), 1)
+        observation = session?.observe(keyPath, options: [.new]) { [weak self] session, _ in
+            guard let self else { return }
+            let progress = min(max(session[keyPath: self.keyPath], 0), 1)
             DispatchQueue.main.async {
                 self.handler(progress)
             }
         }
-        self.timer = timer
-        timer.resume()
     }
 
     func stop() {
-        timer?.cancel()
-        timer = nil
+        observation?.invalidate()
+        observation = nil
     }
 }

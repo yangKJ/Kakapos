@@ -1028,6 +1028,29 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    func testExportSessionProgressObserverTracksKvoProgressChanges() {
+        let session = ObservableProgressSession()
+        var receivedValues: [Float] = []
+        let updateExpectation = expectation(description: "progress updates")
+        updateExpectation.expectedFulfillmentCount = 3
+
+        let observer = ExportSessionProgressObserver(session: session, keyPath: \.progress) { value in
+            receivedValues.append(value)
+            updateExpectation.fulfill()
+        }
+
+        observer.start()
+        session.progress = 0.35
+        session.progress = 0.8
+
+        wait(for: [updateExpectation], timeout: 1)
+        observer.stop()
+
+        XCTAssertEqual(receivedValues.first ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(receivedValues.last ?? -1, 0.8, accuracy: 0.0001)
+        XCTAssertEqual(receivedValues.count, 3)
+    }
+
     func testReaderWriterExportJobSummaryIncludesFailureDescription() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),
@@ -2778,6 +2801,10 @@ private final class FailingSource: MediaSource {
     func resume() {}
     func stop() {}
     func cancel() {}
+}
+
+private final class ObservableProgressSession: NSObject {
+    @objc dynamic var progress: Float = 0
 }
 
 private final class DelayedEmittingSource: MediaSource {
