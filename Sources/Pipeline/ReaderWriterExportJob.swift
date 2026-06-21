@@ -122,6 +122,10 @@ public final class ReaderWriterExportJob {
         stateQueue.sync { _lastErrorDescription }
     }
 
+    public var progressFraction: Float? {
+        lastProgressInfo.map { Float($0.overallFractionCompleted) }
+    }
+
     public var status: Status {
         stateQueue.sync { _status }
     }
