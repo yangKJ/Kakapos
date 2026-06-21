@@ -2426,6 +2426,46 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summary.summaryText.contains("preview finished"))
     }
 
+    func testPreviewPipelineManifestIsCodableForExternalInspection() throws {
+        let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
+        let frame = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
+        )
+        let source = SnapshotSource(
+            frames: [frame],
+            snapshot: MediaSourceSnapshot(
+                stateDescription: "primed",
+                lastFrameIndex: 9,
+                lastPresentationTime: .zero,
+                lastSourceTime: .zero,
+                details: ["board": "preview"]
+            )
+        )
+        let pipeline = PreviewPipeline(source: source) { _, _ in }
+        pipeline.start()
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(pipeline.manifest)
+        let decoded = try JSONDecoder().decode(PreviewPipeline.Manifest.self, from: data)
+
+        XCTAssertEqual(decoded.sourceTypeName, "SnapshotSource")
+        XCTAssertEqual(decoded.processorCount, 0)
+        XCTAssertEqual(decoded.pipelineStateDescription, "finished")
+        XCTAssertEqual(decoded.previewStateDescription, "finished")
+        XCTAssertEqual(decoded.sourceSnapshot?.stateDescription, "primed")
+        XCTAssertEqual(decoded.sourceSnapshot?.lastFrameIndex, 9)
+        XCTAssertEqual(decoded.sourceSnapshot?.lastPresentationTimeSeconds, 0)
+        XCTAssertEqual(decoded.sourceSnapshot?.lastSourceTimeSeconds, 0)
+        XCTAssertEqual(decoded.sourceSnapshot?.details["board"], "preview")
+        XCTAssertEqual(decoded.lastFrameIndex, 1)
+        XCTAssertEqual(decoded.lastPresentationTimeSeconds, 0)
+        XCTAssertEqual(decoded.lastSourceTimeSeconds, 0)
+        XCTAssertEqual(decoded.lastFrameRequestReason, nil)
+        XCTAssertEqual(decoded.lastErrorDescription, nil)
+    }
+
     func testPreviewPipelineSummaryIncludesFailureDescriptionFromUnderlyingPipeline() {
         let source = FailingSource(error: NSError(domain: "PreviewPipelineTests", code: 17))
         let pipeline = PreviewPipeline(source: source) { _, _ in }

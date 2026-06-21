@@ -9,6 +9,45 @@ import Foundation
 import AVFoundation
 
 public final class PreviewPipeline {
+    public struct ManifestSourceSnapshot: Equatable, Sendable, Codable {
+        public let stateDescription: String
+        public let lastFrameIndex: Int64?
+        public let lastPresentationTimeSeconds: Double?
+        public let lastSourceTimeSeconds: Double?
+        public let lastErrorDescription: String?
+        public let details: [String: String]
+
+        public init(snapshot: MediaSourceSnapshot) {
+            self.stateDescription = snapshot.stateDescription
+            self.lastFrameIndex = snapshot.lastFrameIndex
+            self.lastPresentationTimeSeconds = snapshot.lastPresentationTime?.seconds
+            self.lastSourceTimeSeconds = snapshot.lastSourceTime?.seconds
+            self.lastErrorDescription = snapshot.lastErrorDescription
+            self.details = snapshot.details
+        }
+    }
+
+    public struct Manifest: Equatable, Sendable, Codable {
+        public let sourceTypeName: String
+        public let processorCount: Int
+        public let pipelineStateDescription: String
+        public let previewStateDescription: String
+        public let playerSourceStateDescription: String?
+        public let playerSourceGeneration: Int64?
+        public let playerSourceFrameIndex: Int64?
+        public let playerSourceLastFrameRequestReason: String?
+        public let sourceSnapshot: ManifestSourceSnapshot?
+        public let lastFrameIndex: Int64?
+        public let lastPresentationTimeSeconds: Double?
+        public let lastSourceTimeSeconds: Double?
+        public let lastFrameRequestReason: String?
+        public let pendingFrameIndex: Int64?
+        public let pendingFramePresentationTimeSeconds: Double?
+        public let pendingFrameSourceTimeSeconds: Double?
+        public let pendingFrameRequestReason: String?
+        public let lastErrorDescription: String?
+    }
+
     public struct Summary {
         public let sourceTypeName: String
         public let processorCount: Int
@@ -106,6 +145,32 @@ public final class PreviewPipeline {
 
     public var summaryText: String {
         summary.summaryText
+    }
+
+    public var manifest: Manifest {
+        let playerSummary = playerSource?.summary
+        let previewSnapshot = previewSink.snapshot
+        let pipelineSummary = pipeline.summary
+        return Manifest(
+            sourceTypeName: String(describing: type(of: source)),
+            processorCount: processors.count,
+            pipelineStateDescription: String(describing: pipeline.state),
+            previewStateDescription: String(describing: previewSink.state),
+            playerSourceStateDescription: playerSummary.map { String(describing: $0.state) },
+            playerSourceGeneration: playerSummary?.generation,
+            playerSourceFrameIndex: playerSummary?.frameIndex,
+            playerSourceLastFrameRequestReason: playerSummary?.lastFrameRequestReason,
+            sourceSnapshot: pipelineSummary.sourceSnapshot.map(ManifestSourceSnapshot.init(snapshot:)),
+            lastFrameIndex: previewSnapshot.lastFrameIndex,
+            lastPresentationTimeSeconds: previewSnapshot.lastPresentationTime?.seconds,
+            lastSourceTimeSeconds: previewSnapshot.lastSourceTime?.seconds,
+            lastFrameRequestReason: previewSnapshot.lastFrameRequestReason,
+            pendingFrameIndex: previewSnapshot.pendingFrameIndex,
+            pendingFramePresentationTimeSeconds: previewSnapshot.pendingFramePresentationTime?.seconds,
+            pendingFrameSourceTimeSeconds: previewSnapshot.pendingFrameSourceTime?.seconds,
+            pendingFrameRequestReason: previewSnapshot.pendingFrameRequestReason,
+            lastErrorDescription: pipeline.lastErrorDescription
+        )
     }
 
     public var sourceSnapshot: MediaSourceSnapshot? {
