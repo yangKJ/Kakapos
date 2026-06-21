@@ -1409,7 +1409,13 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertEqual(source.summary.frameIndex, 1)
         XCTAssertEqual(source.summary.hasLastFrame, true)
-        XCTAssertEqual(source.summary.summaryText, "state paused · generation 1 · frame 1 · lastFrame yes · seekTarget no · fps 30")
+        XCTAssertEqual(source.summary.lastFrameRequestReason, "manual")
+        XCTAssertEqual(source.summary.lastPresentationTime, .zero)
+        XCTAssertEqual(source.summary.lastPlayerItemTime, .zero)
+        XCTAssertEqual(
+            source.summary.summaryText,
+            "state paused · generation 1 · frame 1 · lastFrame yes · seekTarget no · fps 30 · reason manual · presentation 0.00s · itemTime 0.00s"
+        )
     }
     #endif
 
@@ -1842,6 +1848,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNil(source.lastSeekTargetTime)
         XCTAssertEqual(source.lastFrame?.metadata.frameIndex, 2)
         XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(source.lastFrame?.pixelBuffer)), 22)
+        XCTAssertEqual(source.summary.lastFrameRequestReason, "seek")
+        XCTAssertEqual(source.summary.lastPresentationTime, target)
+        XCTAssertEqual(source.summary.lastPlayerItemTime, target)
+        XCTAssertTrue(source.summary.summaryText.contains("reason seek"))
     }
 
     func testPlayerFrameSourceResetsSeekTargetAndLastFrameWhenCurrentItemChanges() throws {
