@@ -2669,6 +2669,55 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summaryText.contains("processors 1"))
     }
 
+    func testTimelinePipelineBuildsReaderWriterExportJobFromCompiledComposition() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let pipeline = TimelinePipeline(
+            renderSize: CGSize(width: 1280, height: 720),
+            frameDuration: CMTime(value: 1, timescale: 30),
+            layers: [clip]
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+
+        let exportJob = pipeline.makeExportJob(outputURL: outputURL)
+
+        XCTAssertEqual(exportJob.summary.status, .idle)
+        XCTAssertEqual(exportJob.summary.processorCount, 0)
+        XCTAssertGreaterThanOrEqual(exportJob.summary.videoTrackCount, 1)
+        XCTAssertTrue(exportJob.summary.summaryText.contains("state idle"))
+        XCTAssertTrue(exportJob.summary.summaryText.contains("tracks"))
+    }
+
+    #if canImport(UIKit)
+    func testTimelinePipelineCreatesPlayerItemAndPreviewPipeline() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let pipeline = TimelinePipeline(
+            renderSize: CGSize(width: 1280, height: 720),
+            frameDuration: CMTime(value: 1, timescale: 30),
+            layers: [clip]
+        )
+
+        let playerItem = pipeline.makePlayerItem()
+        let previewPipeline = pipeline.makePreviewPipeline(handler: { _, _ in })
+
+        XCTAssertEqual(playerItem.videoComposition?.renderSize, CGSize(width: 1280, height: 720))
+        XCTAssertNotNil(playerItem.audioMix)
+        XCTAssertTrue(previewPipeline.source is PlayerFrameSource)
+        XCTAssertEqual(previewPipeline.summary.sourceTypeName, "PlayerFrameSource")
+    }
+    #endif
+
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
         var lifecycle = CameraSessionLifecycle(position: .back)
 
