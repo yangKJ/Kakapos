@@ -14,6 +14,7 @@ public final class TimelinePipeline {
         public let frameDuration: CMTime
         public let layerCount: Int
         public let transitionCount: Int
+        public let compiledSummary: TimelineCompilationSummary
         public let compiledSummaryText: String
 
         public var summaryText: String {
@@ -52,6 +53,7 @@ public final class TimelinePipeline {
             frameDuration: composition.frameDuration,
             layerCount: composition.layers.count,
             transitionCount: composition.transitions.count,
+            compiledSummary: compiled.summary,
             compiledSummaryText: compiled.summary.summaryText
         )
     }
