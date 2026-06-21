@@ -302,6 +302,59 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.finishCount, 1)
     }
 
+    func testPlayerFrameCoordinatorResetsFrameIndexWhenCurrentItemChanges() {
+        final class Token: NSObject {}
+
+        var coordinator = PlayerFrameCoordinator()
+        let first = Token()
+        let second = Token()
+
+        XCTAssertTrue(coordinator.start(with: first))
+        XCTAssertEqual(coordinator.generation, 1)
+        XCTAssertEqual(coordinator.playbackState, .running)
+        XCTAssertEqual(coordinator.markFrameOutput(), 1)
+        XCTAssertEqual(coordinator.markFrameOutput(), 2)
+
+        XCTAssertTrue(coordinator.updateCurrentItem(second))
+        XCTAssertEqual(coordinator.frameIndex, 0)
+        XCTAssertEqual(coordinator.generation, 2)
+        XCTAssertEqual(coordinator.markFrameOutput(), 1)
+    }
+
+    func testPlayerFrameCoordinatorWaitsForMediaDataAndRecovers() {
+        final class Token: NSObject {}
+
+        var coordinator = PlayerFrameCoordinator()
+        _ = coordinator.start(with: Token())
+
+        XCTAssertTrue(coordinator.beginWaitingForMediaData())
+        XCTAssertEqual(coordinator.playbackState, .waitingForMediaData)
+        XCTAssertFalse(coordinator.shouldDriveDisplayLink)
+
+        XCTAssertTrue(coordinator.mediaDataWillChange())
+        XCTAssertEqual(coordinator.playbackState, .running)
+        XCTAssertTrue(coordinator.shouldDriveDisplayLink)
+    }
+
+    func testPlayerFrameCoordinatorPauseResumeAndStopTransitions() {
+        final class Token: NSObject {}
+
+        var coordinator = PlayerFrameCoordinator()
+        _ = coordinator.start(with: Token())
+
+        coordinator.pause()
+        XCTAssertEqual(coordinator.playbackState, .paused)
+        XCTAssertFalse(coordinator.shouldDriveDisplayLink)
+
+        coordinator.resume()
+        XCTAssertEqual(coordinator.playbackState, .running)
+        XCTAssertTrue(coordinator.shouldDriveDisplayLink)
+
+        coordinator.stop()
+        XCTAssertEqual(coordinator.playbackState, .finished)
+        XCTAssertFalse(coordinator.shouldDriveDisplayLink)
+    }
+
     func testRecorderSinkFinishRecordingReturnsRecordedClip() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

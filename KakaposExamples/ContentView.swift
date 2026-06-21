@@ -122,6 +122,8 @@ private struct PlayerPreviewView: View {
     @State private var frameCount = 0
     @State private var currentTimeText = "0.00s"
     @State private var message = "Tap Start to pull player frames into PreviewSink"
+    @State private var previewStateText = "idle"
+    @State private var previewGeneration: Int64 = 0
     #if canImport(UIKit)
     @State private var frameSource: PlayerFrameSource?
     @State private var pipeline: MediaPipeline?
@@ -151,9 +153,16 @@ private struct PlayerPreviewView: View {
             Text("Time: \(currentTimeText)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+            Text("State: \(previewStateText)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
 
             HStack {
                 Button("Start") { startPreview() }
+                Button("Pause") { pausePreview() }
+                Button("Resume") { resumePreview() }
+                Button("Restart") { restartPreview() }
+                Button("Seek 2s") { seekPreview(to: CMTime(seconds: 2, preferredTimescale: 600)) }
                 Button("Stop") { stopPreview() }
             }
             .buttonStyle(.borderedProminent)
@@ -174,12 +183,18 @@ private struct PlayerPreviewView: View {
         frameCount = 0
         previewImage = nil
         currentTimeText = "0.00s"
+        previewStateText = "starting"
+        previewGeneration = 0
         #if canImport(UIKit)
         let source = PlayerFrameSource(player: player)
         let sink = PreviewSink { image, metadata in
+            let generation = metadata.userInfo[PlayerFrameSource.MetadataKey.generation] as? Int64 ?? 0
+            guard generation >= previewGeneration else { return }
+            previewGeneration = generation
             previewImage = image
             frameCount += 1
             currentTimeText = String(format: "%.2fs", metadata.presentationTime.seconds)
+            previewStateText = metadata.userInfo[PlayerFrameSource.MetadataKey.playbackState] as? String ?? "running"
         }
         let pipeline = MediaPipeline(
             source: source,
@@ -191,9 +206,43 @@ private struct PlayerPreviewView: View {
         pipeline.start()
         player.play()
         message = "Previewing processed player frames"
+        previewStateText = "running"
         #else
         message = "PlayerFrameSource is available in UIKit environments"
         #endif
+    }
+
+    private func pausePreview() {
+        player?.pause()
+        #if canImport(UIKit)
+        pipeline?.pause()
+        #endif
+        previewStateText = "paused"
+        message = "Preview paused"
+    }
+
+    private func resumePreview() {
+        #if canImport(UIKit)
+        pipeline?.resume()
+        #endif
+        player?.play()
+        previewStateText = "running"
+        message = "Preview resumed"
+    }
+
+    private func restartPreview() {
+        seekPreview(to: .zero, message: "Preview restarted from zero")
+    }
+
+    private func seekPreview(to time: CMTime, message: String = "Preview seeked") {
+        player?.seek(to: time)
+        #if canImport(UIKit)
+        pipeline?.resume()
+        #endif
+        player?.play()
+        currentTimeText = String(format: "%.2fs", time.seconds)
+        previewStateText = "running"
+        self.message = message
     }
 
     private func stopPreview() {
@@ -204,6 +253,8 @@ private struct PlayerPreviewView: View {
         frameSource = nil
         #endif
         previewImage = nil
+        previewStateText = "stopped"
+        previewGeneration = 0
         message = "Stopped"
     }
 }
