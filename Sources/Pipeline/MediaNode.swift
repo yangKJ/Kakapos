@@ -172,6 +172,7 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     public var errorHandler: ((Error) -> Void)?
     public var finishHandler: (() -> Void)?
     public var frameHandler: ((MediaFrame) -> Void)?
+    public var shouldAcceptSourceCallbacks: (() -> Bool)?
 
     private let outputNode = MediaOutputNode()
 
@@ -199,6 +200,7 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     }
 
     public func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
+        guard shouldAcceptSourceCallbacks?() ?? true else { return }
         frameHandler?(frame)
         outputNode.transmit(frame) { [weak self] result in
             if case .failure(let error) = result {
@@ -208,10 +210,12 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     }
 
     public func mediaSource(_ source: MediaSource, didFail error: Error) {
+        guard shouldAcceptSourceCallbacks?() ?? true else { return }
         errorHandler?(error)
     }
 
     public func mediaSourceDidFinish(_ source: MediaSource) {
+        guard shouldAcceptSourceCallbacks?() ?? true else { return }
         finishHandler?()
     }
 }
