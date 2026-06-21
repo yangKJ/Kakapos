@@ -9,7 +9,7 @@
 Pod::Spec.new do |s|
   s.name             = 'Kakapos'
   s.version          = '1.1.0'
-  s.summary          = 'A lightweight media engine for export, preview, recording, and timeline composition on Apple platforms.'
+  s.summary          = 'A media engine with four lightweight boards for export, preview, record, and timeline composition on Apple platforms.'
   
   # This description is used to generate tags and improve search results.
   #   * Think: What does it do? Why did you write it? What is the focus?
