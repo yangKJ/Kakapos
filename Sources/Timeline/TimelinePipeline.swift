@@ -174,7 +174,7 @@ public final class TimelinePipeline {
     }
 }
 
-#if canImport(UIKit)
+#if canImport(UIKit) || os(macOS)
 public extension TimelinePipeline {
     func makePreviewPipeline(
         preferredFramesPerSecond: Int = 30,

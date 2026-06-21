@@ -35,7 +35,7 @@ enum KakaposEntryPointFactory {
         )
     }
 
-#if canImport(UIKit)
+#if canImport(UIKit) || os(macOS)
     static func preview(
         player: AVPlayer,
         preferredFramesPerSecond: Int = 30,

@@ -63,7 +63,7 @@ public enum KakaposSurface {
         )
     }
 
-#if canImport(UIKit)
+#if canImport(UIKit) || os(macOS)
     public static func preview(
         player: AVPlayer,
         preferredFramesPerSecond: Int = 30,
@@ -208,7 +208,7 @@ public enum KakaposSurface {
             )
         }
 
-    #if canImport(UIKit)
+    #if canImport(UIKit) || os(macOS)
         public func preview(
             player: AVPlayer,
             preferredFramesPerSecond: Int = 30,

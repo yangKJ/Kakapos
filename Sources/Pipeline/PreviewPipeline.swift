@@ -85,7 +85,7 @@ public final class PreviewPipeline {
         summary.sourceSnapshot
     }
 
-#if canImport(UIKit)
+#if canImport(UIKit) || os(macOS)
     public var playerSourceState: PlayerFrameSource.State? {
         playerSource?.summary.state
     }
@@ -131,7 +131,7 @@ public final class PreviewPipeline {
     }
 }
 
-#if canImport(UIKit)
+#if canImport(UIKit) || os(macOS)
 public extension PreviewPipeline {
     convenience init(
         asset: AVAsset,
