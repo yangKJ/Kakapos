@@ -197,6 +197,7 @@ public final class MediaPipeline {
     }
 
     public func stop() {
+        guard canStop() else { return }
         rejectFurtherSourceCallbacks()
         source.stop()
         markSourceFinished()
@@ -303,6 +304,12 @@ public final class MediaPipeline {
     private func canStart() -> Bool {
         stateQueue.sync {
             state != .running && state != .paused
+        }
+    }
+
+    private func canStop() -> Bool {
+        stateQueue.sync {
+            state != .finished && state != .cancelled && state != .failed
         }
     }
 
