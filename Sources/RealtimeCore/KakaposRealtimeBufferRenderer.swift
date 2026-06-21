@@ -34,6 +34,7 @@ import SceneKit
 #endif
 
 /// KakaposRealtimeBufferRenderer, provides the ability to render/record SceneKit frames
+@available(*, deprecated, message: "Use FrameProcessor-backed media pipelines instead of the legacy realtime buffer renderer.")
 public class KakaposRealtimeBufferRenderer {
 
     // MARK: - properties

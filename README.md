@@ -43,6 +43,8 @@ The fuller surface stays available behind each board:
 
 You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface and its starter types. For a thinner starting layer, use `KakaposBoards` to build the four boards without touching the wider public surface.
 
+Legacy `KakaposRealtime` symbols remain in the tree for compatibility, but the board entry points above are the recommended path for new code.
+
 ### 🔧 How It Works
 
 Kakapos uses a `source -> processor chain -> sink` model:
