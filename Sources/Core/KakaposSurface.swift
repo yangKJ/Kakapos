@@ -22,7 +22,7 @@ public enum KakaposSurface {
     }
 
     public static func export(provider: VideoX.Provider) -> VideoX {
-        KakaposBoards.export(provider: provider)
+        VideoX(provider: provider)
     }
 
     public static func exportTask(
@@ -30,7 +30,7 @@ public enum KakaposSurface {
         options: [VideoX.Option: Any] = [:],
         instructions: [CompositionInstruction]
     ) throws -> VideoX.ExportTask {
-        try KakaposBoards.exportTask(provider: provider, options: options, instructions: instructions)
+        try VideoX(provider: provider).makeExportTask(options: options, instructions: instructions)
     }
 
     public static func preview(
@@ -39,7 +39,7 @@ public enum KakaposSurface {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposBoards.preview(
+        PreviewPipeline(
             source: source,
             processors: processors,
             callbackQueue: callbackQueue,
@@ -55,7 +55,7 @@ public enum KakaposSurface {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposBoards.preview(
+        PreviewPipeline(
             player: player,
             preferredFramesPerSecond: preferredFramesPerSecond,
             processors: processors,
@@ -71,7 +71,7 @@ public enum KakaposSurface {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) -> PreviewPipeline {
-        KakaposBoards.preview(
+        PreviewPipeline(
             asset: asset,
             preferredFramesPerSecond: preferredFramesPerSecond,
             processors: processors,
@@ -87,7 +87,7 @@ public enum KakaposSurface {
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> RecordingPipeline {
-        try KakaposBoards.record(
+        try RecordingPipeline(
             source: source,
             outputURL: outputURL,
             fileType: fileType,
@@ -102,7 +102,7 @@ public enum KakaposSurface {
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> RecordingPipeline {
-        try KakaposBoards.record(
+        try RecordingPipeline(
             configuration: configuration,
             outputURL: outputURL,
             fileType: fileType,
@@ -117,7 +117,7 @@ public enum KakaposSurface {
         layers: [TimelineLayer] = [],
         transitions: [Transition] = []
     ) -> TimelinePipeline {
-        KakaposBoards.timeline(
+        TimelinePipeline(
             renderSize: renderSize,
             frameDuration: frameDuration,
             layers: layers,
