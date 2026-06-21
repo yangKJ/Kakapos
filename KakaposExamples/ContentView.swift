@@ -118,8 +118,10 @@ private struct OfflineExportView: View {
 
 private struct PlayerPreviewView: View {
     @State private var player: AVPlayer?
+    @State private var previewImage: CGImage?
     @State private var frameCount = 0
-    @State private var message = "Tap Start to pull player frames"
+    @State private var currentTimeText = "0.00s"
+    @State private var message = "Tap Start to pull player frames into PreviewSink"
     #if canImport(UIKit)
     @State private var frameSource: PlayerFrameSource?
     @State private var pipeline: MediaPipeline?
@@ -127,13 +129,28 @@ private struct PlayerPreviewView: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            VideoPlayer(player: player)
-                .frame(maxHeight: 280)
-                .background(Color.black.opacity(0.08))
-                .cornerRadius(8)
+            Group {
+                if let previewImage {
+                    Image(decorative: previewImage, scale: 1)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.black.opacity(0.08))
+                        Text("Processed preview will appear here")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
             Text("Frames: \(frameCount)")
                 .font(.headline)
+            Text("Time: \(currentTimeText)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
 
             HStack {
                 Button("Start") { startPreview() }
@@ -155,15 +172,25 @@ private struct PlayerPreviewView: View {
         let player = AVPlayer(url: videoURL)
         self.player = player
         frameCount = 0
+        previewImage = nil
+        currentTimeText = "0.00s"
         #if canImport(UIKit)
         let source = PlayerFrameSource(player: player)
-        let sink = PixelBufferSink { _ in frameCount += 1 }
-        let pipeline = MediaPipeline(source: source, processors: [PassthroughFrameProcessor()], sinks: [sink])
+        let sink = PreviewSink { image, metadata in
+            previewImage = image
+            frameCount += 1
+            currentTimeText = String(format: "%.2fs", metadata.presentationTime.seconds)
+        }
+        let pipeline = MediaPipeline(
+            source: source,
+            processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.15)])],
+            sinks: [sink]
+        )
         self.frameSource = source
         self.pipeline = pipeline
         pipeline.start()
         player.play()
-        message = "Pulling frames from AVPlayer"
+        message = "Previewing processed player frames"
         #else
         message = "PlayerFrameSource is available in UIKit environments"
         #endif
@@ -176,6 +203,7 @@ private struct PlayerPreviewView: View {
         pipeline = nil
         frameSource = nil
         #endif
+        previewImage = nil
         message = "Stopped"
     }
 }
