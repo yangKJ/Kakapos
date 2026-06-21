@@ -129,6 +129,76 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedMetadata?.frameIndex, metadata.frameIndex)
         XCTAssertEqual(receivedMetadata?.presentationTime, metadata.presentationTime)
     }
+
+    func testMediaPipelineStopFinishesSinksOnlyOnceWhenSourceAlsoFinishes() {
+        let source = StopAwareSource()
+        let sink = CountingSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+        let expectation = self.expectation(description: "completion called once")
+        expectation.expectedFulfillmentCount = 1
+
+        pipeline.completionHandler = {
+            expectation.fulfill()
+        }
+
+        pipeline.stop()
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(sink.finishCount, 1)
+    }
+
+    func testRecorderSinkFinishRecordingReturnsRecordedClip() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
+        let first = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: .zero)
+        )
+        let second = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30))
+        )
+        let appendExpectation = self.expectation(description: "append frames")
+        appendExpectation.expectedFulfillmentCount = 2
+        let finishExpectation = self.expectation(description: "finish recording")
+        var recordedClip: RecordedClip?
+
+        sink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+        sink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        wait(for: [appendExpectation], timeout: 2)
+
+        sink.finishRecording { result in
+            switch result {
+            case .success(let clip):
+                recordedClip = clip
+            case .failure(let error):
+                XCTFail("Unexpected finish recording failure: \(error)")
+            }
+            finishExpectation.fulfill()
+        }
+
+        wait(for: [finishExpectation], timeout: 5)
+        XCTAssertEqual(sink.state, .finished)
+        XCTAssertEqual(recordedClip?.outputURL, outputURL)
+        XCTAssertEqual(recordedClip?.startedAt, .zero)
+        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 1, timescale: 30))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+    }
 }
 
 private final class TestSource: MediaSource {
@@ -159,6 +229,33 @@ private final class TestSink: MediaSink {
     }
 
     func finish(completion: @escaping (Result<Void, Error>) -> Void) {
+        completion(.success(()))
+    }
+}
+
+private final class StopAwareSource: MediaSource {
+    weak var delegate: MediaSourceDelegate?
+
+    func start() {}
+    func pause() {}
+    func resume() {}
+
+    func stop() {
+        delegate?.mediaSourceDidFinish(self)
+    }
+
+    func cancel() {}
+}
+
+private final class CountingSink: MediaSink {
+    var finishCount = 0
+
+    func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        completion(.success(()))
+    }
+
+    func finish(completion: @escaping (Result<Void, Error>) -> Void) {
+        finishCount += 1
         completion(.success(()))
     }
 }
