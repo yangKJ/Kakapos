@@ -37,6 +37,7 @@ public final class TimelineExportTask {
 
     public let compiledComposition: CompiledTimelineComposition
     public let readerWriterJob: ReaderWriterExportJob
+    public private(set) var progressFraction: Float?
 
     public var status: ReaderWriterExportJob.Status {
         readerWriterJob.status
@@ -100,6 +101,7 @@ public final class TimelineExportTask {
         progressInfo: ((ReaderWriterExportJob.ProgressInfo) -> Void)? = nil
     ) {
         readerWriterJob.progressHandler = { info in
+            self.progressFraction = Float(info.overallFractionCompleted)
             progress?(Float(info.overallFractionCompleted))
             progressInfo?(info)
         }
@@ -107,6 +109,7 @@ public final class TimelineExportTask {
             switch result {
             case .success(let outputURL):
                 if let lastProgressInfo = self.readerWriterJob.lastProgressInfo {
+                    self.progressFraction = Float(lastProgressInfo.overallFractionCompleted)
                     progress?(Float(lastProgressInfo.overallFractionCompleted))
                 }
                 complete(.success(outputURL))

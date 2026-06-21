@@ -3601,6 +3601,7 @@ final class MediaEngineTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
         XCTAssertEqual(task.status, .completed)
+        XCTAssertEqual(task.progressFraction ?? 0, 0.37625, accuracy: 0.0001)
         XCTAssertEqual(receivedProgress.first ?? 0, 0.37625, accuracy: 0.0001)
         XCTAssertEqual(receivedProgress.last ?? 0, 0.37625, accuracy: 0.0001)
         XCTAssertNotNil(receivedInfo)
