@@ -2694,6 +2694,33 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(exportJob.summary.summaryText.contains("tracks"))
     }
 
+    func testTimelineExportJobDefaultsToCompiledEffectProcessors() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30))
+        )
+        let effectLayer = EffectLayer(
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            source: EffectSource(processor: PassthroughFrameProcessor(), intensity: 0.8),
+            layerLevel: 1
+        )
+        let pipeline = TimelinePipeline(
+            renderSize: CGSize(width: 1280, height: 720),
+            frameDuration: CMTime(value: 1, timescale: 30),
+            layers: [clip, effectLayer]
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+
+        let exportJob = pipeline.makeExportJob(outputURL: outputURL)
+
+        XCTAssertEqual(exportJob.summary.processorCount, 1)
+        XCTAssertTrue(exportJob.summary.summaryText.contains("processors 1"))
+    }
+
     #if canImport(UIKit)
     func testTimelinePipelineCreatesPlayerItemAndPreviewPipeline() throws {
         let asset = AVAsset(url: try makeSampleAssetURL())
