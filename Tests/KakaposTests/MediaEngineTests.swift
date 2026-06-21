@@ -2101,6 +2101,44 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNil(sink.recordedClip)
     }
 
+    func testRecorderSinkSnapshotTracksActiveSegmentAndPausedState() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
+        let firstFrame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let appendExpectation = expectation(description: "append frame for snapshot")
+
+        sink.consume(firstFrame) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        wait(for: [appendExpectation], timeout: 2)
+
+        let recordingSnapshot = sink.snapshot
+        XCTAssertEqual(recordingSnapshot.state, .recording)
+        XCTAssertEqual(recordingSnapshot.outputURL, outputURL)
+        XCTAssertTrue(recordingSnapshot.currentClipHasStarted)
+        XCTAssertTrue(recordingSnapshot.currentClipHasVideo)
+        XCTAssertFalse(recordingSnapshot.currentClipHasAudio)
+        XCTAssertEqual(recordingSnapshot.clipCount, 0)
+        XCTAssertEqual(recordingSnapshot.recordedVideoSegmentCount, 0)
+        XCTAssertEqual(recordingSnapshot.recordedAudioSegmentCount, 0)
+        XCTAssertFalse(recordingSnapshot.hasRecordedClip)
+
+        sink.pauseRecording(at: CMTime(value: 30, timescale: 30))
+        let pausedSnapshot = sink.snapshot
+        XCTAssertEqual(pausedSnapshot.state, .paused)
+        XCTAssertNotNil(pausedSnapshot.pausedAt)
+        XCTAssertEqual(pausedSnapshot.clipCount, 1)
+        XCTAssertGreaterThanOrEqual(pausedSnapshot.totalDuration.seconds, 0)
+        XCTAssertGreaterThanOrEqual(pausedSnapshot.currentClipDuration.seconds, 0)
+    }
+
     func testCameraSessionLifecycleTracksStartInterruptionResumeAndStop() {
         var lifecycle = CameraSessionLifecycle(position: .back)
 
