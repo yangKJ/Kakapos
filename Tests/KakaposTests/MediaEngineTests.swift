@@ -1270,6 +1270,46 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(job.status, .cancelled)
     }
 
+    func testReaderWriterExportJobClearsStaleOutputBeforeStartingNewExport() throws {
+        let session = FakeReaderWriterExportSession()
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: outputURL,
+            sessionFactory: { _, _, _ in session }
+        )
+        let completionExpectation = expectation(description: "export completion")
+        let statusExpectation = expectation(description: "completed status callback")
+        var receivedStatuses: [ReaderWriterExportJob.Status] = []
+
+        FileManager.default.createFile(atPath: outputURL.path, contents: Data("stale".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+
+        job.statusHandler = { status in
+            receivedStatuses.append(status)
+            if status == .completed {
+                statusExpectation.fulfill()
+            }
+        }
+
+        job.export { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected export failure: \(error)")
+            }
+            completionExpectation.fulfill()
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+        session.finish(with: nil)
+
+        wait(for: [completionExpectation, statusExpectation], timeout: 1)
+        XCTAssertEqual(job.status, .completed)
+        XCTAssertEqual(receivedStatuses, [.exporting, .completed])
+    }
+
     func testReaderWriterExportJobIgnoresLateProgressAndStatusAfterCompletion() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),
