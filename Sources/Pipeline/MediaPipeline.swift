@@ -97,8 +97,15 @@ public final class MediaPipeline {
             processorTypeNames: processors.map { String(describing: type(of: $0)) },
             sinkTypeNames: sinks.map { String(describing: type(of: $0)) },
             state: state,
+            lastFrameIndex: lastFrameMetadata?.frameIndex,
+            lastPresentationTime: lastFrameMetadata?.presentationTime,
+            lastSourceTime: lastFrameMetadata?.sourceTime,
             lastErrorDescription: lastErrorDescription
         )
+    }
+
+    public var lastFrameMetadata: FrameMetadata? {
+        stateQueue.sync { _lastFrameMetadata }
     }
 
     public var lastErrorDescription: String? {
@@ -123,6 +130,7 @@ public final class MediaPipeline {
     private let sourceAdapter: MediaSourceNodeAdapter
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-pipeline.state")
     private var hasFinished = false
+    private var _lastFrameMetadata: FrameMetadata?
     private var _lastErrorDescription: String?
 
     public init(source: MediaSource, processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
@@ -132,6 +140,9 @@ public final class MediaPipeline {
         self.sourceAdapter.add(consumer: chain.node)
         self.sourceAdapter.finishHandler = { [weak self] in
             self?.finishChain()
+        }
+        self.sourceAdapter.frameHandler = { [weak self] frame in
+            self?.storeLastFrameMetadata(frame.metadata)
         }
         self.sourceAdapter.errorHandler = { [weak self] error in
             self?.failChain(with: error)
@@ -207,6 +218,12 @@ public final class MediaPipeline {
         }
         DispatchQueue.main.async {
             self.errorHandler?(error)
+        }
+    }
+
+    private func storeLastFrameMetadata(_ metadata: FrameMetadata) {
+        stateQueue.sync {
+            _lastFrameMetadata = metadata
         }
     }
 
