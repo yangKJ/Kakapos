@@ -703,7 +703,7 @@ private struct TimelineExportView: View {
         item.audioMix = compiled.audioMix
         player = AVPlayer(playerItem: item)
         player?.play()
-        message = "Timeline: \(compiled.summary.summaryText) · intervals \(compiled.summary.visualIntervalCount) · segments \(compiled.summary.assetSegmentCount + compiled.summary.imageLayerCount + compiled.summary.textLayerCount + compiled.summary.processorCount)"
+        message = "Timeline: \(compiled.summary.summaryText)"
     }
 }
 

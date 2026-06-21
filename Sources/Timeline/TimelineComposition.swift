@@ -64,15 +64,37 @@ public struct TimelineCompilationSummary {
     public let transitionCount: Int
     public let visualIntervalCount: Int
     public let assetSegmentCount: Int
+    public let imageSegmentCount: Int
+    public let textSegmentCount: Int
     public let audioSegmentCount: Int
     public let audioMixSegmentCount: Int
+    public let transitionSegmentCount: Int
     public let videoTrackCount: Int
     public let audioTrackCount: Int
     public let sourceTrackIDCount: Int
     public let processorCount: Int
 
     public var summaryText: String {
-        "video \(videoLayerCount) · image \(imageLayerCount) · text \(textLayerCount) · effect \(effectLayerCount) · transitions \(transitionCount) · tracks \(videoTrackCount)/\(audioTrackCount)"
+        let sizeText = "\(Int(renderSize.width))x\(Int(renderSize.height))"
+        let frameRateText = frameDuration.timescale > 0
+            ? "\(frameDuration.timescale)fps"
+            : "fps n/a"
+        return [
+            "size \(sizeText)",
+            "frame \(frameRateText)",
+            "video \(videoLayerCount)",
+            "image \(imageLayerCount)",
+            "text \(textLayerCount)",
+            "effect \(effectLayerCount)",
+            "transitions \(transitionCount)",
+            "intervals \(visualIntervalCount)",
+            "segments \(assetSegmentCount)/\(imageSegmentCount)/\(textSegmentCount)",
+            "audio \(audioSegmentCount)/\(audioMixSegmentCount)",
+            "transitionSegments \(transitionSegmentCount)",
+            "tracks \(videoTrackCount)/\(audioTrackCount)",
+            "sources \(sourceTrackIDCount)",
+            "processors \(processorCount)"
+        ].joined(separator: " · ")
     }
 }
 
@@ -121,8 +143,11 @@ public extension CompiledTimelineComposition {
             transitionCount: renderPlan.transitions.count,
             visualIntervalCount: renderPlan.visualIntervals.count,
             assetSegmentCount: renderPlan.assetSegments.count,
+            imageSegmentCount: renderPlan.imageSegments.count,
+            textSegmentCount: renderPlan.textSegments.count,
             audioSegmentCount: renderPlan.audioSegments.count,
             audioMixSegmentCount: renderPlan.audioMixSegments.count,
+            transitionSegmentCount: renderPlan.transitionSegments.count,
             videoTrackCount: composition.tracks(withMediaType: .video).count,
             audioTrackCount: composition.tracks(withMediaType: .audio).count,
             sourceTrackIDCount: videoTrackIDs.count + audioTrackIDs.count,
