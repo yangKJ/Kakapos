@@ -2236,14 +2236,14 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.playerSourceState, .active)
         XCTAssertEqual(pipeline.playerSourceGeneration, 1)
         XCTAssertEqual(pipeline.playerSourceFrameIndex, 1)
-        XCTAssertEqual(pipeline.playerSourceSummary?.state, .active)
-        XCTAssertEqual(pipeline.playerSourceSummary?.generation, 1)
-        XCTAssertEqual(pipeline.playerSourceSummary?.frameIndex, 1)
-        XCTAssertEqual(pipeline.playerSourceSummary?.lastFrameRequestReason, "manual")
+        XCTAssertEqual(pipeline.summary.playerSourceState, .active)
+        XCTAssertEqual(pipeline.summary.playerSourceGeneration, 1)
+        XCTAssertEqual(pipeline.summary.playerSourceFrameIndex, 1)
+        XCTAssertEqual(pipeline.summary.playerSourceLastFrameRequestReason, "manual")
         XCTAssertEqual(pipeline.sourceSnapshot?.details["generation"], "1")
     }
 
-    func testPreviewPipelinePlayerSourceSummaryTracksPausedManualFrames() throws {
+    func testPreviewPipelineSummaryTracksPausedManualFrames() throws {
         let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
         let driver = FakePlayerFrameDriver()
         let source = PlayerFrameSource(
@@ -2267,8 +2267,8 @@ final class MediaEngineTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(pipeline.playerSourceSummary?.frameIndex, 1)
-        XCTAssertEqual(pipeline.playerSourceSummary?.lastFrameRequestReason, "manual")
+        XCTAssertEqual(pipeline.summary.playerSourceFrameIndex, 1)
+        XCTAssertEqual(pipeline.summary.playerSourceLastFrameRequestReason, "manual")
 
         source.pause()
         driver.emitFrame(
@@ -2281,10 +2281,10 @@ final class MediaEngineTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(pipeline.playerSourceSummary?.state, .paused)
-        XCTAssertEqual(pipeline.playerSourceSummary?.generation, 1)
-        XCTAssertEqual(pipeline.playerSourceSummary?.frameIndex, 2)
-        XCTAssertEqual(pipeline.playerSourceSummary?.lastFrameRequestReason, "manual")
+        XCTAssertEqual(pipeline.summary.playerSourceState, .paused)
+        XCTAssertEqual(pipeline.summary.playerSourceGeneration, 1)
+        XCTAssertEqual(pipeline.summary.playerSourceFrameIndex, 2)
+        XCTAssertEqual(pipeline.summary.playerSourceLastFrameRequestReason, "manual")
     }
     #endif
 
