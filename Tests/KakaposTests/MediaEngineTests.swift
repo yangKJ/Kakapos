@@ -3859,6 +3859,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(task.summary.layerCount, 1)
         XCTAssertEqual(task.summary.transitionCount, 0)
         XCTAssertEqual(task.summary.processorCount, 0)
+        XCTAssertEqual(task.summary.compiledSummary.renderSize, CGSize(width: 1280, height: 720))
+        XCTAssertEqual(task.summary.compiledSummary.videoLayerCount, 1)
+        XCTAssertEqual(task.summary.compiledSummary.processorCount, 0)
+        XCTAssertEqual(task.summary.compiledSummary.summaryText, pipeline.compile().summary.summaryText)
         XCTAssertTrue(task.summaryText.contains("export idle"))
         XCTAssertEqual(task.compiledComposition.summary.renderSize, CGSize(width: 1280, height: 720))
     }
@@ -3939,6 +3943,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedProgress.first ?? 0, 0.4, accuracy: 0.0001)
         XCTAssertEqual(receivedProgress.last ?? 0, 0.4, accuracy: 0.0001)
         XCTAssertNotNil(receivedInfo)
+        XCTAssertEqual(task.summary.compiledSummary.renderSize, CGSize(width: 1280, height: 720))
+        XCTAssertEqual(task.summary.compiledSummary.videoLayerCount, 1)
+        XCTAssertEqual(task.summary.compiledSummary.processorCount, 0)
+        XCTAssertEqual(task.summary.compiledSummary.summaryText, compiled.summary.summaryText)
         XCTAssertTrue(task.summaryText.contains("export completed"))
     }
 
