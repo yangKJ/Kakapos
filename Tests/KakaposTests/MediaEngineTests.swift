@@ -293,6 +293,55 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summary.summaryText.contains("sourceSnapshot state primed"))
     }
 
+    func testMediaPipelineManifestIsCodableForExternalInspection() throws {
+        let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
+        let input = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(
+                presentationTime: CMTime(value: 18, timescale: 30),
+                sourceTime: CMTime(value: 15, timescale: 30),
+                frameIndex: 9
+            )
+        )
+        let source = SnapshotSource(
+            frames: [input],
+            snapshot: MediaSourceSnapshot(
+                stateDescription: "primed",
+                lastFrameIndex: 9,
+                lastPresentationTime: .zero,
+                lastSourceTime: .zero,
+                details: ["board": "media"]
+            )
+        )
+        let sink = TestSink()
+        let processor = ClosureFrameProcessor { frame, completion in
+            completion(.success(frame))
+        }
+        let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [sink])
+
+        pipeline.start()
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(pipeline.manifest)
+        let decoded = try JSONDecoder().decode(MediaPipeline.Manifest.self, from: data)
+
+        XCTAssertEqual(decoded.sourceTypeName, "SnapshotSource")
+        XCTAssertEqual(decoded.processorTypeNames, ["ClosureFrameProcessor"])
+        XCTAssertEqual(decoded.sinkTypeNames, ["TestSink"])
+        XCTAssertEqual(decoded.stateDescription, "finished")
+        XCTAssertEqual(decoded.sourceSnapshot?.stateDescription, "primed")
+        XCTAssertEqual(decoded.sourceSnapshot?.lastFrameIndex, 9)
+        XCTAssertEqual(decoded.sourceSnapshot?.details["board"], "media")
+        let lastFrameMetadata = try XCTUnwrap(decoded.lastFrameMetadata)
+        XCTAssertEqual(lastFrameMetadata.frameIndex, 9)
+        XCTAssertEqual(lastFrameMetadata.presentationTimeSeconds, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(lastFrameMetadata.sourceTimeSeconds), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(lastFrameMetadata.trackTransformA, 1, accuracy: 0.0001)
+        XCTAssertEqual(lastFrameMetadata.trackTransformD, 1, accuracy: 0.0001)
+        XCTAssertEqual(decoded.lastErrorDescription, nil)
+    }
+
     #if canImport(UIKit) || os(macOS)
     func testMediaPipelinePlayerInitializerUsesPlayerFrameSource() {
         let player = AVPlayer()
