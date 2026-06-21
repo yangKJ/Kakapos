@@ -29,26 +29,22 @@ struct ContentView: View {
 private struct BoardHeaderView: View {
     let board: KakaposCapabilityBoard
 
-    private var info: KakaposCapabilityBoardInfo? {
-        KakaposSurface.board(board)
-    }
-
-    private var section: KakaposSurfaceSection? {
-        KakaposSurface.section(board)
+    private var entry: KakaposSurface.Entry? {
+        KakaposSurface.entry(board)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(info?.displayName ?? board.displayName)
+                Text(entry?.displayName ?? board.displayName)
                     .font(.headline)
-                Text(section?.starterTypesText ?? board.starterTypes.joined(separator: " · "))
+                Text(entry?.starterTypesText ?? board.starterTypes.joined(separator: " · "))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
-            Text(info?.summary ?? board.summary)
+            Text(entry?.summary ?? board.summary)
                 .font(.footnote)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
