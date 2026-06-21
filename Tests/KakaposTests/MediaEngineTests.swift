@@ -1701,6 +1701,26 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summary.summaryText.contains("preview finished"))
     }
 
+    func testPreviewPipelineSummaryIncludesFailureDescriptionFromUnderlyingPipeline() {
+        let source = FailingSource(error: NSError(domain: "PreviewPipelineTests", code: 17))
+        let pipeline = PreviewPipeline(source: source) { _, _ in }
+        let expectation = expectation(description: "preview pipeline failure")
+
+        pipeline.pipeline.errorHandler = { error in
+            XCTAssertEqual((error as NSError).domain, "PreviewPipelineTests")
+            expectation.fulfill()
+        }
+
+        pipeline.start()
+
+        wait(for: [expectation], timeout: 1)
+
+        XCTAssertEqual(pipeline.state, .failed)
+        XCTAssertEqual(pipeline.lastErrorDescription, "PreviewPipelineTests#17")
+        XCTAssertEqual(pipeline.summary.lastErrorDescription, "PreviewPipelineTests#17")
+        XCTAssertTrue(pipeline.summary.summaryText.contains("error PreviewPipelineTests#17"))
+    }
+
     #if canImport(UIKit)
     func testPreviewPipelineAssetInitializerBuildsPlayerFrameSource() throws {
         let asset = AVAsset(url: try makeSampleAssetURL())
@@ -2974,6 +2994,29 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(pipeline.summary.hasRecordedClip)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertTrue(pipeline.summaryText.contains("recorder finished"))
+    }
+
+    func testRecordingPipelineSummaryIncludesFailureDescriptionFromUnderlyingPipeline() throws {
+        let source = FailingSource(error: NSError(domain: "RecordingPipelineTests", code: 23))
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let pipeline = try RecordingPipeline(source: source, outputURL: outputURL)
+        let expectation = expectation(description: "recording pipeline failure")
+
+        pipeline.pipeline.errorHandler = { error in
+            XCTAssertEqual((error as NSError).domain, "RecordingPipelineTests")
+            expectation.fulfill()
+        }
+
+        pipeline.start()
+
+        wait(for: [expectation], timeout: 1)
+
+        XCTAssertEqual(pipeline.state, .failed)
+        XCTAssertEqual(pipeline.lastErrorDescription, "RecordingPipelineTests#23")
+        XCTAssertEqual(pipeline.summary.lastErrorDescription, "RecordingPipelineTests#23")
+        XCTAssertTrue(pipeline.summary.summaryText.contains("error RecordingPipelineTests#23"))
     }
 
     func testTimelinePipelineCompilesTimelineAndSummarizesBoardState() throws {
