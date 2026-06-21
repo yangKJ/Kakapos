@@ -23,6 +23,67 @@ public enum CameraAspectRatio: Equatable, Sendable {
     case instagramStories
     case cinematic
     case custom(width: Int, height: Int)
+
+    public func resolvedDimensions(from sourceDimensions: CGSize) -> CGSize {
+        switch self {
+        case .active:
+            return sourceDimensions
+        case .square:
+            let side = min(sourceDimensions.width, sourceDimensions.height)
+            return CGSize(width: side, height: side)
+        case .custom(let width, let height):
+            guard width > 0, height > 0 else {
+                return sourceDimensions
+            }
+            let ratio = CGFloat(height) / CGFloat(width)
+            return CGSize(
+                width: sourceDimensions.width,
+                height: (sourceDimensions.width * ratio).rounded()
+            )
+        default:
+            guard let ratioValue = aspectRatioFactor else {
+                return sourceDimensions
+            }
+            return CGSize(
+                width: sourceDimensions.width,
+                height: (sourceDimensions.width * ratioValue).rounded()
+            )
+        }
+    }
+
+    public var ratio: CGFloat? {
+        aspectRatioFactor
+    }
+
+    private var aspectRatioFactor: CGFloat? {
+        switch self {
+        case .active:
+            return nil
+        case .square:
+            return 1
+        case .standard:
+            return 4.0 / 3.0
+        case .standardLandscape:
+            return 3.0 / 4.0
+        case .widescreen:
+            return 16.0 / 9.0
+        case .widescreenLandscape:
+            return 9.0 / 16.0
+        case .twitter, .youtube:
+            return 9.0 / 16.0
+        case .instagram:
+            return 5.0 / 4.0
+        case .instagramLandscape:
+            return 4.0 / 5.0
+        case .instagramStories:
+            return 16.0 / 9.0
+        case .cinematic:
+            return 1.0 / 2.35
+        case .custom(let width, let height):
+            guard width > 0 else { return nil }
+            return CGFloat(height) / CGFloat(width)
+        }
+    }
 }
 
 public enum CameraAuthorizationStatus: Int, Equatable, Sendable, CustomStringConvertible {
@@ -162,6 +223,10 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         self.scalingMode = scalingMode
         self.transform = transform
         self.maximumCaptureDuration = maximumCaptureDuration
+    }
+
+    public func resolvedDimensions(from sourceDimensions: CGSize) -> CGSize {
+        aspectRatio.resolvedDimensions(from: sourceDimensions)
     }
 
     #if canImport(UIKit) && !os(watchOS)

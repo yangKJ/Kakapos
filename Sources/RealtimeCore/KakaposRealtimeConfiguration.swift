@@ -249,34 +249,10 @@ public class KakaposRealtimeVideoConfiguration: KakaposRealtimeConfiguration, @u
             config[AVVideoHeightKey] = NSNumber(integerLiteral: Int(dimensions.height))
         } else if let sampleBuffer = sampleBuffer,
                   let formatDescription: CMFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) {
-
-            // TODO: this is incorrect and needs to be fixed
             let videoDimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
-            switch self.aspectRatio {
-            case .standard:
-                config[AVVideoWidthKey] = NSNumber(integerLiteral: Int(videoDimensions.width))
-                config[AVVideoHeightKey] = NSNumber(integerLiteral: Int(videoDimensions.width * 3 / 4))
-                break
-            case .widescreen:
-                config[AVVideoWidthKey] = NSNumber(integerLiteral: Int(videoDimensions.width))
-                config[AVVideoHeightKey] = NSNumber(integerLiteral: Int(videoDimensions.width * 9 / 16))
-                break
-            case .square:
-                let min = Swift.min(videoDimensions.width, videoDimensions.height)
-                config[AVVideoWidthKey] = NSNumber(integerLiteral: Int(min))
-                config[AVVideoHeightKey] = NSNumber(integerLiteral: Int(min))
-                break
-            case .custom(let w, let h):
-                config[AVVideoWidthKey] = NSNumber(integerLiteral: Int(videoDimensions.width))
-                config[AVVideoHeightKey] = NSNumber(integerLiteral: Int(videoDimensions.width * Int32(h) / Int32(w)))
-                break
-            case .active:
-                fallthrough
-            default:
-                config[AVVideoWidthKey] = NSNumber(integerLiteral: Int(videoDimensions.width))
-                config[AVVideoHeightKey] = NSNumber(integerLiteral: Int(videoDimensions.height))
-                break
-            }
+            let resolvedDimensions = self.aspectRatio.resolvedDimensions(from: videoDimensions)
+            config[AVVideoWidthKey] = NSNumber(integerLiteral: Int(resolvedDimensions.width))
+            config[AVVideoHeightKey] = NSNumber(integerLiteral: Int(resolvedDimensions.height))
 
         } else if let pixelBuffer = pixelBuffer {
             let width = CVPixelBufferGetWidth(pixelBuffer)
@@ -527,6 +503,36 @@ public class KakaposRealtimeARConfiguration: KakaposRealtimeConfiguration, @unch
     public var runOptions: ARSession.RunOptions?
     #endif
 
+}
+
+private extension KakaposRealtimeConfiguration.AspectRatio {
+    func resolvedDimensions(from sourceDimensions: CMVideoDimensions) -> CGSize {
+        let sourceSize = CGSize(width: CGFloat(sourceDimensions.width), height: CGFloat(sourceDimensions.height))
+        switch self {
+        case .active:
+            return sourceSize
+        case .square:
+            let side = min(sourceSize.width, sourceSize.height)
+            return CGSize(width: side, height: side)
+        case .custom(let width, let height):
+            guard width > 0, height > 0 else {
+                return sourceSize
+            }
+            let ratio = CGFloat(height) / CGFloat(width)
+            return CGSize(
+                width: sourceSize.width,
+                height: (sourceSize.width * ratio).rounded()
+            )
+        default:
+            guard let ratioValue = self.ratio else {
+                return sourceSize
+            }
+            return CGSize(
+                width: sourceSize.width,
+                height: (sourceSize.width * ratioValue).rounded()
+            )
+        }
+    }
 }
 
 #endif
