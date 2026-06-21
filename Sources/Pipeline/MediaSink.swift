@@ -50,6 +50,21 @@ public final class PreviewSink: MediaSink {
         static let frameRequestReason = "kakapos.player-frame-request-reason"
     }
 
+    public struct Snapshot: Equatable {
+        public let state: State
+        public let lastFrameIndex: Int64?
+        public let lastPresentationTime: CMTime?
+        public let lastSourceTime: CMTime?
+        public let lastFrameRequestReason: String?
+        public let pendingFrameIndex: Int64?
+        public let pendingFramePresentationTime: CMTime?
+        public let pendingFrameSourceTime: CMTime?
+        public let pendingFrameRequestReason: String?
+        public let lastImageWidth: Int?
+        public let lastImageHeight: Int?
+        public let hasPendingFrame: Bool
+    }
+
     public struct Summary {
         public let state: State
         public let lastFrameIndex: Int64?
@@ -108,26 +123,42 @@ public final class PreviewSink: MediaSink {
     public private(set) var lastImage: CGImage?
     public var stateChangedHandler: ((State) -> Void)?
 
-    public var summary: Summary {
+    public var snapshot: Snapshot {
         lock.lock()
-        let lastFrameRequestReason = lastFrame?.metadata.userInfo[MetadataKey.frameRequestReason] as? String
-        let pendingFrameRequestReason = pendingFrame?.metadata.userInfo[MetadataKey.frameRequestReason] as? String
-        let summary = Summary(
+        let snapshot = Snapshot(
             state: state,
             lastFrameIndex: lastFrame?.metadata.frameIndex,
             lastPresentationTime: lastFrame?.metadata.presentationTime,
             lastSourceTime: lastFrame?.metadata.sourceTime ?? lastFrame?.metadata.presentationTime,
-            lastFrameRequestReason: lastFrameRequestReason,
+            lastFrameRequestReason: lastFrame?.metadata.userInfo[MetadataKey.frameRequestReason] as? String,
             pendingFrameIndex: pendingFrame?.metadata.frameIndex,
             pendingFramePresentationTime: pendingFrame?.metadata.presentationTime,
             pendingFrameSourceTime: pendingFrame?.metadata.sourceTime ?? pendingFrame?.metadata.presentationTime,
-            pendingFrameRequestReason: pendingFrameRequestReason,
+            pendingFrameRequestReason: pendingFrame?.metadata.userInfo[MetadataKey.frameRequestReason] as? String,
             lastImageWidth: lastImage?.width,
             lastImageHeight: lastImage?.height,
             hasPendingFrame: pendingFrame != nil
         )
         lock.unlock()
-        return summary
+        return snapshot
+    }
+
+    public var summary: Summary {
+        let currentSnapshot = snapshot
+        return Summary(
+            state: currentSnapshot.state,
+            lastFrameIndex: currentSnapshot.lastFrameIndex,
+            lastPresentationTime: currentSnapshot.lastPresentationTime,
+            lastSourceTime: currentSnapshot.lastSourceTime,
+            lastFrameRequestReason: currentSnapshot.lastFrameRequestReason,
+            pendingFrameIndex: currentSnapshot.pendingFrameIndex,
+            pendingFramePresentationTime: currentSnapshot.pendingFramePresentationTime,
+            pendingFrameSourceTime: currentSnapshot.pendingFrameSourceTime,
+            pendingFrameRequestReason: currentSnapshot.pendingFrameRequestReason,
+            lastImageWidth: currentSnapshot.lastImageWidth,
+            lastImageHeight: currentSnapshot.lastImageHeight,
+            hasPendingFrame: currentSnapshot.hasPendingFrame
+        )
     }
 
     public var summaryText: String {

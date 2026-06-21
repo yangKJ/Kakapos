@@ -1993,6 +1993,48 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    func testPreviewSinkSnapshotMirrorsSummaryStateAndPendingFrame() throws {
+        let firstBuffer = try makePixelBuffer(width: 10, height: 8)
+        let secondBuffer = try makePixelBuffer(width: 14, height: 12)
+        let first = MediaFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let pending = MediaFrame(
+            pixelBuffer: secondBuffer,
+            metadata: FrameMetadata(
+                presentationTime: CMTime(value: 1, timescale: 30),
+                sourceTime: CMTime(value: 1, timescale: 30),
+                frameIndex: 2,
+                userInfo: [PlayerFrameSource.MetadataKey.frameRequestReason: "seek"]
+            )
+        )
+        let sink = PreviewSink { _, _ in }
+
+        sink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected preview sink failure: \(error)")
+            }
+        }
+        sink.pause()
+        sink.consume(pending) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected preview sink failure: \(error)")
+            }
+        }
+
+        let snapshot = sink.snapshot
+        XCTAssertEqual(snapshot.state, .paused)
+        XCTAssertEqual(snapshot.lastFrameIndex, 1)
+        XCTAssertEqual(snapshot.lastImageWidth, 10)
+        XCTAssertEqual(snapshot.lastImageHeight, 8)
+        XCTAssertTrue(snapshot.hasPendingFrame)
+        XCTAssertEqual(snapshot.pendingFrameIndex, 2)
+        XCTAssertEqual(snapshot.pendingFrameRequestReason, "seek")
+        XCTAssertEqual(snapshot.pendingFrameSourceTime, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(sink.summary.state, snapshot.state)
+        XCTAssertEqual(sink.summary.lastFrameIndex, snapshot.lastFrameIndex)
+        XCTAssertEqual(sink.summary.pendingFrameIndex, snapshot.pendingFrameIndex)
+        XCTAssertEqual(sink.summary.summaryText, "state paused · frame 1 · presentation 0.00s · sourceTime 0.00s · reason n/a · image 10x8 · pending yes · pendingFrame 2 · pendingPresentation 0.03s · pendingSourceTime 0.03s · pendingReason seek")
+    }
+
     func testPreviewSinkSummaryCapturesFrameRequestReasonFromMetadata() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
         let metadata = FrameMetadata(
@@ -2087,6 +2129,40 @@ final class MediaEngineTests: XCTestCase {
             pipeline.summary.summaryText,
             "source ManualSource · processors 0 · pipeline paused · preview paused · frame 1 · presentation 0.00s · pendingFrame 2 · pendingPresentation 0.03s · pendingSourceTime 0.03s · pendingReason seek"
         )
+    }
+
+    func testPreviewPipelinePreviewSnapshotExposesUnderlyingPreviewSinkSnapshot() throws {
+        let firstBuffer = try makePixelBuffer(width: 10, height: 8)
+        let secondBuffer = try makePixelBuffer(width: 14, height: 12)
+        let first = MediaFrame(
+            pixelBuffer: firstBuffer,
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        )
+        let pendingMetadata = FrameMetadata(
+            presentationTime: CMTime(value: 1, timescale: 30),
+            sourceTime: CMTime(value: 1, timescale: 30),
+            frameIndex: 2,
+            userInfo: [PlayerFrameSource.MetadataKey.frameRequestReason: "seek"]
+        )
+        let source = ManualSource()
+        let pipeline = PreviewPipeline(source: source) { _, _ in }
+
+        pipeline.start()
+        source.emit(first)
+        pipeline.pause()
+        pipeline.previewSink.consume(MediaFrame(pixelBuffer: secondBuffer, metadata: pendingMetadata)) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected paused preview sink failure: \(error)")
+            }
+        }
+
+        let snapshot = pipeline.previewSnapshot
+        XCTAssertEqual(snapshot.state, .paused)
+        XCTAssertEqual(snapshot.lastFrameIndex, 1)
+        XCTAssertEqual(snapshot.pendingFrameIndex, 2)
+        XCTAssertEqual(snapshot.pendingFrameRequestReason, "seek")
+        XCTAssertEqual(pipeline.summary.previewState, snapshot.state)
+        XCTAssertEqual(pipeline.summary.pendingFrameIndex, snapshot.pendingFrameIndex)
     }
 
     func testPreviewSinkCachesLatestFrameWhilePausedAndFlushesOnResume() throws {
