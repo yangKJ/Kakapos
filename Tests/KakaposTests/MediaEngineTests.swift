@@ -287,6 +287,121 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lookupValue, 0.125, accuracy: 0.0001)
     }
 
+    func testTimelineCompositionCompilesKeyframedOpacityRamp() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30))
+        )
+        clip.keyframes = [
+            KeyframeAnimation(
+                keyPath: "opacity",
+                values: [0.2, 0.9],
+                keyTimes: [.zero, CMTime(value: 60, timescale: 30)],
+                easing: .linear
+            )
+        ]
+        let timeline = TimelineComposition(layers: [clip])
+
+        let compiled = timeline.compile()
+        let instruction = try XCTUnwrap(
+            compiled.videoComposition.instructions
+                .compactMap { $0 as? AVMutableVideoCompositionInstruction }
+                .first
+        )
+        let layerInstruction = try XCTUnwrap(instruction.layerInstructions.first as? AVMutableVideoCompositionLayerInstruction)
+        var startOpacity: Float = 0
+        var endOpacity: Float = 0
+        var rampRange = CMTimeRange.invalid
+
+        XCTAssertTrue(
+            layerInstruction.getOpacityRamp(
+                for: .zero,
+                startOpacity: &startOpacity,
+                endOpacity: &endOpacity,
+                timeRange: &rampRange
+            )
+        )
+        XCTAssertEqual(startOpacity, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(endOpacity, 0.9, accuracy: 0.0001)
+        XCTAssertEqual(rampRange, instruction.timeRange)
+    }
+
+    func testTimelineCompositionCompilesKeyframedTransformRamp() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30))
+        )
+        clip.keyframes = [
+            KeyframeAnimation(
+                keyPath: "translation.x",
+                values: [0, 120],
+                keyTimes: [.zero, CMTime(value: 60, timescale: 30)]
+            ),
+            KeyframeAnimation(
+                keyPath: "scale",
+                values: [1, 0.5],
+                keyTimes: [.zero, CMTime(value: 60, timescale: 30)]
+            )
+        ]
+        let timeline = TimelineComposition(layers: [clip])
+
+        let compiled = timeline.compile()
+        let instruction = try XCTUnwrap(
+            compiled.videoComposition.instructions
+                .compactMap { $0 as? AVMutableVideoCompositionInstruction }
+                .first
+        )
+        let layerInstruction = try XCTUnwrap(instruction.layerInstructions.first as? AVMutableVideoCompositionLayerInstruction)
+        var startTransform = CGAffineTransform.identity
+        var endTransform = CGAffineTransform.identity
+        var rampRange = CMTimeRange.invalid
+
+        XCTAssertTrue(
+            layerInstruction.getTransformRamp(
+                for: .zero,
+                start: &startTransform,
+                end: &endTransform,
+                timeRange: &rampRange
+            )
+        )
+        XCTAssertEqual(startTransform.tx, 0, accuracy: 0.0001)
+        XCTAssertEqual(endTransform.tx, 120, accuracy: 0.0001)
+        XCTAssertEqual(startTransform.a, 1, accuracy: 0.0001)
+        XCTAssertEqual(endTransform.a, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(rampRange, instruction.timeRange)
+    }
+
+    func testTimelineCompositionExposesEffectIntensityStateInRenderInstructions() {
+        let effect = EffectLayer(
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            intensity: 0.4,
+            layerLevel: 3
+        )
+        effect.keyframes = [
+            KeyframeAnimation(
+                keyPath: "effect.intensity",
+                values: [0.4, 1.0],
+                keyTimes: [.zero, CMTime(value: 60, timescale: 30)]
+            )
+        ]
+        let timeline = TimelineComposition(layers: [effect])
+
+        let compiled = timeline.compile()
+        guard let state = compiled.renderInstructions.first?.layerStates.first else {
+            return XCTFail("Missing effect state")
+        }
+        guard let intensity = state.effectIntensity else {
+            return XCTFail("Missing effect intensity")
+        }
+
+        XCTAssertEqual(state.layerLevel, 3)
+        XCTAssertEqual(intensity, 0.4, accuracy: 0.0001)
+    }
+
     func testReaderWriterProgressInfoUsesVideoProgressWhenAudioTrackIsMissing() {
         let info = ReaderWriterExportJob.ProgressInfo(
             videoProgress: 0.65,

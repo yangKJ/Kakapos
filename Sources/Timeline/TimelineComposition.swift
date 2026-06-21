@@ -9,10 +9,18 @@ import Foundation
 import AVFoundation
 import CoreGraphics
 
+public struct TimelineLayerRenderState {
+    public let layerLevel: Int
+    public let opacity: Float
+    public let transform: CGAffineTransform
+    public let effectIntensity: Float?
+}
+
 public struct TimelineRenderInstruction {
     public let timeRange: CMTimeRange
     public let layerLevels: [Int]
     public let sourceTrackIDs: [CMPersistentTrackID]
+    public let layerStates: [TimelineLayerRenderState]
 }
 
 public struct ResolvedTimelineLayers {
@@ -331,21 +339,23 @@ public final class TimelineComposition {
     ) {
         guard !transitions.isEmpty else { return }
         let layerByTrackID = Dictionary(
-            uniqueKeysWithValues: clipLayers.compactMap { layer -> (CMPersistentTrackID, ClipLayer)? in
+            uniqueKeysWithValues: clipLayers.compactMap { layer -> (CMPersistentTrackID, (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState))? in
                 guard let trackID = allocation[ObjectIdentifier(layer)] else { return nil }
-                return (trackID, layer)
+                let startState = renderState(for: layer, at: layer.timeRange.start)
+                let endState = renderState(for: layer, at: layer.timeRange.end)
+                return (trackID, (layer, startState, endState))
             }
         )
 
         for transition in transitions where transition.kind == .crossDissolve {
             guard let selectedLayers = layersForTransition(transition, activeLayers: layerByTrackID) else { continue }
-            let overlap = CMTimeRangeGetIntersection(transition.timeRange, otherRange: selectedLayers.source.timeRange)
-            let transitionRange = CMTimeRangeGetIntersection(overlap, otherRange: selectedLayers.destination.timeRange)
+            let overlap = CMTimeRangeGetIntersection(transition.timeRange, otherRange: selectedLayers.source.layer.timeRange)
+            let transitionRange = CMTimeRangeGetIntersection(overlap, otherRange: selectedLayers.destination.layer.timeRange)
             guard transitionRange.isValid, !transitionRange.isEmpty else { continue }
 
             if let sourceParameters = parametersByTrackID[selectedLayers.sourceTrackID] {
                 sourceParameters.setVolumeRamp(
-                    fromStartVolume: selectedLayers.source.volume,
+                    fromStartVolume: selectedLayers.source.layer.volume,
                     toEndVolume: 0,
                     timeRange: transitionRange
                 )
@@ -354,7 +364,7 @@ public final class TimelineComposition {
             if let destinationParameters = parametersByTrackID[selectedLayers.destinationTrackID] {
                 destinationParameters.setVolumeRamp(
                     fromStartVolume: 0,
-                    toEndVolume: selectedLayers.destination.volume,
+                    toEndVolume: selectedLayers.destination.layer.volume,
                     timeRange: transitionRange
                 )
             }
@@ -393,7 +403,8 @@ public final class TimelineComposition {
                 TimelineRenderInstruction(
                     timeRange: timeRange,
                     layerLevels: intervalLayers.map(\.layerLevel),
-                    sourceTrackIDs: uniqueTrackIDsPreservingOrder(trackIDs)
+                    sourceTrackIDs: uniqueTrackIDsPreservingOrder(trackIDs),
+                    layerStates: intervalLayers.map { renderState(for: $0, at: timeRange.start) }
                 )
             )
         }
@@ -410,7 +421,7 @@ public final class TimelineComposition {
         renderInstructions.compactMap { instruction in
             let mutableInstruction = AVMutableVideoCompositionInstruction()
             mutableInstruction.timeRange = instruction.timeRange
-            let activeClipLayers = activeVideoLayers(
+            let activeClipLayers = activeVideoLayerEntries(
                 for: instruction.timeRange,
                 from: videoLayers,
                 allocation: allocation
@@ -419,8 +430,22 @@ public final class TimelineComposition {
                 guard let track = composition.track(withTrackID: trackID) else { return nil }
                 let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
                 if let activeLayer = activeClipLayers[trackID] {
-                    layerInstruction.setTransform(activeLayer.transform, at: instruction.timeRange.start)
-                    layerInstruction.setOpacity(activeLayer.opacity, at: instruction.timeRange.start)
+                    layerInstruction.setTransform(activeLayer.startState.transform, at: instruction.timeRange.start)
+                    if !transformsEqual(activeLayer.startState.transform, activeLayer.endState.transform) {
+                        layerInstruction.setTransformRamp(
+                            fromStart: activeLayer.startState.transform,
+                            toEnd: activeLayer.endState.transform,
+                            timeRange: instruction.timeRange
+                        )
+                    }
+                    layerInstruction.setOpacity(activeLayer.startState.opacity, at: instruction.timeRange.start)
+                    if !floatsEqual(activeLayer.startState.opacity, activeLayer.endState.opacity) {
+                        layerInstruction.setOpacityRamp(
+                            fromStartOpacity: activeLayer.startState.opacity,
+                            toEndOpacity: activeLayer.endState.opacity,
+                            timeRange: instruction.timeRange
+                        )
+                    }
                 }
                 return layerInstruction
             }
@@ -430,12 +455,12 @@ public final class TimelineComposition {
         }
     }
 
-    private func activeVideoLayers(
+    private func activeVideoLayerEntries(
         for timeRange: CMTimeRange,
         from videoLayers: [ClipLayer],
         allocation: [ObjectIdentifier: CMPersistentTrackID]
-    ) -> [CMPersistentTrackID: ClipLayer] {
-        var result: [CMPersistentTrackID: ClipLayer] = [:]
+    ) -> [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)] {
+        var result: [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)] = [:]
         let activeLayers = videoLayers
             .filter { $0.timeRange.start < timeRange.end && $0.timeRange.end > timeRange.start }
             .sorted { lhs, rhs in
@@ -447,7 +472,9 @@ public final class TimelineComposition {
 
         for layer in activeLayers {
             guard let trackID = allocation[ObjectIdentifier(layer)] else { continue }
-            result[trackID] = layer
+            let startState = renderState(for: layer, at: timeRange.start)
+            let endState = renderState(for: layer, at: timeRange.end)
+            result[trackID] = (layer, startState, endState)
         }
         return result
     }
@@ -455,7 +482,7 @@ public final class TimelineComposition {
     private func applyTransitions(
         to layerInstructions: [AVMutableVideoCompositionLayerInstruction],
         timeRange: CMTimeRange,
-        activeLayers: [CMPersistentTrackID: ClipLayer]
+        activeLayers: [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)]
     ) {
         for transition in transitions {
             let overlap = CMTimeRangeGetIntersection(timeRange, otherRange: transition.timeRange)
@@ -466,14 +493,14 @@ public final class TimelineComposition {
                 let trackID = layerInstruction.trackID
                 if trackID == selectedLayers.sourceTrackID {
                     layerInstruction.setOpacityRamp(
-                        fromStartOpacity: selectedLayers.source.opacity,
+                        fromStartOpacity: selectedLayers.source.startState.opacity,
                         toEndOpacity: 0,
                         timeRange: overlap
                     )
                 } else if trackID == selectedLayers.destinationTrackID {
                     layerInstruction.setOpacityRamp(
                         fromStartOpacity: 0,
-                        toEndOpacity: selectedLayers.destination.opacity,
+                        toEndOpacity: selectedLayers.destination.endState.opacity,
                         timeRange: overlap
                     )
                 }
@@ -483,22 +510,22 @@ public final class TimelineComposition {
 
     private func layersForTransition(
         _ transition: Transition,
-        activeLayers: [CMPersistentTrackID: ClipLayer]
-    ) -> (source: ClipLayer, sourceTrackID: CMPersistentTrackID, destination: ClipLayer, destinationTrackID: CMPersistentTrackID)? {
+        activeLayers: [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)]
+    ) -> (source: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState), sourceTrackID: CMPersistentTrackID, destination: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState), destinationTrackID: CMPersistentTrackID)? {
         let candidates = activeLayers
             .map { ($0.key, $0.value) }
             .sorted { lhs, rhs in
-                if lhs.1.layerLevel == rhs.1.layerLevel {
-                    return lhs.1.timeRange.start < rhs.1.timeRange.start
+                if lhs.1.layer.layerLevel == rhs.1.layer.layerLevel {
+                    return lhs.1.layer.timeRange.start < rhs.1.layer.timeRange.start
                 }
-                return lhs.1.layerLevel < rhs.1.layerLevel
+                return lhs.1.layer.layerLevel < rhs.1.layer.layerLevel
             }
 
         guard candidates.count >= 2 else { return nil }
 
         if let sourceLevel = transition.sourceLayerLevel, let destinationLevel = transition.destinationLayerLevel {
-            guard let source = candidates.first(where: { $0.1.layerLevel == sourceLevel }),
-                  let destination = candidates.first(where: { $0.1.layerLevel == destinationLevel }) else {
+            guard let source = candidates.first(where: { $0.1.layer.layerLevel == sourceLevel }),
+                  let destination = candidates.first(where: { $0.1.layer.layerLevel == destinationLevel }) else {
                 return nil
             }
             return (source.1, source.0, destination.1, destination.0)
@@ -507,6 +534,68 @@ public final class TimelineComposition {
         let source = candidates[0]
         let destination = candidates[1]
         return (source.1, source.0, destination.1, destination.0)
+    }
+
+    private func renderState(for layer: TimelineLayer, at time: CMTime) -> TimelineLayerRenderState {
+        let opacity = KeyframeAnimation.value(for: "opacity", at: time, animations: layer.keyframes) ?? layer.opacity
+        let transform = resolvedTransform(for: layer, at: time)
+        let effectIntensity: Float?
+        if let effectLayer = layer as? EffectLayer {
+            effectIntensity = KeyframeAnimation.value(for: "effect.intensity", at: time, animations: effectLayer.keyframes)
+                ?? KeyframeAnimation.value(for: "intensity", at: time, animations: effectLayer.keyframes)
+                ?? effectLayer.intensity
+        } else {
+            effectIntensity = nil
+        }
+        return TimelineLayerRenderState(
+            layerLevel: layer.layerLevel,
+            opacity: opacity,
+            transform: transform,
+            effectIntensity: effectIntensity
+        )
+    }
+
+    private func resolvedTransform(for layer: TimelineLayer, at time: CMTime) -> CGAffineTransform {
+        let baseTransform = layer.transform
+        let baseTranslationX = Float(baseTransform.tx)
+        let baseTranslationY = Float(baseTransform.ty)
+        let baseScaleX = Float(hypot(baseTransform.a, baseTransform.c))
+        let baseScaleY = Float(hypot(baseTransform.b, baseTransform.d))
+        let baseRotation = Float(atan2(baseTransform.b, baseTransform.a))
+
+        let translationX = KeyframeAnimation.value(for: "translation.x", at: time, animations: layer.keyframes)
+            ?? KeyframeAnimation.value(for: "transform.tx", at: time, animations: layer.keyframes)
+            ?? baseTranslationX
+        let translationY = KeyframeAnimation.value(for: "translation.y", at: time, animations: layer.keyframes)
+            ?? KeyframeAnimation.value(for: "transform.ty", at: time, animations: layer.keyframes)
+            ?? baseTranslationY
+        let scale = KeyframeAnimation.value(for: "scale", at: time, animations: layer.keyframes)
+        let scaleX = KeyframeAnimation.value(for: "scale.x", at: time, animations: layer.keyframes)
+            ?? scale
+            ?? baseScaleX
+        let scaleY = KeyframeAnimation.value(for: "scale.y", at: time, animations: layer.keyframes)
+            ?? scale
+            ?? baseScaleY
+        let rotation = KeyframeAnimation.value(for: "rotation", at: time, animations: layer.keyframes)
+            ?? baseRotation
+
+        return CGAffineTransform.identity
+            .translatedBy(x: CGFloat(translationX), y: CGFloat(translationY))
+            .rotated(by: CGFloat(rotation))
+            .scaledBy(x: CGFloat(scaleX), y: CGFloat(scaleY))
+    }
+
+    private func floatsEqual(_ lhs: Float, _ rhs: Float, tolerance: Float = 0.0001) -> Bool {
+        abs(lhs - rhs) <= tolerance
+    }
+
+    private func transformsEqual(_ lhs: CGAffineTransform, _ rhs: CGAffineTransform, tolerance: CGFloat = 0.0001) -> Bool {
+        abs(lhs.a - rhs.a) <= tolerance &&
+        abs(lhs.b - rhs.b) <= tolerance &&
+        abs(lhs.c - rhs.c) <= tolerance &&
+        abs(lhs.d - rhs.d) <= tolerance &&
+        abs(lhs.tx - rhs.tx) <= tolerance &&
+        abs(lhs.ty - rhs.ty) <= tolerance
     }
 
     private func ensureTrack(

@@ -546,7 +546,7 @@ private struct CameraRecordView: View {
 
 private struct TimelineExportView: View {
     @State private var player: AVPlayer?
-    @State private var message = "Compile a timeline with video and audio transitions"
+    @State private var message = "Compile a timeline with transitions, audio mix and keyframes"
     @State private var transitionEnabled = true
 
     var body: some View {
@@ -583,6 +583,34 @@ private struct TimelineExportView: View {
             layerLevel: 1,
             volume: 0.75
         )
+        secondClip.keyframes = [
+            KeyframeAnimation(
+                keyPath: "opacity",
+                values: [0.25, 1.0],
+                keyTimes: [
+                    secondClip.timeRange.start,
+                    secondClip.timeRange.end
+                ]
+            ),
+            KeyframeAnimation(
+                keyPath: "translation.y",
+                values: [180, 0],
+                keyTimes: [
+                    secondClip.timeRange.start,
+                    secondClip.timeRange.end
+                ],
+                easing: .easeOut
+            ),
+            KeyframeAnimation(
+                keyPath: "scale",
+                values: [0.82, 1.0],
+                keyTimes: [
+                    secondClip.timeRange.start,
+                    secondClip.timeRange.end
+                ],
+                easing: .easeOut
+            )
+        ]
         timeline.addLayer(firstClip)
         timeline.addLayer(secondClip)
         if transitionEnabled {
@@ -600,7 +628,7 @@ private struct TimelineExportView: View {
         item.audioMix = compiled.audioMix
         player = AVPlayer(playerItem: item)
         player?.play()
-        message = "Timeline compiled with \(compiled.composition.tracks.count) tracks, \(compiled.renderInstructions.count) intervals and audio mix"
+        message = "Timeline compiled with \(compiled.composition.tracks.count) tracks, \(compiled.renderInstructions.count) intervals, audio mix and keyframes"
     }
 }
 
