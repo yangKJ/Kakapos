@@ -87,6 +87,38 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(info.fractionCompleted, 0.5, accuracy: 0.0001)
     }
 
+    func testReaderWriterExportJobKeepsStableStatusOutsideExportingState() {
+        let job = ReaderWriterExportJob(
+            asset: AVMutableComposition(),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+        )
+        let expectation = expectation(description: "cancel status callback")
+        var receivedStatuses: [ReaderWriterExportJob.Status] = []
+        job.statusHandler = { status in
+            receivedStatuses.append(status)
+            if status == .cancelled {
+                expectation.fulfill()
+            }
+        }
+
+        job.pause()
+        XCTAssertEqual(job.status, .idle)
+
+        job.resume()
+        XCTAssertEqual(job.status, .idle)
+
+        job.cancel()
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(job.status, .cancelled)
+        XCTAssertEqual(receivedStatuses, [.cancelled])
+
+        job.resume()
+        XCTAssertEqual(job.status, .cancelled)
+    }
+
     func testVideoXExportPipelineDefaultsToAssetExportSession() {
         XCTAssertEqual(VideoX.Option.setupExportPipeline(options: [:]), .assetExportSession)
     }
