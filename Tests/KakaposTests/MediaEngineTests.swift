@@ -159,6 +159,41 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(outputURL.pathExtension.lowercased(), "mp4")
     }
 
+    func testVideoXMakeExportTaskReturnsAssetSessionTaskByDefault() throws {
+        let exporter = try makeSampleExporter()
+        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
+
+        let exportTask = try exporter.makeExportTask(
+            options: [:],
+            instructions: [instruction]
+        )
+
+        XCTAssertNotNil(exportTask.assetExportSession)
+        XCTAssertNil(exportTask.readerWriterJob)
+        XCTAssertFalse(exportTask.supportsPauseResume)
+        XCTAssertEqual(exportTask.status, .idle)
+    }
+
+    func testVideoXMakeExportTaskReturnsReaderWriterTaskWhenConfigured() throws {
+        let exporter = try makeSampleExporter()
+        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
+
+        let exportTask = try exporter.makeExportTask(
+            options: [.ExportPipeline: VideoX.ExportPipeline.readerWriter],
+            instructions: [instruction]
+        )
+
+        XCTAssertNil(exportTask.assetExportSession)
+        XCTAssertNotNil(exportTask.readerWriterJob)
+        XCTAssertTrue(exportTask.supportsPauseResume)
+        XCTAssertEqual(exportTask.status, .idle)
+
+        exportTask.pause()
+        XCTAssertEqual(exportTask.status, .idle)
+        exportTask.cancel()
+        XCTAssertEqual(exportTask.status, .cancelled)
+    }
+
     func testPreviewSinkBuildsPreviewImageAndPreservesMetadata() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
         let metadata = FrameMetadata(

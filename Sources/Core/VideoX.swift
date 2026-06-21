@@ -22,6 +22,171 @@ public struct VideoX {
     public init(provider: VideoX.Provider) {
         self.provider = provider
     }
+
+    public final class ExportTask {
+        public enum Status: Equatable {
+            case idle
+            case exporting
+            case paused
+            case completed
+            case cancelled
+            case failed
+        }
+
+        public let assetExportSession: AVAssetExportSession?
+        public let readerWriterJob: ReaderWriterExportJob?
+
+        public var supportsPauseResume: Bool {
+            readerWriterJob != nil
+        }
+
+        public var status: Status {
+            if let readerWriterJob {
+                return Self.status(for: readerWriterJob.status)
+            }
+            guard let assetExportSession else {
+                return .idle
+            }
+            return Self.status(for: assetExportSession.status)
+        }
+
+        fileprivate init(assetExportSession: AVAssetExportSession) {
+            self.assetExportSession = assetExportSession
+            self.readerWriterJob = nil
+        }
+
+        fileprivate init(readerWriterJob: ReaderWriterExportJob) {
+            self.assetExportSession = nil
+            self.readerWriterJob = readerWriterJob
+        }
+
+        public func start(
+            complete: @escaping ExportComplete,
+            progress: ((Float) -> Void)? = nil
+        ) {
+            if let readerWriterJob {
+                if let progress {
+                    readerWriterJob.progressHandler = { info in
+                        progress(Float(info.fractionCompleted))
+                    }
+                }
+                readerWriterJob.export { result in
+                    switch result {
+                    case .success(let outputURL):
+                        progress?(1.0)
+                        complete(.success(outputURL))
+                    case .failure(let error):
+                        if case VideoX.Error.exportCancelled = VideoX.Error.toError(error) {
+                            progress?(0.0)
+                        }
+                        complete(.failure(VideoX.Error.toError(error)))
+                    }
+                }
+                return
+            }
+
+            guard let assetExportSession else {
+                progress?(0.0)
+                complete(.failure(VideoX.Error.exportSessionEmpty))
+                return
+            }
+            if let progress {
+                let progressObserver = ExportSessionProgressObserver(session: assetExportSession, handler: progress)
+                progressObserver.start()
+                assetExportSession.exportAsynchronously(completionHandler: { [weak assetExportSession] in
+                    progressObserver.stop()
+                    guard let session = assetExportSession else {
+                        complete(.failure(VideoX.Error.exportSessionEmpty))
+                        return
+                    }
+                    switch session.status {
+                    case .completed:
+                        progress(1.0)
+                        if let outputURL = session.outputURL {
+                            complete(.success(outputURL))
+                        } else {
+                            complete(.failure(VideoX.Error.exportOutputURL))
+                        }
+                    case .cancelled:
+                        complete(.failure(VideoX.Error.exportCancelled))
+                    case .failed:
+                        complete(.failure(VideoX.Error.toError(session.error)))
+                    default:
+                        complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
+                    }
+                })
+            } else {
+                assetExportSession.exportAsynchronously(completionHandler: { [weak assetExportSession] in
+                    guard let session = assetExportSession else {
+                        complete(.failure(VideoX.Error.exportSessionEmpty))
+                        return
+                    }
+                    switch session.status {
+                    case .completed:
+                        if let outputURL = session.outputURL {
+                            complete(.success(outputURL))
+                        } else {
+                            complete(.failure(VideoX.Error.exportOutputURL))
+                        }
+                    case .cancelled:
+                        complete(.failure(VideoX.Error.exportCancelled))
+                    case .failed:
+                        complete(.failure(VideoX.Error.toError(session.error)))
+                    default:
+                        complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
+                    }
+                })
+            }
+        }
+
+        public func pause() {
+            readerWriterJob?.pause()
+        }
+
+        public func resume() {
+            readerWriterJob?.resume()
+        }
+
+        public func cancel() {
+            if let readerWriterJob {
+                readerWriterJob.cancel()
+            } else {
+                assetExportSession?.cancelExport()
+            }
+        }
+
+        private static func status(for status: AVAssetExportSession.Status) -> Status {
+            switch status {
+            case .unknown:
+                return .idle
+            case .waiting, .exporting:
+                return .exporting
+            case .completed:
+                return .completed
+            case .failed:
+                return .failed
+            case .cancelled:
+                return .cancelled
+            @unknown default:
+                return .failed
+            }
+        }
+
+        private static func status(for status: ReaderWriterExportJob.Status) -> Status {
+            switch status {
+            case .idle:
+                return .idle
+            case .exporting:
+                return .exporting
+            case .paused:
+                return .paused
+            case .completed:
+                return .completed
+            case .cancelled:
+                return .cancelled
+            }
+        }
+    }
     
     public func makeAssetExportSession(options: [VideoX.Option: Any] = [:], instructions: [CompositionInstruction]) throws -> AVAssetExportSession {
         guard let exportSession = try create(AVAssetExportSession.self, options: options, instructions: instructions) else {
@@ -40,6 +205,16 @@ public struct VideoX {
             return nil
         }
         return try makeReaderWriterExportJob(options: options, instructions: instructions)
+    }
+
+    public func makeExportTask(
+        options: [VideoX.Option: Any] = [:],
+        instructions: [CompositionInstruction]
+    ) throws -> ExportTask {
+        if let exportJob = try makeExportJob(options: options, instructions: instructions) {
+            return ExportTask(readerWriterJob: exportJob)
+        }
+        return ExportTask(assetExportSession: try makeAssetExportSession(options: options, instructions: instructions))
     }
 
     /// Build a reader/writer export job directly.
@@ -64,78 +239,9 @@ public struct VideoX {
         progress: ((Float) -> Void)? = nil
     ) -> AVAssetExportSession? {
         do {
-            if let exportJob = try makeExportJob(options: options, instructions: instructions) {
-                if let progress {
-                    exportJob.progressHandler = { info in
-                        progress(Float(info.fractionCompleted))
-                    }
-                }
-                exportJob.export { result in
-                    switch result {
-                    case .success(let outputURL):
-                        progress?(1.0)
-                        complete(.success(outputURL))
-                    case .failure(let error):
-                        if case VideoX.Error.exportCancelled = VideoX.Error.toError(error) {
-                            progress?(0.0)
-                        }
-                        complete(.failure(VideoX.Error.toError(error)))
-                    }
-                }
-                return nil
-            }
-
-            let exportSession = try makeAssetExportSession(options: options, instructions: instructions)
-            if let progress = progress {
-                let progressObserver = ExportSessionProgressObserver(session: exportSession, handler: progress)
-                progressObserver.start()
-                exportSession.exportAsynchronously(completionHandler: { [weak exportSession] in
-                    progressObserver.stop()
-                    guard let session = exportSession else {
-                        complete(.failure(VideoX.Error.exportSessionEmpty))
-                        return
-                    }
-                    switch session.status {
-                    case .completed:
-                        progress(1.0)
-                        if let outputURL = session.outputURL {
-                            complete(.success(outputURL))
-                        } else {
-                            complete(.failure(VideoX.Error.exportOutputURL))
-                        }
-                    case .cancelled:
-                        complete(.failure(VideoX.Error.exportCancelled))
-                    case .failed:
-                        complete(.failure(VideoX.Error.toError(session.error)))
-                    default:
-                        complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
-                        break
-                    }
-                })
-            } else {
-                exportSession.exportAsynchronously(completionHandler: { [weak exportSession] in
-                    guard let session = exportSession else {
-                        complete(.failure(VideoX.Error.exportSessionEmpty))
-                        return
-                    }
-                    switch session.status {
-                    case .completed:
-                        if let outputURL = session.outputURL {
-                            complete(.success(outputURL))
-                        } else {
-                            complete(.failure(VideoX.Error.exportOutputURL))
-                        }
-                    case .cancelled:
-                        complete(.failure(VideoX.Error.exportCancelled))
-                    case .failed:
-                        complete(.failure(VideoX.Error.toError(session.error)))
-                    default:
-                        complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
-                        break
-                    }
-                })
-            }
-            return exportSession
+            let exportTask = try makeExportTask(options: options, instructions: instructions)
+            exportTask.start(complete: complete, progress: progress)
+            return exportTask.assetExportSession
         } catch {
             progress?(0.0)
             complete(.failure(VideoX.Error.toError(error)))
