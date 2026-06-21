@@ -57,6 +57,7 @@ internal struct TimelineLayerInheritance {
 }
 
 public final class ClipLayer: TimelineLayer {
+    public let clipSource: AssetClipSource
     public let asset: AVAsset
     public var sourceTimeRange: CMTimeRange?
     public var volume: Float
@@ -70,6 +71,7 @@ public final class ClipLayer: TimelineLayer {
         volume: Float = 1,
         audioRamps: [AudioVolumeRamp] = []
     ) {
+        self.clipSource = AssetClipSource(asset: asset, sourceTimeRange: sourceTimeRange)
         self.asset = asset
         self.sourceTimeRange = sourceTimeRange
         self.volume = volume
@@ -77,11 +79,26 @@ public final class ClipLayer: TimelineLayer {
         super.init(timeRange: timeRange, layerLevel: layerLevel)
     }
 
+    public init(
+        source: AssetClipSource,
+        timeRange: CMTimeRange,
+        layerLevel: Int = 0,
+        volume: Float = 1,
+        audioRamps: [AudioVolumeRamp] = []
+    ) {
+        self.clipSource = source
+        self.asset = source.asset
+        self.sourceTimeRange = source.sourceTimeRange
+        self.volume = volume
+        self.audioRamps = audioRamps
+        super.init(timeRange: timeRange, layerLevel: layerLevel)
+        self.transform = source.preferredTransform
+    }
+
     public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
         let shifted = ClipLayer(
-            asset: asset,
+            source: clipSource,
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
-            sourceTimeRange: sourceTimeRange,
             layerLevel: layerLevel + inheritedLevel,
             volume: volume,
             audioRamps: audioRamps.map { $0.applyingOffset(offset) }
@@ -94,16 +111,24 @@ public final class ClipLayer: TimelineLayer {
 }
 
 public final class ImageLayer: TimelineLayer {
+    public let imageSource: StillImageSource
     public let image: CGImage
 
     public init(image: CGImage, timeRange: CMTimeRange, layerLevel: Int = 0) {
+        self.imageSource = StillImageSource(image: image)
         self.image = image
+        super.init(timeRange: timeRange, layerLevel: layerLevel)
+    }
+
+    public init(source: StillImageSource, timeRange: CMTimeRange, layerLevel: Int = 0) {
+        self.imageSource = source
+        self.image = source.image
         super.init(timeRange: timeRange, layerLevel: layerLevel)
     }
 
     public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
         let shifted = ImageLayer(
-            image: image,
+            source: imageSource,
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
             layerLevel: layerLevel + inheritedLevel
         )
@@ -115,6 +140,7 @@ public final class ImageLayer: TimelineLayer {
 }
 
 public final class AudioLayer: TimelineLayer {
+    public let audioSource: AudioClipSource
     public let asset: AVAsset
     public var sourceTimeRange: CMTimeRange?
     public var volume: Float
@@ -127,6 +153,7 @@ public final class AudioLayer: TimelineLayer {
         volume: Float = 1,
         audioRamps: [AudioVolumeRamp] = []
     ) {
+        self.audioSource = AudioClipSource(asset: asset, sourceTimeRange: sourceTimeRange)
         self.asset = asset
         self.sourceTimeRange = sourceTimeRange
         self.volume = volume
@@ -134,11 +161,24 @@ public final class AudioLayer: TimelineLayer {
         super.init(timeRange: timeRange)
     }
 
+    public init(
+        source: AudioClipSource,
+        timeRange: CMTimeRange,
+        volume: Float = 1,
+        audioRamps: [AudioVolumeRamp] = []
+    ) {
+        self.audioSource = source
+        self.asset = source.asset
+        self.sourceTimeRange = source.sourceTimeRange
+        self.volume = volume
+        self.audioRamps = audioRamps
+        super.init(timeRange: timeRange)
+    }
+
     public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
         let shifted = AudioLayer(
-            asset: asset,
+            source: audioSource,
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
-            sourceTimeRange: sourceTimeRange,
             volume: volume,
             audioRamps: audioRamps.map { $0.applyingOffset(offset) }
         )
@@ -151,20 +191,28 @@ public final class AudioLayer: TimelineLayer {
 }
 
 public final class EffectLayer: TimelineLayer {
+    public let effectSource: EffectSource
     public var processor: FrameProcessor?
     public var intensity: Float
 
     public init(timeRange: CMTimeRange, processor: FrameProcessor? = nil, intensity: Float = 1, layerLevel: Int = 0) {
+        self.effectSource = EffectSource(processor: processor, intensity: intensity)
         self.processor = processor
         self.intensity = intensity
+        super.init(timeRange: timeRange, layerLevel: layerLevel)
+    }
+
+    public init(timeRange: CMTimeRange, source: EffectSource, layerLevel: Int = 0) {
+        self.effectSource = source
+        self.processor = source.processor
+        self.intensity = source.intensity
         super.init(timeRange: timeRange, layerLevel: layerLevel)
     }
 
     public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
         let shifted = EffectLayer(
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
-            processor: processor,
-            intensity: intensity,
+            source: effectSource,
             layerLevel: layerLevel + inheritedLevel
         )
         shifted.opacity = opacity

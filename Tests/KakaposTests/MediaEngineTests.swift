@@ -52,6 +52,100 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.frames.first?.metadata.frameIndex, 2)
     }
 
+    func testMediaGraphRoutesFramesToMultipleBranches() throws {
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let source = TestSource(frames: [input])
+        let firstSink = TestSink()
+        let secondSink = TestSink()
+        let firstBranch = MediaGraphBranch(
+            processors: [
+                ClosureFrameProcessor { frame, completion in
+                    var output = frame
+                    output.metadata.frameIndex = 11
+                    completion(.success(output))
+                }
+            ],
+            sinks: [firstSink]
+        )
+        let secondBranch = MediaGraphBranch(
+            processors: [
+                ClosureFrameProcessor { frame, completion in
+                    var output = frame
+                    output.metadata.frameIndex = 21
+                    completion(.success(output))
+                }
+            ],
+            sinks: [secondSink]
+        )
+        let graph = MediaGraph(source: source, branches: [firstBranch, secondBranch])
+
+        graph.start()
+
+        XCTAssertEqual(firstSink.frames.first?.metadata.frameIndex, 11)
+        XCTAssertEqual(secondSink.frames.first?.metadata.frameIndex, 21)
+    }
+
+    func testMediaGraphNestedBranchPropagatesFrameToChildSink() throws {
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let source = TestSource(frames: [input])
+        let parentSink = TestSink()
+        let childSink = TestSink()
+        let childBranch = MediaGraphBranch(
+            processors: [
+                ClosureFrameProcessor { frame, completion in
+                    var output = frame
+                    output.metadata.frameIndex = 31
+                    completion(.success(output))
+                }
+            ],
+            sinks: [childSink]
+        )
+        let parentBranch = MediaGraphBranch(
+            processors: [
+                ClosureFrameProcessor { frame, completion in
+                    var output = frame
+                    output.metadata.frameIndex = 30
+                    completion(.success(output))
+                }
+            ],
+            sinks: [parentSink],
+            children: [childBranch]
+        )
+        let graph = MediaGraph(source: source, branches: [parentBranch])
+
+        graph.start()
+
+        XCTAssertEqual(parentSink.frames.first?.metadata.frameIndex, 30)
+        XCTAssertEqual(childSink.frames.first?.metadata.frameIndex, 31)
+    }
+
+    func testImageSourceEmitsFrameSequenceWithMetadata() throws {
+        let frames = [
+            StillImageFrame(image: try makeImage(width: 10, height: 10), duration: CMTime(value: 1, timescale: 30)),
+            StillImageFrame(image: try makeImage(width: 20, height: 12), duration: CMTime(value: 2, timescale: 30))
+        ]
+        let source = ImageSource(frames: frames, renderSize: CGSize(width: 40, height: 24), callbackQueue: .main)
+        let sink = TestSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+        let completion = expectation(description: "image source finished")
+
+        pipeline.completionHandler = {
+            completion.fulfill()
+        }
+
+        pipeline.start()
+
+        wait(for: [completion], timeout: 2)
+        XCTAssertEqual(sink.frames.count, 2)
+        XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(sink.frames.first?.pixelBuffer)), 40)
+        XCTAssertEqual(CVPixelBufferGetHeight(try XCTUnwrap(sink.frames.first?.pixelBuffer)), 24)
+        XCTAssertEqual(sink.frames.first?.metadata.presentationTime, .zero)
+        XCTAssertEqual(sink.frames.last?.metadata.presentationTime, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(sink.frames.last?.metadata.duration, CMTime(value: 2, timescale: 30))
+    }
+
     func testTimelineCompositionCompilesEmptyComposition() {
         let timeline = TimelineComposition(renderSize: CGSize(width: 1920, height: 1080), frameDuration: CMTime(value: 1, timescale: 30))
 
@@ -464,6 +558,77 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertNil(imageState.trackID)
         XCTAssertNotNil(effectState.processor)
         XCTAssertEqual(intensity, 0.6, accuracy: 0.0001)
+    }
+
+    func testTimelineCompositionBuildsRenderPlanWithSourceDescriptors() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let clip = ClipLayer(
+            source: AssetClipSource(
+                asset: asset,
+                sourceTimeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30))
+            ),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            layerLevel: 0
+        )
+        let image = ImageLayer(
+            source: StillImageSource(image: try makeImage(width: 32, height: 18)),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            layerLevel: 1
+        )
+        let effect = EffectLayer(
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 60, timescale: 30)),
+            source: EffectSource(processor: PassthroughFrameProcessor(), intensity: 0.75),
+            layerLevel: 2
+        )
+        let timeline = TimelineComposition(layers: [clip, image, effect])
+
+        let compiled = timeline.compile()
+
+        XCTAssertEqual(compiled.renderPlan.assetSegments.count, 1)
+        XCTAssertEqual(compiled.renderPlan.imageSegments.count, 1)
+        XCTAssertEqual(compiled.renderPlan.processorSegments.count, 1)
+        XCTAssertEqual(compiled.renderPlan.visualIntervals.count, 1)
+        XCTAssertEqual(compiled.renderPlan.assetSegments.first?.compositionTrackID, compiled.renderInstructions.first?.sourceTrackIDs.first)
+        XCTAssertEqual(compiled.renderPlan.imageSegments.first?.source.naturalSize.width, 32)
+        XCTAssertEqual(
+            Double(compiled.renderPlan.processorSegments.first?.intensity(at: .zero) ?? 0),
+            0.75,
+            accuracy: 0.0001
+        )
+    }
+
+    func testCompiledTimelineCompositionBuildsImageSourceAndProcessorChain() throws {
+        let image = ImageLayer(
+            source: StillImageSource(image: try makeImage(width: 24, height: 24)),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            layerLevel: 0
+        )
+        let effect = EffectLayer(
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 30, timescale: 30)),
+            source: EffectSource(processor: PassthroughFrameProcessor(), intensity: 1),
+            layerLevel: 1
+        )
+        let timeline = TimelineComposition(layers: [image, effect])
+        let compiled = timeline.compile()
+
+        let imageSource = try XCTUnwrap(compiled.makeImageSource())
+        let chain = compiled.makeProcessorChain()
+        let sink = TestSink()
+        chain.sinks = [sink]
+        let pipeline = MediaPipeline(source: imageSource, processors: chain.processors, sinks: chain.sinks)
+        let completion = expectation(description: "compiled image source pipeline finishes")
+
+        pipeline.completionHandler = {
+            completion.fulfill()
+        }
+
+        pipeline.start()
+
+        wait(for: [completion], timeout: 2)
+        XCTAssertEqual(sink.frames.count, 1)
+        XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(sink.frames.first?.pixelBuffer)), 720)
+        XCTAssertEqual(CVPixelBufferGetHeight(try XCTUnwrap(sink.frames.first?.pixelBuffer)), 1280)
+        XCTAssertEqual(chain.processors.count, 1)
     }
 
     func testReaderWriterProgressInfoUsesVideoProgressWhenAudioTrackIsMissing() {

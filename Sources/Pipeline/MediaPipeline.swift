@@ -144,6 +144,10 @@ public final class MediaPipeline: MediaSourceDelegate {
         self.source.delegate = self
     }
 
+    public convenience init(source: MediaSource, branch: MediaGraphBranch) {
+        self.init(source: source, processors: branch.processors, sinks: branch.sinks)
+    }
+
     public func start() {
         source.start()
     }
@@ -190,5 +194,15 @@ public final class MediaPipeline: MediaSourceDelegate {
                 self?.errorHandler?(error)
             }
         }
+    }
+}
+
+public extension MediaPipeline {
+    func makeBranch(children: [MediaGraphBranch] = []) -> MediaGraphBranch {
+        MediaGraphBranch(
+            processors: processors,
+            sinks: sinks,
+            children: children
+        )
     }
 }
