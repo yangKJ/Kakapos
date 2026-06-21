@@ -252,6 +252,8 @@ private struct CameraRecordView: View {
                 }
                 do {
                     let source = try CameraSource()
+                    let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
+                    let recorder = try RecorderSink(outputURL: outputURL)
                     source.sessionEventHandler = { event in
                         sessionStateText = String(describing: source.state)
                         switch event {
@@ -262,8 +264,10 @@ private struct CameraRecordView: View {
                         case .didStop:
                             message = "Camera session stopped"
                         case .wasInterrupted:
+                            recorder.pauseRecording()
                             message = "Camera session interrupted"
                         case .interruptionEnded:
+                            recorder.resumeRecording()
                             message = "Camera interruption ended"
                         case .runtimeError(let isRecoverable, let description):
                             if isRecoverable {
@@ -275,8 +279,6 @@ private struct CameraRecordView: View {
                             message = "Switched camera: \(String(describing: position))"
                         }
                     }
-                    let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
-                    let recorder = try RecorderSink(outputURL: outputURL)
                     recorder.durationChangedHandler = { duration in
                         DispatchQueue.main.async {
                             recordedDurationText = String(format: "%.2fs", duration.seconds)

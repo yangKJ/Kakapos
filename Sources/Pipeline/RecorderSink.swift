@@ -27,6 +27,7 @@ public final class RecorderSink: MediaSink {
     public enum State {
         case idle
         case recording
+        case paused
         case finished
         case cancelled
     }
@@ -42,6 +43,8 @@ public final class RecorderSink: MediaSink {
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var startTime: CMTime?
     private var lastPresentationTime: CMTime?
+    private var pausedAt: CMTime?
+    private var accumulatedPauseDuration: CMTime = .zero
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
 
     public init(outputURL: URL, fileType: AVFileType = .mp4) throws {
@@ -82,7 +85,7 @@ public final class RecorderSink: MediaSink {
                 completion(.success(recordedClip))
                 return
             }
-            guard self.state == .recording else {
+            guard self.state == .recording || self.state == .paused else {
                 self.state = .finished
                 let clip = RecordedClip(outputURL: self.outputURL, duration: .zero, startedAt: self.startTime, endedAt: self.lastPresentationTime)
                 self.recordedClip = clip
@@ -112,6 +115,29 @@ public final class RecorderSink: MediaSink {
         }
     }
 
+    public func pauseRecording(at time: CMTime) {
+        queue.sync {
+            guard state == .recording else { return }
+            pausedAt = time
+            state = .paused
+        }
+    }
+
+    public func pauseRecording() {
+        queue.sync {
+            guard state == .recording else { return }
+            pausedAt = lastPresentationTime ?? startTime ?? .zero
+            state = .paused
+        }
+    }
+
+    public func resumeRecording() {
+        queue.sync {
+            guard state == .paused else { return }
+            state = .recording
+        }
+    }
+
     private func consumeOnQueue(_ frame: MediaFrame) throws {
         if let sampleBuffer = frame.sampleBuffer, CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
             try appendAudio(sampleBuffer)
@@ -119,12 +145,13 @@ public final class RecorderSink: MediaSink {
         }
         guard let pixelBuffer = frame.pixelBuffer else { return }
         try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
-        try startIfNeeded(at: frame.metadata.presentationTime)
+        let normalizedTime = try normalizedPresentationTime(for: frame.metadata.presentationTime)
+        try startIfNeeded(at: normalizedTime)
         guard let input = videoInput, let adaptor = pixelBufferAdaptor, input.isReadyForMoreMediaData else { return }
-        adaptor.append(pixelBuffer, withPresentationTime: frame.metadata.presentationTime)
-        updateLastPresentationTime(frame.metadata.presentationTime)
+        adaptor.append(pixelBuffer, withPresentationTime: normalizedTime)
+        updateLastPresentationTime(normalizedTime)
         if let startTime = startTime {
-            durationChangedHandler?(frame.metadata.presentationTime - startTime)
+            durationChangedHandler?(normalizedTime - startTime)
         }
     }
 
@@ -152,10 +179,28 @@ public final class RecorderSink: MediaSink {
 
     private func appendAudio(_ sampleBuffer: CMSampleBuffer) throws {
         try setupAudioIfNeeded(sampleBuffer: sampleBuffer)
-        try startIfNeeded(at: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        let normalizedTime = try normalizedPresentationTime(for: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        try startIfNeeded(at: normalizedTime)
         guard let input = audioInput, input.isReadyForMoreMediaData else { return }
-        input.append(sampleBuffer)
-        updateLastPresentationTime(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        var timingCount: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &timingCount)
+        var timingInfo = Array(repeating: CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .zero, decodeTimeStamp: .invalid), count: timingCount)
+        CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: timingCount, arrayToFill: &timingInfo, entriesNeededOut: &timingCount)
+        timingInfo = timingInfo.map {
+            let translatedPresentationTime = $0.presentationTimeStamp - accumulatedPauseDuration
+            let translatedDecodeTime = $0.decodeTimeStamp.isValid ? ($0.decodeTimeStamp - accumulatedPauseDuration) : $0.decodeTimeStamp
+            return CMSampleTimingInfo(duration: $0.duration, presentationTimeStamp: translatedPresentationTime, decodeTimeStamp: translatedDecodeTime)
+        }
+        var rebasedBuffer: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(
+            allocator: kCFAllocatorDefault,
+            sampleBuffer: sampleBuffer,
+            sampleTimingEntryCount: timingInfo.count,
+            sampleTimingArray: &timingInfo,
+            sampleBufferOut: &rebasedBuffer
+        )
+        input.append(rebasedBuffer ?? sampleBuffer)
+        updateLastPresentationTime(normalizedTime)
     }
 
     private func setupAudioIfNeeded(sampleBuffer: CMSampleBuffer) throws {
@@ -175,6 +220,15 @@ public final class RecorderSink: MediaSink {
         startTime = time
         lastPresentationTime = time
         state = .recording
+    }
+
+    private func normalizedPresentationTime(for time: CMTime) throws -> CMTime {
+        if let pausedAt, time.isValid, pausedAt.isValid {
+            accumulatedPauseDuration = accumulatedPauseDuration + (time - pausedAt)
+            self.pausedAt = nil
+            state = .recording
+        }
+        return time - accumulatedPauseDuration
     }
 
     private func updateLastPresentationTime(_ time: CMTime) {
