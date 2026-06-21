@@ -66,6 +66,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(timeline.summary.transitionCount, 0)
     }
 
+    @available(*, deprecated, message: "Covers the deprecated KakaposBoards alias intentionally.")
     func testKakaposBoardsStarterBoardsMirrorTheSurfaceBoardOrder() {
         XCTAssertEqual(KakaposBoards.starterBoards.map(\.board), KakaposSurface.starterBoards.map(\.board))
         XCTAssertEqual(KakaposBoards.starterBoards.map(\.board), [.export, .preview, .record, .timeline])
@@ -1519,7 +1520,7 @@ final class MediaEngineTests: XCTestCase {
             completion(.success(frame))
         }
 
-        let exportJob = try ReaderWriterExportJob(
+        let exportJob = ReaderWriterExportJob(
             asset: AVAsset(url: try makeSampleAssetURL()),
             outputURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString)
@@ -3708,6 +3709,16 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertFalse(configuration.requiresAuthorization(for: .metadata))
         XCTAssertTrue(configuration.effectiveMirroringValue(for: .front))
         XCTAssertFalse(configuration.effectiveMirroringValue(for: .back))
+    }
+
+    func testCameraAspectRatioResolvesDimensionsFromSourceSize() {
+        let sourceSize = CGSize(width: 1080, height: 1920)
+
+        XCTAssertEqual(CameraAspectRatio.active.resolvedDimensions(from: sourceSize), sourceSize)
+        XCTAssertEqual(CameraAspectRatio.square.resolvedDimensions(from: sourceSize), CGSize(width: 1080, height: 1080))
+        XCTAssertEqual(CameraAspectRatio.standard.resolvedDimensions(from: sourceSize), CGSize(width: 1080, height: 1440))
+        XCTAssertEqual(CameraAspectRatio.widescreenLandscape.resolvedDimensions(from: sourceSize), CGSize(width: 1080, height: 608))
+        XCTAssertEqual(CameraAspectRatio.custom(width: 4, height: 5).resolvedDimensions(from: sourceSize), CGSize(width: 1080, height: 1350))
     }
 
     #if canImport(UIKit) && !os(watchOS)
