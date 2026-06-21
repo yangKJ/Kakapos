@@ -85,6 +85,60 @@ public final class MediaPipeline {
         public let lastErrorDescription: String?
     }
 
+    public struct ManifestSourceSnapshot: Equatable, Sendable, Codable {
+        public let stateDescription: String
+        public let lastFrameIndex: Int64?
+        public let lastPresentationTimeSeconds: Double?
+        public let lastSourceTimeSeconds: Double?
+        public let lastErrorDescription: String?
+        public let details: [String: String]
+
+        public init(snapshot: MediaSourceSnapshot) {
+            self.stateDescription = snapshot.stateDescription
+            self.lastFrameIndex = snapshot.lastFrameIndex
+            self.lastPresentationTimeSeconds = snapshot.lastPresentationTime?.seconds
+            self.lastSourceTimeSeconds = snapshot.lastSourceTime?.seconds
+            self.lastErrorDescription = snapshot.lastErrorDescription
+            self.details = snapshot.details
+        }
+    }
+
+    public struct ManifestFrameMetadata: Equatable, Sendable, Codable {
+        public let presentationTimeSeconds: Double
+        public let durationSeconds: Double?
+        public let sourceTimeSeconds: Double?
+        public let trackTransformA: Double
+        public let trackTransformB: Double
+        public let trackTransformC: Double
+        public let trackTransformD: Double
+        public let trackTransformTX: Double
+        public let trackTransformTY: Double
+        public let frameIndex: Int64?
+
+        public init(metadata: FrameMetadata) {
+            self.presentationTimeSeconds = metadata.presentationTime.seconds
+            self.durationSeconds = metadata.duration?.seconds
+            self.sourceTimeSeconds = metadata.sourceTime?.seconds
+            self.trackTransformA = Double(metadata.trackTransform.a)
+            self.trackTransformB = Double(metadata.trackTransform.b)
+            self.trackTransformC = Double(metadata.trackTransform.c)
+            self.trackTransformD = Double(metadata.trackTransform.d)
+            self.trackTransformTX = Double(metadata.trackTransform.tx)
+            self.trackTransformTY = Double(metadata.trackTransform.ty)
+            self.frameIndex = metadata.frameIndex
+        }
+    }
+
+    public struct Manifest: Equatable, Sendable, Codable {
+        public let sourceTypeName: String
+        public let processorTypeNames: [String]
+        public let sinkTypeNames: [String]
+        public let stateDescription: String
+        public let sourceSnapshot: ManifestSourceSnapshot?
+        public let lastFrameMetadata: ManifestFrameMetadata?
+        public let lastErrorDescription: String?
+    }
+
     public let source: MediaSource
     public let chain: MediaProcessorChain
     public private(set) var state: State = .idle
@@ -124,6 +178,19 @@ public final class MediaPipeline {
             lastFrameIndex: currentSnapshot.lastFrameMetadata?.frameIndex,
             lastPresentationTime: currentSnapshot.lastFrameMetadata?.presentationTime,
             lastSourceTime: currentSnapshot.lastFrameMetadata?.sourceTime,
+            lastErrorDescription: currentSnapshot.lastErrorDescription
+        )
+    }
+
+    public var manifest: Manifest {
+        let currentSnapshot = snapshot
+        return Manifest(
+            sourceTypeName: currentSnapshot.sourceTypeName,
+            processorTypeNames: currentSnapshot.processorTypeNames,
+            sinkTypeNames: currentSnapshot.sinkTypeNames,
+            stateDescription: String(describing: currentSnapshot.state),
+            sourceSnapshot: currentSnapshot.sourceSnapshot.map(ManifestSourceSnapshot.init(snapshot:)),
+            lastFrameMetadata: currentSnapshot.lastFrameMetadata.map(ManifestFrameMetadata.init(metadata:)),
             lastErrorDescription: currentSnapshot.lastErrorDescription
         )
     }
