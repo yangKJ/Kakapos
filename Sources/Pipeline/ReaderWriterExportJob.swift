@@ -69,7 +69,7 @@ public final class ReaderWriterExportJob {
 
         public var overallFractionCompleted: Double {
             guard hasVideo || hasAudio else { return finishWritingProgress }
-            return min((fractionCompleted * 0.95) + (finishWritingProgress * 0.05), 1)
+            return max(fractionCompleted, finishWritingProgress)
         }
     }
 

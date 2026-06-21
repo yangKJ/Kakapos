@@ -1104,7 +1104,21 @@ final class MediaEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(info.fractionCompleted, 1.0, accuracy: 0.0001)
-        XCTAssertEqual(info.overallFractionCompleted, 0.95, accuracy: 0.0001)
+        XCTAssertEqual(info.overallFractionCompleted, 1.0, accuracy: 0.0001)
+    }
+
+    func testReaderWriterProgressInfoUsesTheHigherOfEncodingAndFinishProgress() {
+        let info = ReaderWriterExportJob.ProgressInfo(
+            videoProgress: 0.2,
+            audioProgress: 0.4,
+            hasVideo: true,
+            hasAudio: true,
+            finishWritingProgress: 0.1,
+            phase: .finishing
+        )
+
+        XCTAssertEqual(info.fractionCompleted, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(info.overallFractionCompleted, 0.3, accuracy: 0.0001)
     }
 
     func testReaderWriterExportJobStoresLatestProgressSnapshot() {
@@ -1167,7 +1181,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(job.summary.status, .exporting)
         XCTAssertEqual(
             job.summary.summaryText,
-            "state exporting · tracks 1/1 · processors 1 · progress 58% · phase finishing · video 40% · audio 80% · finish 20%"
+            "state exporting · tracks 1/1 · processors 1 · progress 60% · phase finishing · video 40% · audio 80% · finish 20%"
         )
     }
 
@@ -1395,7 +1409,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(job.status, .completed)
         XCTAssertEqual(receivedStatuses, [.exporting, .completed])
         XCTAssertNotNil(job.lastProgressInfo)
-        XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted ?? -1, 0.29, accuracy: 0.0001)
+        XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted ?? -1, 0.3, accuracy: 0.0001)
         XCTAssertEqual(job.lastProgressInfo?.phase, .finishing)
         if case .failure(let error)? = receivedResult {
             XCTFail("Unexpected export failure: \(error)")
@@ -1415,7 +1429,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(job.status, .completed)
         XCTAssertEqual(receivedStatuses, [.exporting, .completed])
         XCTAssertNotNil(job.lastProgressInfo)
-        XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted ?? -1, 0.29, accuracy: 0.0001)
+        XCTAssertEqual(job.lastProgressInfo?.overallFractionCompleted ?? -1, 0.3, accuracy: 0.0001)
     }
 
     func testReaderWriterExportJobPauseAndResumeTransitionFromExportingState() {
@@ -3834,9 +3848,9 @@ final class MediaEngineTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
         XCTAssertEqual(task.status, .completed)
-        XCTAssertEqual(task.progressFraction ?? 0, 0.37625, accuracy: 0.0001)
-        XCTAssertEqual(receivedProgress.first ?? 0, 0.37625, accuracy: 0.0001)
-        XCTAssertEqual(receivedProgress.last ?? 0, 0.37625, accuracy: 0.0001)
+        XCTAssertEqual(task.progressFraction ?? 0, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(receivedProgress.first ?? 0, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(receivedProgress.last ?? 0, 0.4, accuracy: 0.0001)
         XCTAssertNotNil(receivedInfo)
         XCTAssertTrue(task.summaryText.contains("export completed"))
     }

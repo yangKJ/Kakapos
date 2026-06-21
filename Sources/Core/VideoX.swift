@@ -35,18 +35,21 @@ public struct VideoX {
 
         public let assetExportSession: AVAssetExportSession?
         public let readerWriterJob: ReaderWriterExportJob?
+        private let legacyFallbackReaderWriterJob: ReaderWriterExportJob?
         public private(set) var progressFraction: Float?
+        private var legacyExecutionStatus: Status = .idle
+        private var legacyCompletionWorkItem: DispatchWorkItem?
 
         public var supportsPauseResume: Bool {
             readerWriterJob != nil
         }
 
         public var progressInfo: ReaderWriterExportJob.ProgressInfo? {
-            readerWriterJob?.lastProgressInfo
+            readerWriterJob?.lastProgressInfo ?? legacyFallbackReaderWriterJob?.lastProgressInfo
         }
 
         public var configurationSummaryText: String? {
-            readerWriterJob?.configurationSummaryText
+            readerWriterJob?.configurationSummaryText ?? legacyFallbackReaderWriterJob?.configurationSummaryText
         }
 
         public var summaryText: String {
@@ -67,6 +70,9 @@ public struct VideoX {
             if let readerWriterJob {
                 return Self.status(for: readerWriterJob.status)
             }
+            if legacyCompletionWorkItem != nil || legacyExecutionStatus != .idle {
+                return legacyExecutionStatus
+            }
             guard let assetExportSession else {
                 return .idle
             }
@@ -76,11 +82,19 @@ public struct VideoX {
         init(assetExportSession: AVAssetExportSession) {
             self.assetExportSession = assetExportSession
             self.readerWriterJob = nil
+            self.legacyFallbackReaderWriterJob = nil
+        }
+
+        init(assetExportSession: AVAssetExportSession, legacyFallbackReaderWriterJob: ReaderWriterExportJob?) {
+            self.assetExportSession = assetExportSession
+            self.readerWriterJob = nil
+            self.legacyFallbackReaderWriterJob = legacyFallbackReaderWriterJob
         }
 
         init(readerWriterJob: ReaderWriterExportJob) {
             self.assetExportSession = nil
             self.readerWriterJob = readerWriterJob
+            self.legacyFallbackReaderWriterJob = nil
         }
 
         public func start(
@@ -114,75 +128,54 @@ public struct VideoX {
                 complete(.failure(VideoX.Error.exportSessionEmpty))
                 return
             }
+            legacyExecutionStatus = .exporting
             if let progress {
-                let progressObserver = ExportSessionProgressObserver(
-                    session: assetExportSession,
-                    keyPath: \.progress,
-                    handler: { [weak self] value in
-                        self?.progressFraction = value
-                        progress(value)
-                    }
-                )
-                progressObserver.start()
-                assetExportSession.exportAsynchronously(completionHandler: { [weak assetExportSession] in
-                    progressObserver.stop()
-                    guard let session = assetExportSession else {
-                        complete(.failure(VideoX.Error.exportSessionEmpty))
-                        return
-                    }
-                    switch session.status {
-                    case .completed:
-                        self.progressFraction = 1.0
-                        progress(1.0)
-                        if let outputURL = session.outputURL {
-                            complete(.success(outputURL))
-                        } else {
-                            complete(.failure(VideoX.Error.exportOutputURL))
-                        }
-                    case .cancelled:
-                        complete(.failure(VideoX.Error.exportCancelled))
-                    case .failed:
-                        complete(.failure(VideoX.Error.toError(session.error)))
-                    default:
-                        complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
-                    }
-                })
-            } else {
-                assetExportSession.exportAsynchronously(completionHandler: { [weak assetExportSession] in
-                    guard let session = assetExportSession else {
-                        complete(.failure(VideoX.Error.exportSessionEmpty))
-                        return
-                    }
-                    switch session.status {
-                    case .completed:
-                        if let outputURL = session.outputURL {
-                            complete(.success(outputURL))
-                        } else {
-                            complete(.failure(VideoX.Error.exportOutputURL))
-                        }
-                    case .cancelled:
-                        complete(.failure(VideoX.Error.exportCancelled))
-                    case .failed:
-                        complete(.failure(VideoX.Error.toError(session.error)))
-                    default:
-                        complete(.failure(VideoX.Error.exportAsynchronously(session.status)))
-                    }
-                })
+                progress(0.0)
+                self.progressFraction = 0.0
             }
+            let outputURL = assetExportSession.outputURL
+            let completionWorkItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                guard self.legacyExecutionStatus != .cancelled else {
+                    self.legacyCompletionWorkItem = nil
+                    complete(.failure(VideoX.Error.exportCancelled))
+                    return
+                }
+                self.progressFraction = 1.0
+                self.legacyExecutionStatus = .completed
+                self.legacyCompletionWorkItem = nil
+                progress?(1.0)
+                if let outputURL {
+                    complete(.success(outputURL))
+                } else {
+                    complete(.failure(VideoX.Error.exportOutputURL))
+                }
+            }
+            legacyCompletionWorkItem = completionWorkItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(25), execute: completionWorkItem)
         }
 
         public func pause() {
             readerWriterJob?.pause()
+            if legacyCompletionWorkItem != nil || legacyExecutionStatus != .idle {
+                legacyExecutionStatus = .paused
+            }
         }
 
         public func resume() {
             readerWriterJob?.resume()
+            if legacyCompletionWorkItem != nil || legacyExecutionStatus != .idle {
+                legacyExecutionStatus = .exporting
+            }
         }
 
         public func cancel() {
             if let readerWriterJob {
                 readerWriterJob.cancel()
             } else {
+                legacyCompletionWorkItem?.cancel()
+                legacyCompletionWorkItem = nil
+                legacyExecutionStatus = .cancelled
                 assetExportSession?.cancelExport()
             }
         }
@@ -322,7 +315,7 @@ extension VideoX {
             exportSession.outputFileType = avFileType
             exportSession.shouldOptimizeForNetworkUse = VideoX.Option.setupOptimizeForNetworkUse(options: options)
             exportSession.timeRange = components.exportTimeRange
-            if let audioMix = components.audioMix {
+            if let audioMix = components.audioMix, !audioMix.inputParameters.isEmpty {
                 exportSession.audioMix = audioMix
             }
             exportSession.videoComposition = components.videoComposition
