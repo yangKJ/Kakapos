@@ -7,8 +7,10 @@ final class MediaEngineTests: XCTestCase {
 
     func testCapabilityCatalogGroupsPublicSurfaceIntoFourBoards() {
         let boards = KakaposCapabilityCatalog.boards
+        let starterBoards = KakaposCapabilityCatalog.starterBoards
 
         XCTAssertEqual(boards.count, 4)
+        XCTAssertEqual(starterBoards.map(\.board), boards.map(\.board))
         XCTAssertEqual(boards.map(\.board), [.export, .preview, .record, .timeline])
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "export")?.displayName, "Export")
         XCTAssertEqual(KakaposCapabilityCatalog.board(named: "preview")?.primaryTypes, ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"])
@@ -26,6 +28,7 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testKakaposSurfaceBoardFacadesMirrorTheCapabilityCatalog() {
+        XCTAssertEqual(KakaposSurface.starterBoards.map(\.board), KakaposCapabilityCatalog.starterBoards.map(\.board))
         XCTAssertEqual(KakaposSurface.exportBoard.displayName, "Export")
         XCTAssertEqual(KakaposSurface.previewBoard.displayName, "Preview")
         XCTAssertEqual(KakaposSurface.recordBoard.displayName, "Record")
@@ -61,6 +64,11 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recording.summary.processorCount, 0)
         XCTAssertEqual(timeline.summary.layerCount, 0)
         XCTAssertEqual(timeline.summary.transitionCount, 0)
+    }
+
+    func testKakaposBoardsStarterBoardsMirrorTheSurfaceBoardOrder() {
+        XCTAssertEqual(KakaposBoards.starterBoards.map(\.board), KakaposSurface.starterBoards.map(\.board))
+        XCTAssertEqual(KakaposBoards.starterBoards.map(\.board), [.export, .preview, .record, .timeline])
     }
 
     func testKakaposSurfaceExposesTheSameBoardCatalogAsTheLegacyAlias() {

@@ -15,6 +15,10 @@ import AVFoundation
 /// begin from a smaller surface area.
 @available(*, deprecated, message: "Use KakaposSurface as the recommended lightweight entry point.")
 public enum KakaposBoards {
+    public static var starterBoards: [KakaposCapabilityBoardInfo] {
+        KakaposSurface.starterBoards
+    }
+
     public static var exportBoard: KakaposSurface.ExportBoard {
         KakaposSurface.exportBoard
     }
