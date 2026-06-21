@@ -10,6 +10,12 @@ import AVFoundation
 
 #if canImport(UIKit) && !os(watchOS)
 public final class CameraSource: NSObject, MediaSource {
+    public enum MetadataKey {
+        public static let mediaType = "kakapos.camera.media-type"
+        public static let cameraPosition = "kakapos.camera.position"
+        public static let sessionState = "kakapos.camera.session-state"
+    }
+
     public weak var delegate: MediaSourceDelegate?
     public let session: AVCaptureSession
     public private(set) var isPaused: Bool = false
@@ -192,7 +198,21 @@ extension CameraSource: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureA
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard !isPaused else { return }
         frameIndex += 1
-        var frame = MediaFrame(sampleBuffer: sampleBuffer)
+        let mediaType = output === videoOutput ? AVMediaType.video.rawValue : AVMediaType.audio.rawValue
+        var frame = MediaFrame(
+            sampleBuffer: sampleBuffer,
+            metadata: FrameMetadata(
+                presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+                duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
+                sourceTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+                frameIndex: frameIndex,
+                userInfo: [
+                    MetadataKey.mediaType: mediaType,
+                    MetadataKey.cameraPosition: String(describing: currentPosition),
+                    MetadataKey.sessionState: String(describing: state)
+                ]
+            )
+        )
         frame.metadata.frameIndex = frameIndex
         DispatchQueue.main.async { self.delegate?.mediaSource(self, didOutput: frame) }
     }
