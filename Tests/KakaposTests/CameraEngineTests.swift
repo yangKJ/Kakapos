@@ -208,6 +208,14 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertTrue(events.contains("finish"))
         XCTAssertEqual(finishedClip?.outputURL, outputURL)
         XCTAssertEqual(controller.recordedClip?.outputURL, outputURL)
+        XCTAssertNotNil(controller.makeRecordedClipAssetSource())
+        XCTAssertNotNil(controller.makeRecordedClipTimelinePipeline())
+        XCTAssertNotNil(controller.makeRecordedClipExportJob(outputURL: outputURL.deletingLastPathComponent().appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")))
+        XCTAssertNotNil(controller.makeRecordedClipExportTask(outputURL: outputURL.deletingLastPathComponent().appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")))
+#if canImport(UIKit) || os(macOS)
+        XCTAssertNotNil(controller.makeRecordedClipPlayerFrameSource())
+        XCTAssertNotNil(controller.makeRecordedClipPreviewPipeline { _, _ in })
+#endif
     }
 
     #if canImport(UIKit) && !os(watchOS)
@@ -306,6 +314,14 @@ final class CameraEngineTests: XCTestCase {
 
         wait(for: [expectation], timeout: 1)
         XCTAssertEqual(receivedError as? CameraEngineError, .recordingControllerUnavailable)
+        XCTAssertNil(engine.makeRecordedClipAssetSource())
+        XCTAssertNil(engine.makeRecordedClipTimelinePipeline())
+        XCTAssertNil(engine.makeRecordedClipExportJob(outputURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")))
+        XCTAssertNil(engine.makeRecordedClipExportTask(outputURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")))
+#if canImport(UIKit) || os(macOS)
+        XCTAssertNil(engine.makeRecordedClipPlayerFrameSource())
+        XCTAssertNil(engine.makeRecordedClipPreviewPipeline { _, _ in })
+#endif
     }
 
     func testCameraEngineDiagnosticsSnapshotAggregatesCurrentState() throws {
