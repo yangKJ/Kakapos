@@ -173,26 +173,6 @@ public enum CameraDeviceType: Equatable, Sendable, CustomStringConvertible {
         }
     }
 
-    #if canImport(UIKit) && !os(watchOS)
-    var realtimeType: KakaposRealtimeDeviceType {
-        switch self {
-        case .wideAngle:
-            return .wideAngleCamera
-        case .telephoto:
-            return .telephotoCamera
-        case .dual:
-            return .duoCamera
-        case .dualWide:
-            return .dualWideCamera
-        case .ultraWide:
-            return .ultraWideAngleCamera
-        case .triple:
-            return .tripleCamera
-        case .microphone:
-            return .microphone
-        }
-    }
-    #endif
 }
 
 public struct CameraVideoConfiguration: Equatable, Sendable {
@@ -229,18 +209,6 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         aspectRatio.resolvedDimensions(from: sourceDimensions)
     }
 
-    #if canImport(UIKit) && !os(watchOS)
-    func apply(to configuration: KakaposRealtimeVideoConfiguration) {
-        configuration.preset = sessionPreset
-        configuration.aspectRatio = aspectRatio.realtimeValue
-        configuration.dimensions = dimensions
-        configuration.bitRate = bitRate
-        configuration.codec = codec
-        configuration.scalingMode = scalingMode
-        configuration.transform = transform
-        configuration.maximumCaptureDuration = maximumCaptureDuration
-    }
-    #endif
 }
 
 public struct CameraPhotoConfiguration: Equatable, Sendable {
@@ -264,15 +232,6 @@ public struct CameraPhotoConfiguration: Equatable, Sendable {
         self.photoQualityMode = photoQualityMode
     }
 
-    #if canImport(UIKit) && !os(watchOS)
-    func apply(to configuration: KakaposRealtimePhotoConfiguration) {
-        configuration.preset = sessionPreset
-        configuration.flashMode = flashMode
-        configuration.isHighResolutionEnabled = isHighResolutionEnabled
-        configuration.generateThumbnail = generateThumbnail
-        configuration.photoQualityPrioritization = photoQualityMode.realtimeValue
-    }
-    #endif
 }
 
 public struct CameraSourceConfiguration: Equatable, Sendable {
@@ -331,8 +290,8 @@ public struct CameraPhotoCaptureResult {
 }
 
 #if canImport(UIKit) && !os(watchOS)
-private extension CameraPhotoQualityMode {
-    var realtimeValue: AVCapturePhotoOutput.QualityPrioritization {
+extension CameraPhotoQualityMode {
+    var avFoundationValue: AVCapturePhotoOutput.QualityPrioritization {
         switch self {
         case .speed:
             return .speed
@@ -344,35 +303,57 @@ private extension CameraPhotoQualityMode {
     }
 }
 
-private extension CameraAspectRatio {
-    var realtimeValue: KakaposRealtimeConfiguration.AspectRatio {
+extension CameraAspectRatio {
+    var captureRatio: CGSize? {
         switch self {
         case .active:
-            return .active
+            return nil
         case .square:
-            return .square
+            return CGSize(width: 1, height: 1)
         case .standard:
-            return .standard
+            return CGSize(width: 3, height: 4)
         case .standardLandscape:
-            return .standardLandscape
+            return CGSize(width: 4, height: 3)
         case .widescreen:
-            return .widescreen
+            return CGSize(width: 9, height: 16)
         case .widescreenLandscape:
-            return .widescreenLandscape
+            return CGSize(width: 16, height: 9)
         case .twitter:
-            return .twitter
+            return CGSize(width: 16, height: 9)
         case .youtube:
-            return .youtube
+            return CGSize(width: 16, height: 9)
         case .instagram:
-            return .instagram
+            return CGSize(width: 4, height: 5)
         case .instagramLandscape:
-            return .instagramLandscape
+            return CGSize(width: 5, height: 4)
         case .instagramStories:
-            return .instagramStories
+            return CGSize(width: 9, height: 16)
         case .cinematic:
-            return .cinematic
+            return CGSize(width: 100, height: 235)
         case .custom(let width, let height):
-            return .custom(w: width, h: height)
+            guard width > 0, height > 0 else { return nil }
+            return CGSize(width: width, height: height)
+        }
+    }
+}
+
+extension CameraDeviceType {
+    var avFoundationTypes: [AVCaptureDevice.DeviceType] {
+        switch self {
+        case .wideAngle:
+            return [.builtInWideAngleCamera]
+        case .telephoto:
+            return [.builtInTelephotoCamera]
+        case .dual:
+            return [.builtInDualCamera]
+        case .dualWide:
+            return [.builtInDualWideCamera]
+        case .ultraWide:
+            return [.builtInUltraWideCamera]
+        case .triple:
+            return [.builtInTripleCamera]
+        case .microphone:
+            return []
         }
     }
 }

@@ -4634,6 +4634,20 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(source.summary.summaryText.contains("state paused"))
     }
 
+    func testCameraSourceOwnsNativePreviewLayerAndAppliesConfiguredSessionPreset() throws {
+        let configuration = CameraSourceConfiguration(
+            captureMode: .videoWithoutAudio,
+            preferredPosition: .back,
+            previewGravity: .resizeAspect,
+            video: CameraVideoConfiguration(sessionPreset: .medium)
+        )
+        let source = try CameraSource(configuration: configuration)
+
+        XCTAssertTrue(source.previewLayer.session === source.session)
+        XCTAssertEqual(source.previewLayer.videoGravity, .resizeAspect)
+        XCTAssertEqual(source.session.sessionPreset, .medium)
+    }
+
     func testCameraSourcePausesAndResumesFrameEmissionWithSessionMetadata() throws {
         let configuration = CameraSourceConfiguration(captureMode: .videoWithoutAudio)
         let source = try CameraSource(configuration: configuration)
