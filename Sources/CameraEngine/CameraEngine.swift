@@ -16,6 +16,18 @@ public final class CameraEngine {
     public private(set) var previewController: CameraPreviewController?
     public private(set) var recordingController: CameraRecordingController?
 
+    public var previewLayer: AVCaptureVideoPreviewLayer {
+        source.previewLayer
+    }
+
+    public var snapshot: CameraSource.Snapshot {
+        source.snapshot
+    }
+
+    public var summaryText: String {
+        source.summaryText
+    }
+
     public init(configuration: CameraCaptureConfiguration = .init()) throws {
         let source = try CameraSource(configuration: configuration)
         self.source = source
@@ -91,6 +103,46 @@ public final class CameraEngine {
 
     public func capturePhoto() {
         source.capturePhoto()
+    }
+
+    public func capturePhoto(handler: @escaping (CameraPhotoCaptureResult) -> Void) {
+        source.photoCaptureHandler = handler
+        source.capturePhoto()
+    }
+
+    @discardableResult
+    public func setZoomFactor(_ zoomFactor: CGFloat) throws -> CameraDeviceSnapshot {
+        try deviceController.setZoomFactor(zoomFactor)
+    }
+
+    @discardableResult
+    public func rampZoomFactor(to zoomFactor: CGFloat, rate: Float = 8) throws -> CameraDeviceSnapshot {
+        try deviceController.rampZoomFactor(to: zoomFactor, rate: rate)
+    }
+
+    @discardableResult
+    public func setFocusPoint(_ point: CGPoint, mode: CameraFocusMode? = nil) throws -> CameraDeviceSnapshot {
+        try deviceController.setFocusPoint(point, mode: mode)
+    }
+
+    @discardableResult
+    public func setExposurePoint(_ point: CGPoint, mode: CameraExposureMode? = nil) throws -> CameraDeviceSnapshot {
+        try deviceController.setExposurePoint(point, mode: mode)
+    }
+
+    @discardableResult
+    public func setExposureBias(_ bias: Float) throws -> CameraDeviceSnapshot {
+        try deviceController.setExposureBias(bias)
+    }
+
+    @discardableResult
+    public func setTorchActive(_ isActive: Bool, level: Float = 1) throws -> CameraDeviceSnapshot {
+        try deviceController.setTorchActive(isActive, level: level)
+    }
+
+    @discardableResult
+    public func setPreferredFlashMode(_ flashMode: AVCaptureDevice.FlashMode) -> CameraDeviceSnapshot {
+        deviceController.setPreferredFlashMode(flashMode)
     }
 }
 #endif

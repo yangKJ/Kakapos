@@ -4,6 +4,18 @@ import AVFoundation
 
 final class CameraEngineTests: XCTestCase {
 
+    func testCameraPositionAndVideoStabilizationModeAreCodable() throws {
+        let payload = [
+            "position": CameraPosition.front.rawValue,
+            "stabilization": CameraVideoStabilizationMode.auto.rawValue
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [])
+        let decoded = try JSONSerialization.jsonObject(with: data) as? [String: String]
+
+        XCTAssertEqual(CameraPosition(rawValue: decoded?["position"] ?? ""), .front)
+        XCTAssertEqual(CameraVideoStabilizationMode(rawValue: decoded?["stabilization"] ?? ""), .auto)
+    }
+
     func testCameraCaptureConfigurationExposesAudioDeviceAndAdvancedSettings() {
         let configuration = CameraCaptureConfiguration(
             captureMode: .video,
@@ -62,6 +74,10 @@ final class CameraEngineTests: XCTestCase {
         let engine = try CameraEngine(
             configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
         )
+
+        XCTAssertTrue(engine.previewLayer === engine.source.previewLayer)
+        XCTAssertEqual(engine.snapshot.captureMode, .videoWithoutAudio)
+        XCTAssertTrue(engine.summaryText.contains("mode videoWithoutAudio"))
 
         let previewController = engine.makePreviewController(mode: .processed, processors: [])
         XCTAssertEqual(previewController.mode, .processed)
