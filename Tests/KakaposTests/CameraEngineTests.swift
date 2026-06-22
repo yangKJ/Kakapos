@@ -69,6 +69,9 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertTrue(capability.summaryText.contains("metadata supported"))
         XCTAssertTrue(capability.summaryText.contains("position front"))
         XCTAssertTrue(capability.summaryText.contains("size 1920x1080"))
+        XCTAssertEqual(capability.status(for: .metadataObjects), .supported)
+        XCTAssertEqual(capability.status(for: .depth), .unsupported)
+        XCTAssertEqual(capability.gateStatuses[.multicam], .supported)
 
         let device = CameraDeviceSnapshot(
             position: .back,
@@ -102,11 +105,14 @@ final class CameraEngineTests: XCTestCase {
 
         let advancedOutput = CameraAdvancedOutput()
         var receivedKinds: [CameraAdvancedEvent.Kind] = []
+        var observerKinds: [CameraAdvancedEvent.Kind] = []
         advancedOutput.eventHandler = { receivedKinds.append($0.kind) }
+        _ = advancedOutput.addEventObserver { observerKinds.append($0.kind) }
         advancedOutput.emitMetadataObjects(.init(objects: [], timestamp: CMTime(seconds: 3, preferredTimescale: 600)))
         advancedOutput.emitDepthData(.init(timestamp: CMTime(seconds: 5, preferredTimescale: 600)))
 
         XCTAssertEqual(receivedKinds, [.metadataObjects, .depthData])
+        XCTAssertEqual(observerKinds, [.metadataObjects, .depthData])
         XCTAssertEqual(advancedOutput.eventCount, 2)
         XCTAssertEqual(advancedOutput.latestEventKind, .depthData)
         XCTAssertEqual(advancedOutput.latestEventSummaryText, "depthData synchronized no · timestamp 5.00s")
@@ -299,6 +305,23 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertTrue(diagnostics.deviceSummaryText.contains("position"))
         XCTAssertTrue(diagnostics.capabilitySummaryText.contains("position"))
         XCTAssertTrue(diagnostics.advancedEventSummaryText.contains("No advanced camera events yet"))
+        XCTAssertEqual(diagnostics.capabilityGateStatuses[.metadataObjects], .unsupported)
+    }
+
+    func testCameraEngineDiagnosticsDoNotOverrideExternalSourceHandlers() throws {
+        let engine = try CameraEngine(
+            configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
+        )
+        var receivedEvents: [CameraSessionEvent] = []
+
+        engine.source.sessionEventHandler = { event in
+            receivedEvents.append(event)
+        }
+
+        engine.source._handleLifecycleActionForTesting(.didStartRunning)
+
+        XCTAssertEqual(receivedEvents, [.didStart])
+        XCTAssertTrue(engine.diagnosticsSnapshot.recentEvents.contains("didStart"))
     }
 
     func testRecordingPipelineCameraSourceSnapshotCarriesCapabilitySnapshot() throws {

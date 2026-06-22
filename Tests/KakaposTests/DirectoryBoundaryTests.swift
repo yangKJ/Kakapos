@@ -59,6 +59,7 @@ final class DirectoryBoundaryTests: XCTestCase {
             "CameraEngine/Recording/RecorderSink.swift",
             "CameraEngine/Recording/RecordingPipeline.swift",
             "CameraEngine/Recording/CameraRecordingController.swift",
+            "CameraEngine/Diagnostics/CameraEventDispatcher.swift",
             "CameraEngine/Diagnostics/CameraDiagnostics.swift",
             "CameraEngine/Session/CameraAudioSessionController.swift",
             "TimelineEngine/TimelineComposition.swift",

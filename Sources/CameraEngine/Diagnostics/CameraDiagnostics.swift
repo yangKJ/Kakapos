@@ -83,6 +83,22 @@ public struct CameraCapabilitySnapshot: Equatable, Sendable, Codable {
         }
         return text
     }
+
+    public var gateStatuses: [CameraCapabilityGate: CameraFeatureSupport] {
+        [
+            .metadataObjects: supportsMetadataObjects,
+            .depth: supportsDepthData,
+            .portraitMatte: supportsPortraitEffectsMatte,
+            .ar: supportsARFrameSource,
+            .multicam: supportsMultiCam,
+            .torch: supportsTorch,
+            .flash: supportsFlash
+        ]
+    }
+
+    public func status(for gate: CameraCapabilityGate) -> CameraFeatureSupport {
+        gateStatuses[gate] ?? .unknown
+    }
 }
 
 public struct CameraDeviceSnapshot: Equatable, Sendable {
@@ -376,6 +392,8 @@ public final class CameraAdvancedOutput {
     public private(set) var latestEvent: CameraAdvancedEvent?
     public private(set) var eventCount: Int = 0
 
+    private let eventDispatcher = CameraEventDispatcher<CameraAdvancedEvent>()
+
     public var latestEventKind: CameraAdvancedEvent.Kind? {
         latestEvent?.kind
     }
@@ -385,6 +403,15 @@ public final class CameraAdvancedOutput {
     }
 
     public init() {}
+
+    @discardableResult
+    public func addEventObserver(_ handler: @escaping (CameraAdvancedEvent) -> Void) -> UUID {
+        eventDispatcher.addObserver(handler)
+    }
+
+    public func removeEventObserver(_ token: UUID) {
+        eventDispatcher.removeObserver(token)
+    }
 
     public func emitMetadataObjects(_ payload: CameraMetadataObjectPayload) {
         record(.metadataObjects(payload))
@@ -420,6 +447,7 @@ public final class CameraAdvancedOutput {
         latestEvent = event
         eventCount += 1
         eventHandler?(event)
+        eventDispatcher.emit(event)
     }
 }
 
@@ -429,6 +457,7 @@ public struct CameraDiagnosticsSnapshot {
     public let previewSummaryText: String?
     public let recordingSummaryText: String?
     public let capabilitySummaryText: String
+    public let capabilityGateStatuses: [CameraCapabilityGate: CameraFeatureSupport]
     public let advancedEventSummaryText: String
     public let recentEvents: [String]
 
@@ -438,6 +467,7 @@ public struct CameraDiagnosticsSnapshot {
         previewSummaryText: String?,
         recordingSummaryText: String?,
         capabilitySummaryText: String,
+        capabilityGateStatuses: [CameraCapabilityGate: CameraFeatureSupport],
         advancedEventSummaryText: String,
         recentEvents: [String]
     ) {
@@ -446,6 +476,7 @@ public struct CameraDiagnosticsSnapshot {
         self.previewSummaryText = previewSummaryText
         self.recordingSummaryText = recordingSummaryText
         self.capabilitySummaryText = capabilitySummaryText
+        self.capabilityGateStatuses = capabilityGateStatuses
         self.advancedEventSummaryText = advancedEventSummaryText
         self.recentEvents = recentEvents
     }
