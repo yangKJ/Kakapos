@@ -67,6 +67,22 @@ enum KakaposEntryPointFactory {
             handler: handler
         )
     }
+
+    static func preview(
+        recordedClip: RecordedClip,
+        preferredFramesPerSecond: Int = 30,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: @escaping PreviewSink.Handler
+    ) -> PreviewPipeline? {
+        PreviewPipeline(
+            recordedClip: recordedClip,
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+    }
 #endif
 
     static func record(
@@ -119,6 +135,24 @@ enum KakaposEntryPointFactory {
         )
     }
 
+    static func timeline(
+        recordedClip: RecordedClip,
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> TimelinePipeline? {
+        TimelinePipeline(
+            recordedClip: recordedClip,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
     static func timelineExportTask(
         renderSize: CGSize = CGSize(width: 720, height: 1280),
         frameDuration: CMTime = CMTime(value: 1, timescale: 30),
@@ -136,6 +170,35 @@ enum KakaposEntryPointFactory {
             layers: layers,
             transitions: transitions
         ).makeExportTask(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors
+        )
+    }
+
+    static func timelineExportTask(
+        recordedClip: RecordedClip,
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0,
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = []
+    ) -> TimelineExportTask? {
+        timeline(
+            recordedClip: recordedClip,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )?.makeExportTask(
             outputURL: outputURL,
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
