@@ -431,27 +431,50 @@ private struct PlayerPreviewView: View {
 }
 
 private struct CameraRecordView: View {
+    private enum CameraPanel: String, CaseIterable {
+        case preview = "Preview"
+        case record = "Record"
+        case photo = "Photo"
+        case controls = "Controls"
+        case advanced = "Advanced"
+    }
+
+    @State private var selectedPanel: CameraPanel = .preview
     @State private var player: AVPlayer?
     @State private var livePreviewImage: CGImage?
+    @State private var photoImage: CGImage?
     @State private var frameCount = 0
     @State private var recordedDurationText = "0.00s"
     @State private var sessionStateText = "idle"
     @State private var recorderStateText = "idle"
     @State private var previewStateText = "idle"
     @State private var recorderSnapshotText = "segments: 0 · duration: 0.00s"
+    @State private var deviceSnapshotText = "zoom 1.0 · torch off · flash off"
+    @State private var advancedEventText = "Awaiting metadata, depth, or portrait events"
     @State private var lastOutputText = "none"
-    @State private var message = "Camera recording requires device camera permission"
+    @State private var message = "Camera engine requires device camera permission"
     #if canImport(UIKit) && !os(watchOS)
-    @State private var recordingPipeline: RecordingPipeline?
-    @State private var previewSink: PreviewSink?
+    @State private var engine: CameraEngine?
+    @State private var previewController: CameraPreviewController?
+    @State private var recordingController: CameraRecordingController?
     #endif
 
     var body: some View {
         VStack(spacing: 18) {
             BoardHeaderView(board: .record)
+            Picker("Camera Panel", selection: $selectedPanel) {
+                ForEach(CameraPanel.allCases, id: \.self) { panel in
+                    Text(panel.rawValue).tag(panel)
+                }
+            }
+            .pickerStyle(.segmented)
             Group {
                 if let livePreviewImage {
                     Image(decorative: livePreviewImage, scale: 1)
+                        .resizable()
+                        .scaledToFit()
+                } else if let photoImage, selectedPanel == .photo {
+                    Image(decorative: photoImage, scale: 1)
                         .resizable()
                         .scaledToFit()
                 } else {
@@ -468,26 +491,49 @@ private struct CameraRecordView: View {
             Text("Preview State: \(previewStateText)").font(.subheadline).foregroundColor(.secondary)
             Text("Recorder Snapshot: \(recorderSnapshotText)").font(.footnote).foregroundColor(.secondary)
             #if canImport(UIKit) && !os(watchOS)
-            Text(recordingPipeline?.cameraSource?.summaryText ?? "state idle · position unspecified · auth notDetermined · paused no · mode video")
+            Text(engine?.summaryText ?? "state idle · position unspecified · auth notDetermined · paused no · mode video")
                 .font(.footnote)
                 .foregroundColor(.secondary)
-            Text(previewSink?.summaryText ?? "state idle · frame n/a · presentation n/a · sourceTime n/a · reason n/a · image n/a · pending no")
+            Text(previewController?.previewSink?.summaryText ?? "state idle · frame n/a · presentation n/a · sourceTime n/a · reason n/a · image n/a · pending no")
                 .font(.footnote)
                 .foregroundColor(.secondary)
-            Text(recordingPipeline?.recorderSink.summaryText ?? "state idle · clips 0 · total 0.00s · clip 0.00s · recorded no")
+            Text(recordingController?.recorderSink.summaryText ?? "state idle · clips 0 · total 0.00s · clip 0.00s · recorded no")
                 .font(.footnote)
                 .foregroundColor(.secondary)
             HStack {
-                Button("Start Camera") { startCamera() }
-                Button("Pause Record") { pauseRecording() }
-                    .disabled(recordingPipeline == nil)
-                Button("Resume Record") { resumeRecording() }
-                    .disabled(recordingPipeline == nil)
+                Button("Start Preview") { startPreviewCamera() }
+                Button("Start Record") { startRecordingCamera() }
+                Button("Capture Photo") { capturePhoto() }
                 Button("Stop") { stopCamera() }
                 Button("Flip Camera") { flipCamera() }
-                    .disabled(recordingPipeline?.cameraSource == nil)
+                    .disabled(engine == nil)
             }
             .buttonStyle(.borderedProminent)
+            HStack {
+                Button("Pause") { pauseRecording() }
+                    .disabled(recordingController == nil)
+                Button("Resume") { resumeRecording() }
+                    .disabled(recordingController == nil)
+                Button("Zoom 1x") { updateZoom(1) }
+                    .disabled(engine == nil)
+                Button("Zoom 2x") { updateZoom(2) }
+                    .disabled(engine == nil)
+            }
+            .buttonStyle(.bordered)
+            HStack {
+                Button("Torch On") { setTorch(true) }
+                    .disabled(engine == nil)
+                Button("Torch Off") { setTorch(false) }
+                    .disabled(engine == nil)
+                Button("EV -1") { setExposureBias(-1) }
+                    .disabled(engine == nil)
+                Button("EV 0") { setExposureBias(0) }
+                    .disabled(engine == nil)
+                Button("EV +1") { setExposureBias(1) }
+                    .disabled(engine == nil)
+            }
+            .buttonStyle(.bordered)
+            panelBody
             #endif
             Text("Last Output: \(lastOutputText)").font(.subheadline).foregroundColor(.secondary)
             #if !(canImport(UIKit) && !os(watchOS))
@@ -501,7 +547,41 @@ private struct CameraRecordView: View {
         .padding()
     }
 
-    private func startCamera() {
+    @ViewBuilder
+    private var panelBody: some View {
+        switch selectedPanel {
+        case .preview:
+            Text("Processed preview runs through HarbethFrameProcessor and PreviewSink.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        case .record:
+            Text("Recording uses CameraRecordingController over RecorderSink and RecordingSession.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        case .photo:
+            Text(photoImage == nil ? "No photo captured yet" : "Showing latest captured photo")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        case .controls:
+            Text(deviceSnapshotText)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        case .advanced:
+            Text(advancedEventText)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func startPreviewCamera() {
+        startCamera(recordingEnabled: false)
+    }
+
+    private func startRecordingCamera() {
+        startCamera(recordingEnabled: true)
+    }
+
+    private func startCamera(recordingEnabled: Bool) {
         #if canImport(UIKit) && !os(watchOS)
         AVCaptureDevice.requestAccess(for: .video) { allowed in
             DispatchQueue.main.async {
@@ -510,30 +590,44 @@ private struct CameraRecordView: View {
                     return
                 }
                 do {
-                    let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
-                    let recording = try KakaposSurface.record(
-                        configuration: .init(),
-                        outputURL: outputURL,
-                        processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05)])]
+                    stopCamera()
+                    let configuration = CameraCaptureConfiguration(
+                        captureMode: .video,
+                        preferredPosition: .back,
+                        preferredDeviceTypes: [.wideAngle, .trueDepth],
+                        video: .init(
+                            sessionPreset: .high,
+                            preferredFrameRateRange: .init(minimumFramesPerSecond: 24, maximumFramesPerSecond: 60),
+                            preferredStabilizationMode: .auto
+                        ),
+                        photo: .init(
+                            deliversDepthData: true,
+                            deliversPortraitEffectsMatte: true
+                        ),
+                        advanced: .init(
+                            metadataObjectTypes: [.face, .qr],
+                            enablesDepthData: true,
+                            enablesPortraitEffectsMatte: true
+                        )
                     )
-                    guard let source = recording.cameraSource else {
-                        message = "CameraSource unavailable"
-                        return
-                    }
-                    let recorder = recording.recorderSink
-                    let preview = PreviewSink(callbackQueue: .main) { image, metadata in
+                    let engine = try KakaposSurface.camera(configuration: configuration)
+                    let previewController = engine.makePreviewController(
+                        mode: .processed,
+                        processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05), C7Exposure(exposure: 0.05)])],
+                        callbackQueue: .main
+                    ) { image, metadata in
                         frameCount += 1
                         livePreviewImage = image
                         lastOutputText = "video @ \(String(format: "%.2fs", metadata.presentationTime.seconds))"
                         previewStateText = "active"
                     }
-                    source.sessionEventHandler = { event in
-                        sessionStateText = String(describing: source.state)
+                    engine.source.sessionEventHandler = { event in
+                        sessionStateText = String(describing: engine.source.state)
                         switch event {
                         case .willStart:
                             message = "Starting camera session"
                         case .didStart:
-                            message = "Recording camera frames"
+                            message = recordingEnabled ? "Recording camera frames" : "Previewing camera frames"
                         case .didPause:
                             message = "Camera session paused"
                         case .didResume:
@@ -541,12 +635,12 @@ private struct CameraRecordView: View {
                         case .didStop:
                             message = "Camera session stopped"
                         case .wasInterrupted:
-                            source.pause()
-                            recorder.pauseRecording()
+                            engine.source.pause()
+                            recordingController?.pause()
                             message = "Camera session interrupted"
                         case .interruptionEnded:
-                            source.resume()
-                            recorder.resumeRecording()
+                            engine.source.resume()
+                            recordingController?.resume()
                             message = "Camera interruption ended"
                         case .runtimeError(let isRecoverable, let description):
                             if isRecoverable {
@@ -562,51 +656,79 @@ private struct CameraRecordView: View {
                             message = "Camera authorization: \(status.description)"
                         }
                     }
-                    recorder.durationChangedHandler = { duration in
+                    engine.source.photoCaptureHandler = { result in
                         DispatchQueue.main.async {
-                            recordedDurationText = String(format: "%.2fs", duration.seconds)
-                            recorderSnapshotText = snapshotText(for: recorder.snapshot)
+                            if let data = result.data, let image = UIImage(data: data)?.cgImage {
+                                photoImage = image
+                            }
+                            lastOutputText = result.isFromCurrentFrame ? "photo fallback frame" : "photo output"
+                            advancedEventText = "photo · depth \(result.depthDataDelivered ? "yes" : "no") · portrait \(result.portraitEffectsMatteDelivered ? "yes" : "no")"
+                            message = "Captured photo"
                         }
                     }
-                    recorder.stateChangedHandler = { state in
-                        recorderStateText = String(describing: state)
-                        recorderSnapshotText = snapshotText(for: recorder.snapshot)
-                    }
-                    preview.stateChangedHandler = { state in
-                        previewStateText = String(describing: state)
-                    }
-                    recording.pipeline.sinks = [preview, recorder]
-                    recording.pipeline.errorHandler = { error in
-                        message = "Pipeline error: \(error.localizedDescription)"
-                    }
-                    recording.pipeline.completionHandler = {
-                        let clip = recorder.recordedClip ?? RecordedClip(outputURL: outputURL, duration: .zero, startedAt: nil, endedAt: nil)
-                        guard let clipURL = clip.outputURL else {
-                            message = "Recording finished without output URL"
-                            return
+                    engine.advancedOutput.metadataObjectsHandler = { payload in
+                        DispatchQueue.main.async {
+                            let ts = payload.timestamp?.seconds ?? 0
+                            advancedEventText = "metadata \(payload.objects.count) @ \(String(format: "%.2fs", ts))"
                         }
-                        player = AVPlayer(url: clipURL)
-                        player?.play()
-                        livePreviewImage = nil
-                        recordedDurationText = String(format: "%.2fs", clip.duration.seconds)
-                        recorderStateText = String(describing: recorder.state)
-                        recorderSnapshotText = snapshotText(for: recorder.snapshot)
-                        lastOutputText = clipURL.lastPathComponent
-                        message = "Recorded: \(clipURL.lastPathComponent)"
                     }
-                    self.recordingPipeline = recording
-                    self.previewSink = preview
+                    engine.advancedOutput.depthDataHandler = { payload in
+                        DispatchQueue.main.async {
+                            advancedEventText = "depth @ \(String(format: "%.2fs", payload.timestamp.seconds))"
+                        }
+                    }
+                    engine.advancedOutput.portraitEffectsMatteHandler = { payload in
+                        DispatchQueue.main.async {
+                            advancedEventText = "portrait matte \(payload.deliveredInPhoto ? "photo" : "stream")"
+                        }
+                    }
+                    self.engine = engine
+                    self.previewController = previewController
+                    self.recordingController = nil
                     self.player = nil
+                    self.photoImage = nil
                     self.livePreviewImage = nil
                     frameCount = 0
                     recordedDurationText = "0.00s"
-                    sessionStateText = String(describing: source.state)
-                    recorderStateText = String(describing: recorder.state)
-                    previewStateText = String(describing: preview.state)
-                    recorderSnapshotText = snapshotText(for: recorder.snapshot)
+                    sessionStateText = String(describing: engine.source.state)
+                    recorderStateText = "idle"
+                    previewStateText = String(describing: previewController.previewSink?.state ?? .idle)
+                    recorderSnapshotText = "segments: 0 · duration: 0.00s"
+                    deviceSnapshotText = snapshotText(for: engine.deviceController.snapshot)
+                    advancedEventText = "Awaiting metadata, depth, or portrait events"
                     lastOutputText = "awaiting frames"
-                    recording.pipeline.start()
-                    message = "Starting camera session"
+                    engine.start()
+                    message = recordingEnabled ? "Starting camera recording" : "Starting camera preview"
+                    if recordingEnabled {
+                        let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
+                        let recordingController = try engine.makeRecordingController(
+                            outputURL: outputURL,
+                            processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05), C7Exposure(exposure: 0.05)])]
+                        )
+                        recordingController.eventHandler = { event in
+                            DispatchQueue.main.async {
+                                switch event {
+                                case .didStart:
+                                    recorderStateText = "recording"
+                                case .didPause:
+                                    recorderStateText = "paused"
+                                case .didResume:
+                                    recorderStateText = "recording"
+                                case .didFinish:
+                                    recorderStateText = "finished"
+                                case .didCancel:
+                                    recorderStateText = "cancelled"
+                                case .clipCountChanged:
+                                    break
+                                case .durationChanged(let duration):
+                                    recordedDurationText = String(format: "%.2fs", duration.seconds)
+                                }
+                                recorderSnapshotText = snapshotText(for: recordingController.recorderSink.snapshot)
+                            }
+                        }
+                        self.recordingController = recordingController
+                        recordingController.start()
+                    }
                 } catch {
                     message = error.localizedDescription
                 }
@@ -619,14 +741,37 @@ private struct CameraRecordView: View {
 
     private func stopCamera() {
         #if canImport(UIKit) && !os(watchOS)
-        recordingPipeline?.stop()
+        if let recordingController {
+            let recorder = recordingController.recorderSink
+            recordingController.finishRecording { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let clip):
+                        if let clipURL = clip.outputURL {
+                            player = AVPlayer(url: clipURL)
+                            player?.play()
+                            lastOutputText = clipURL.lastPathComponent
+                            message = "Recorded: \(clipURL.lastPathComponent)"
+                        } else {
+                            message = "Recording finished"
+                        }
+                        recordedDurationText = String(format: "%.2fs", clip.duration.seconds)
+                        recorderSnapshotText = snapshotText(for: recorder.snapshot)
+                    case .failure(let error):
+                        message = error.localizedDescription
+                    }
+                }
+            }
+        }
+        engine?.stop()
         livePreviewImage = nil
+        previewController = nil
+        recordingController = nil
+        engine = nil
         sessionStateText = "stopped"
         recorderStateText = "finished"
         previewStateText = "finished"
         recorderSnapshotText = "segments: 0 · duration: 0.00s"
-        recordingPipeline = nil
-        previewSink = nil
         #else
         message = "CameraSource is unavailable here"
         #endif
@@ -634,10 +779,11 @@ private struct CameraRecordView: View {
 
     private func pauseRecording() {
         #if canImport(UIKit) && !os(watchOS)
-        recordingPipeline?.pause()
+        recordingController?.pause()
+        engine?.pause()
         recorderStateText = "paused"
         previewStateText = "paused"
-        if let recorder = recordingPipeline?.recorderSink {
+        if let recorder = recordingController?.recorderSink {
             recorderSnapshotText = snapshotText(for: recorder.snapshot)
         }
         message = "Recording paused"
@@ -646,10 +792,11 @@ private struct CameraRecordView: View {
 
     private func resumeRecording() {
         #if canImport(UIKit) && !os(watchOS)
-        recordingPipeline?.resume()
+        engine?.resume()
+        recordingController?.resume()
         recorderStateText = "recording"
         previewStateText = "active"
-        if let recorder = recordingPipeline?.recorderSink {
+        if let recorder = recordingController?.recorderSink {
             recorderSnapshotText = snapshotText(for: recorder.snapshot)
         }
         message = "Recording resumed"
@@ -658,12 +805,59 @@ private struct CameraRecordView: View {
 
     private func flipCamera() {
         #if canImport(UIKit) && !os(watchOS)
-        guard let cameraSource = recordingPipeline?.cameraSource else { return }
-        let didSwitch = cameraSource.switchCameraPosition()
+        guard let engine else { return }
+        let didSwitch = engine.switchCameraPosition()
         if !didSwitch {
             message = "Failed to switch camera"
         } else {
-            lastOutputText = "camera: \(String(describing: cameraSource.currentPosition))"
+            deviceSnapshotText = snapshotText(for: engine.deviceController.snapshot)
+            lastOutputText = "camera: \(String(describing: engine.source.currentPosition))"
+        }
+        #endif
+    }
+
+    private func capturePhoto() {
+        #if canImport(UIKit) && !os(watchOS)
+        guard let engine else {
+            message = "Start preview before capturing a photo"
+            return
+        }
+        engine.capturePhoto()
+        #endif
+    }
+
+    private func updateZoom(_ zoomFactor: CGFloat) {
+        #if canImport(UIKit) && !os(watchOS)
+        do {
+            if let snapshot = try engine?.setZoomFactor(zoomFactor) {
+                deviceSnapshotText = snapshotText(for: snapshot)
+            }
+        } catch {
+            message = error.localizedDescription
+        }
+        #endif
+    }
+
+    private func setExposureBias(_ bias: Float) {
+        #if canImport(UIKit) && !os(watchOS)
+        do {
+            if let snapshot = try engine?.setExposureBias(bias) {
+                deviceSnapshotText = snapshotText(for: snapshot)
+            }
+        } catch {
+            message = error.localizedDescription
+        }
+        #endif
+    }
+
+    private func setTorch(_ enabled: Bool) {
+        #if canImport(UIKit) && !os(watchOS)
+        do {
+            if let snapshot = try engine?.setTorchActive(enabled) {
+                deviceSnapshotText = snapshotText(for: snapshot)
+            }
+        } catch {
+            message = error.localizedDescription
         }
         #endif
     }
@@ -671,6 +865,12 @@ private struct CameraRecordView: View {
     private func snapshotText(for snapshot: RecorderSink.Snapshot) -> String {
         let duration = String(format: "%.2fs", snapshot.totalDuration.seconds)
         return "segments: \(snapshot.clipCount) · video: \(snapshot.recordedVideoSegmentCount) · audio: \(snapshot.recordedAudioSegmentCount) · duration: \(duration)"
+    }
+
+    private func snapshotText(for snapshot: CameraDeviceSnapshot) -> String {
+        let zoom = String(format: "%.1f", snapshot.zoomFactor)
+        let bias = String(format: "%.1f", snapshot.exposureBias ?? 0)
+        return "zoom \(zoom)x · ev \(bias) · torch \(snapshot.torchActive ? "on" : "off") · flash \(snapshot.flashAvailable ? "ready" : "off")"
     }
 }
 
