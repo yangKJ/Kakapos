@@ -17,8 +17,11 @@ public enum CameraSourceError: Error, LocalizedError, Equatable {
     case captureDeviceUnavailable(position: CameraPosition, preferredDeviceTypes: [CameraDeviceType])
     case cannotAddInput(AVMediaType)
     case cannotAddOutput(AVMediaType)
+    case cannotAddMetadataOutput
+    case cannotAddDepthOutput
     case photoFrameUnavailable
     case cannotCapturePhoto
+    case unsupportedFeature(String)
 
     public var errorDescription: String? {
         switch self {
@@ -31,10 +34,16 @@ public enum CameraSourceError: Error, LocalizedError, Equatable {
             return "Cannot add \(mediaType.rawValue) capture input"
         case .cannotAddOutput(let mediaType):
             return "Cannot add \(mediaType.rawValue) capture output"
+        case .cannotAddMetadataOutput:
+            return "Cannot add metadata output"
+        case .cannotAddDepthOutput:
+            return "Cannot add depth output"
         case .photoFrameUnavailable:
             return "No current frame is available for photo capture"
         case .cannotCapturePhoto:
             return "Photo output is unavailable for capture"
+        case .unsupportedFeature(let description):
+            return "Unsupported camera feature: \(description)"
         }
     }
 }
@@ -51,6 +60,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
         public let lastMediaType: String?
+        public let capabilitySnapshot: CameraCapabilitySnapshot
     }
 
     public struct Summary {
@@ -64,6 +74,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
         public let lastMediaType: String?
+        public let capabilitySnapshot: CameraCapabilitySnapshot
 
         public var summaryText: String {
             var text = "state \(state) · position \(position) · auth \(authorizationStatus) · paused \(isPaused ? "yes" : "no") · mode \(captureMode) · orientation \(deviceOrientation) · mirrored \(isMirrored ? "yes" : "no")"
@@ -76,6 +87,10 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             if let lastMediaType {
                 text += " · mediaType \(lastMediaType)"
             }
+            text += " · metadata \(capabilitySnapshot.supportsMetadataObjects.rawValue)"
+            text += " · depth \(capabilitySnapshot.supportsDepthData.rawValue)"
+            text += " · portrait \(capabilitySnapshot.supportsPortraitEffectsMatte.rawValue)"
+            text += " · multicam \(capabilitySnapshot.supportsMultiCam.rawValue)"
             return text
         }
     }
@@ -86,11 +101,16 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         public static let sessionState = "kakapos.camera.session-state"
         public static let deviceOrientation = "kakapos.camera.device-orientation"
         public static let mirrored = "kakapos.camera.mirrored"
+        public static let captureKind = "kakapos.camera.capture-kind"
+        public static let depthDelivered = "kakapos.camera.depth-delivered"
+        public static let portraitEffectsMatteDelivered = "kakapos.camera.portrait-matte-delivered"
     }
 
     public weak var delegate: MediaSourceDelegate?
     public let session: AVCaptureSession
     public let previewLayer: AVCaptureVideoPreviewLayer
+    public let advancedOutput = CameraAdvancedOutput()
+    public private(set) var deviceController: CameraDeviceController!
     public private(set) var isPaused: Bool = false
     public private(set) var state: CameraSessionState = .idle
     public private(set) var currentPosition: CameraPosition
@@ -112,7 +132,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             isMirrored: configuration.effectiveMirroringValue(for: currentPosition),
             lastFrameIndex: frameIndex > 0 ? frameIndex : nil,
             lastPresentationTime: lastPresentationTime,
-            lastMediaType: lastMediaType
+            lastMediaType: lastMediaType,
+            capabilitySnapshot: capabilitySnapshot
         )
     }
 
@@ -128,7 +149,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             isMirrored: currentSnapshot.isMirrored,
             lastFrameIndex: currentSnapshot.lastFrameIndex,
             lastPresentationTime: currentSnapshot.lastPresentationTime,
-            lastMediaType: currentSnapshot.lastMediaType
+            lastMediaType: currentSnapshot.lastMediaType,
+            capabilitySnapshot: currentSnapshot.capabilitySnapshot
         )
     }
 
@@ -151,8 +173,54 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
                 "mode": String(describing: currentSnapshot.captureMode),
                 "orientation": String(describing: currentSnapshot.deviceOrientation),
                 "mirrored": currentSnapshot.isMirrored ? "yes" : "no",
-                "mediaType": currentSnapshot.lastMediaType ?? "n/a"
+                "mediaType": currentSnapshot.lastMediaType ?? "n/a",
+                "metadataSupport": currentSnapshot.capabilitySnapshot.supportsMetadataObjects.rawValue,
+                "depthSupport": currentSnapshot.capabilitySnapshot.supportsDepthData.rawValue,
+                "portraitSupport": currentSnapshot.capabilitySnapshot.supportsPortraitEffectsMatte.rawValue
             ]
+        )
+    }
+
+    public var capabilitySnapshot: CameraCapabilitySnapshot {
+        let device = videoInput?.device
+        let depthSupport: CameraFeatureSupport
+        if configuration.advanced.enablesDepthData {
+            depthSupport = supportsDepthData(device: device) ? .supported : .unsupported
+        } else {
+            depthSupport = device == nil ? .unknown : .unsupported
+        }
+        let portraitSupport: CameraFeatureSupport
+        if configuration.photo.deliversPortraitEffectsMatte || configuration.advanced.enablesPortraitEffectsMatte {
+            portraitSupport = supportsPortraitEffectsMatte ? .supported : .unsupported
+        } else {
+            portraitSupport = device == nil ? .unknown : .unsupported
+        }
+        let metadataSupport: CameraFeatureSupport
+        if configuration.advanced.metadataObjectTypes.isEmpty {
+            metadataSupport = device == nil ? .unknown : .unsupported
+        } else {
+            metadataSupport = .supported
+        }
+        let dimensions: CGSize?
+        if let formatDescription = device?.activeFormat.formatDescription {
+            let dims = CMVideoFormatDescriptionGetDimensions(formatDescription)
+            dimensions = CGSize(width: Int(dims.width), height: Int(dims.height))
+        } else {
+            dimensions = nil
+        }
+        return CameraCapabilitySnapshot(
+            supportsAudioCapture: configuration.captureMode.includesAudio,
+            supportsPhotoCapture: true,
+            supportsMetadataObjects: metadataSupport,
+            supportsDepthData: depthSupport,
+            supportsPortraitEffectsMatte: portraitSupport,
+            supportsARFrameSource: configuration.advanced.enablesARFrameSource ? .supported : .unsupported,
+            supportsMultiCam: AVCaptureMultiCamSession.isMultiCamSupported ? .supported : .unsupported,
+            supportsTorch: device?.hasTorch == true ? .supported : (device == nil ? .unknown : .unsupported),
+            supportsFlash: device?.hasFlash == true ? .supported : (device == nil ? .unknown : .unsupported),
+            currentPosition: currentPosition,
+            isMirrored: configuration.effectiveMirroringValue(for: currentPosition),
+            activeVideoDimensions: dimensions
         )
     }
 
@@ -168,10 +236,14 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     private var currentOrientation: AVCaptureVideoOrientation = .portrait
     private let lifecycleLock = NSLock()
     private var acceptsFrames = true
+    private let ownsSession: Bool
 
     private let videoOutput = AVCaptureVideoDataOutput()
     private let audioOutput = AVCaptureAudioDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
+    private var metadataOutput: AVCaptureMetadataOutput?
+    private var depthDataOutput: AVCaptureDepthDataOutput?
+    private var outputSynchronizer: AVCaptureDataOutputSynchronizer?
     private let ciContext = CIContext(options: nil)
     private var notificationObservers: [NSObjectProtocol] = []
     private var videoInput: AVCaptureDeviceInput?
@@ -181,8 +253,9 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     private var lastVideoSampleBuffer: CMSampleBuffer?
 
     public init(configuration: CameraSourceConfiguration = CameraSourceConfiguration()) throws {
-        self.session = AVCaptureSession()
-        self.previewLayer = AVCaptureVideoPreviewLayer(session: self.session)
+        let session = AVCaptureSession()
+        self.session = session
+        self.previewLayer = AVCaptureVideoPreviewLayer(session: session)
         self.configuration = configuration
         self.currentPosition = configuration.preferredPosition
         self.authorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
@@ -190,7 +263,28 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             position: configuration.preferredPosition,
             authorizationStatus: Self.authorizationStatus(for: configuration.captureMode)
         )
+        self.ownsSession = true
         super.init()
+        configureDeviceController()
+        configurePreviewLayer()
+        applySessionPreset()
+        updateCurrentOrientation()
+        startObservingNotifications()
+    }
+
+    public init(session: AVCaptureSession, configuration: CameraSourceConfiguration) throws {
+        self.session = session
+        self.previewLayer = AVCaptureVideoPreviewLayer(session: session)
+        self.configuration = configuration
+        self.currentPosition = configuration.preferredPosition
+        self.authorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
+        self.lifecycle = CameraSessionLifecycle(
+            position: configuration.preferredPosition,
+            authorizationStatus: Self.authorizationStatus(for: configuration.captureMode)
+        )
+        self.ownsSession = false
+        super.init()
+        configureDeviceController()
         configurePreviewLayer()
         applySessionPreset()
         updateCurrentOrientation()
@@ -334,6 +428,15 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
                let previewPixelType = settings.availablePreviewPhotoPixelFormatTypes.first {
                 settings.previewPhotoFormat = [kCVPixelBufferPixelFormatTypeKey as String: previewPixelType]
             }
+            if #available(iOS 11.0, *) {
+                if self.photoOutput.isDepthDataDeliverySupported {
+                    settings.isDepthDataDeliveryEnabled = self.configuration.photo.deliversDepthData || self.configuration.advanced.enablesDepthData
+                    settings.embedsDepthDataInPhoto = settings.isDepthDataDeliveryEnabled
+                }
+                if self.photoOutput.isPortraitEffectsMatteDeliverySupported {
+                    settings.isPortraitEffectsMatteDeliveryEnabled = self.configuration.photo.deliversPortraitEffectsMatte || self.configuration.advanced.enablesPortraitEffectsMatte
+                }
+            }
             self.photoOutput.capturePhoto(with: settings, delegate: self)
         }
     }
@@ -417,6 +520,13 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         outputNode.removeAllConsumers()
     }
 
+    private func configureDeviceController() {
+        deviceController = CameraDeviceController(
+            deviceProvider: { [weak self] in self?.videoInput?.device },
+            positionProvider: { [weak self] in self?.currentPosition ?? .unspecified }
+        )
+    }
+
     private func refreshRuntimeStateForStart() {
         frameIndex = 0
         lastPresentationTime = nil
@@ -450,26 +560,24 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     private func ensureSessionConfigured() throws {
         guard !isSessionConfigured else { return }
         session.beginConfiguration()
-        defer {
-            session.commitConfiguration()
-        }
+        defer { session.commitConfiguration() }
         applySessionPreset()
         try configureVideoInput(position: configuration.preferredPosition)
         try configureAudioInputIfNeeded()
         try configureVideoOutput()
         try configureAudioOutputIfNeeded()
         try configurePhotoOutput()
+        try configureMetadataOutputIfNeeded()
+        try configureDepthOutputIfNeeded()
         applyCurrentConnections()
+        applyInitialDeviceConfigurationIfNeeded()
         isSessionConfigured = true
     }
 
     private func configureVideoInput(position: CameraPosition) throws {
         let resolvedPosition = position == .unspecified ? .back : position
         guard let device = findVideoDevice(position: resolvedPosition) else {
-            throw CameraSourceError.captureDeviceUnavailable(
-                position: resolvedPosition,
-                preferredDeviceTypes: configuration.preferredDeviceTypes
-            )
+            throw CameraSourceError.captureDeviceUnavailable(position: resolvedPosition, preferredDeviceTypes: configuration.preferredDeviceTypes)
         }
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else {
@@ -492,7 +600,9 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         }
         do {
             try configureVideoInput(position: position)
+            try configureDepthOutputIfNeeded()
             applyCurrentConnections()
+            applyInitialDeviceConfigurationIfNeeded()
         } catch {
             if let previousInput, session.canAddInput(previousInput) {
                 session.addInput(previousInput)
@@ -519,9 +629,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
 
     private func configureVideoOutput() throws {
         videoOutput.alwaysDiscardsLateVideoFrames = false
-        videoOutput.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
-        ]
+        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
         videoOutput.setSampleBufferDelegate(self, queue: videoOutputQueue)
         guard session.canAddOutput(videoOutput) else {
             throw CameraSourceError.cannotAddOutput(.video)
@@ -544,18 +652,106 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         }
         session.addOutput(photoOutput)
         photoOutput.isHighResolutionCaptureEnabled = configuration.photo.isHighResolutionEnabled
+        if #available(iOS 11.0, *) {
+            if photoOutput.isDepthDataDeliverySupported {
+                photoOutput.isDepthDataDeliveryEnabled = configuration.photo.deliversDepthData || configuration.advanced.enablesDepthData
+            }
+            if photoOutput.isPortraitEffectsMatteDeliverySupported {
+                photoOutput.isPortraitEffectsMatteDeliveryEnabled = configuration.photo.deliversPortraitEffectsMatte || configuration.advanced.enablesPortraitEffectsMatte
+            }
+        }
+    }
+
+    private func configureMetadataOutputIfNeeded() throws {
+        guard configuration.advanced.metadataObjectTypes.isEmpty == false else { return }
+        let output = AVCaptureMetadataOutput()
+        guard session.canAddOutput(output) else {
+            throw CameraSourceError.cannotAddMetadataOutput
+        }
+        session.addOutput(output)
+        let supported = configuration.advanced.metadataObjectTypes.filter(output.availableMetadataObjectTypes.contains)
+        output.metadataObjectTypes = supported
+        output.setMetadataObjectsDelegate(self, queue: sessionQueue)
+        metadataOutput = output
+    }
+
+    private func configureDepthOutputIfNeeded() throws {
+        guard configuration.advanced.enablesDepthData else { return }
+        guard #available(iOS 11.0, *) else {
+            throw CameraSourceError.unsupportedFeature("depth data")
+        }
+        if let existing = depthDataOutput {
+            session.removeOutput(existing)
+            depthDataOutput = nil
+        }
+        let output = AVCaptureDepthDataOutput()
+        output.setDelegate(self, callbackQueue: videoOutputQueue)
+        guard session.canAddOutput(output) else {
+            throw CameraSourceError.cannotAddDepthOutput
+        }
+        session.addOutput(output)
+        depthDataOutput = output
+        if let connection = output.connections.first, connection.isVideoOrientationSupported {
+            connection.videoOrientation = currentOrientation
+        }
+        if configuration.advanced.requiresSynchronizedDepthData {
+            let synchronizer = AVCaptureDataOutputSynchronizer(dataOutputs: [videoOutput, output])
+            synchronizer.setDelegate(self, queue: videoOutputQueue)
+            outputSynchronizer = synchronizer
+        } else {
+            outputSynchronizer = nil
+        }
+    }
+
+    private func supportsDepthData(device: AVCaptureDevice?) -> Bool {
+        guard let device else { return false }
+        if #available(iOS 11.0, *) {
+            return device.activeDepthDataFormat != nil || device.deviceType == .builtInTrueDepthCamera
+        }
+        return false
+    }
+
+    private var supportsPortraitEffectsMatte: Bool {
+        if #available(iOS 12.0, *) {
+            return photoOutput.isPortraitEffectsMatteDeliverySupported
+        }
+        return false
+    }
+
+    private func applyInitialDeviceConfigurationIfNeeded() {
+        guard let device = videoInput?.device else { return }
+        do {
+            try device.lockForConfiguration()
+        } catch {
+            return
+        }
+        defer { device.unlockForConfiguration() }
+        if device.isFocusModeSupported(configuration.device.focusMode.avFoundationMode) {
+            device.focusMode = configuration.device.focusMode.avFoundationMode
+        }
+        if device.isExposureModeSupported(configuration.device.exposureMode.avFoundationMode) {
+            device.exposureMode = configuration.device.exposureMode.avFoundationMode
+        }
+        if device.isWhiteBalanceModeSupported(configuration.device.whiteBalanceMode.avFoundationMode) {
+            device.whiteBalanceMode = configuration.device.whiteBalanceMode.avFoundationMode
+        }
+        let zoomFactor = min(max(configuration.device.initialZoomFactor, 1), device.activeFormat.videoMaxZoomFactor)
+        device.videoZoomFactor = zoomFactor
+        if let range = configuration.video.preferredFrameRateRange {
+            let minDuration = range.maximumFramesPerSecond > 0 ? CMTime(seconds: 1 / range.maximumFramesPerSecond, preferredTimescale: 600) : .invalid
+            let maxDuration = range.minimumFramesPerSecond > 0 ? CMTime(seconds: 1 / range.minimumFramesPerSecond, preferredTimescale: 600) : .invalid
+            if minDuration.isValid, maxDuration.isValid {
+                device.activeVideoMinFrameDuration = minDuration
+                device.activeVideoMaxFrameDuration = maxDuration
+            }
+        }
     }
 
     private func findVideoDevice(position: CameraPosition) -> AVCaptureDevice? {
         let requestedPosition = avDevicePosition(from: position)
-        let preferredTypes = configuration.preferredDeviceTypes
-            .flatMap(\.avFoundationTypes)
+        let preferredTypes = configuration.preferredDeviceTypes.flatMap(\.avFoundationTypes)
         let deviceTypes = preferredTypes.isEmpty ? [AVCaptureDevice.DeviceType.builtInWideAngleCamera] : preferredTypes
-        let discoverySession = AVCaptureDevice.DiscoverySession(
-            deviceTypes: deviceTypes,
-            mediaType: .video,
-            position: requestedPosition
-        )
+        let discoverySession = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: requestedPosition)
         if let device = discoverySession.devices.first {
             return device
         }
@@ -566,10 +762,11 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     }
 
     private func resolvedFlashMode() -> AVCaptureDevice.FlashMode {
-        guard photoOutput.supportedFlashModes.contains(configuration.photo.flashMode) else {
+        let preferred = deviceController.preferredFlashMode
+        guard photoOutput.supportedFlashModes.contains(preferred) else {
             return .off
         }
-        return configuration.photo.flashMode
+        return preferred
     }
 
     private func emit(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
@@ -596,7 +793,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
                     MetadataKey.cameraPosition: String(describing: currentPosition),
                     MetadataKey.sessionState: String(describing: state),
                     MetadataKey.deviceOrientation: String(describing: currentOrientation),
-                    MetadataKey.mirrored: configuration.effectiveMirroringValue(for: currentPosition)
+                    MetadataKey.mirrored: configuration.effectiveMirroringValue(for: currentPosition),
+                    MetadataKey.captureKind: mediaType == .video ? "video" : "audio"
                 ]
             )
         )
@@ -716,8 +914,11 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
                 videoConnection.videoOrientation = currentOrientation
             }
             if videoConnection.isVideoStabilizationSupported {
-                videoConnection.preferredVideoStabilizationMode = .auto
+                videoConnection.preferredVideoStabilizationMode = configuration.video.preferredStabilizationMode.avFoundationMode
             }
+        }
+        if let depthConnection = depthDataOutput?.connection(with: .depthData), depthConnection.isVideoOrientationSupported {
+            depthConnection.videoOrientation = currentOrientation
         }
         applyMirroring(for: currentPosition)
     }
@@ -745,20 +946,12 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         UIDevice.current.beginGeneratingDeviceOrientationNotifications()
         let center = NotificationCenter.default
         notificationObservers.append(
-            center.addObserver(
-                forName: .AVCaptureSessionDidStartRunning,
-                object: session,
-                queue: nil
-            ) { [weak self] _ in
+            center.addObserver(forName: .AVCaptureSessionDidStartRunning, object: session, queue: nil) { [weak self] _ in
                 self?.publish(.didStartRunning)
             }
         )
         notificationObservers.append(
-            center.addObserver(
-                forName: .AVCaptureSessionDidStopRunning,
-                object: session,
-                queue: nil
-            ) { [weak self] _ in
+            center.addObserver(forName: .AVCaptureSessionDidStopRunning, object: session, queue: nil) { [weak self] _ in
                 guard let self else { return }
                 self.publish(.didStopRunning)
                 DispatchQueue.main.async {
@@ -767,38 +960,22 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             }
         )
         notificationObservers.append(
-            center.addObserver(
-                forName: .AVCaptureSessionRuntimeError,
-                object: session,
-                queue: nil
-            ) { [weak self] notification in
+            center.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: nil) { [weak self] notification in
                 self?.handleRuntimeError(notification)
             }
         )
         notificationObservers.append(
-            center.addObserver(
-                forName: .AVCaptureSessionWasInterrupted,
-                object: session,
-                queue: nil
-            ) { [weak self] _ in
+            center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil) { [weak self] _ in
                 self?.publish(.wasInterrupted)
             }
         )
         notificationObservers.append(
-            center.addObserver(
-                forName: .AVCaptureSessionInterruptionEnded,
-                object: session,
-                queue: nil
-            ) { [weak self] _ in
+            center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: session, queue: nil) { [weak self] _ in
                 self?.publish(.interruptionEnded)
             }
         )
         notificationObservers.append(
-            center.addObserver(
-                forName: UIDevice.orientationDidChangeNotification,
-                object: nil,
-                queue: nil
-            ) { [weak self] _ in
+            center.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
                 self?.updateCurrentOrientation()
             }
         )
@@ -863,6 +1040,9 @@ extension CameraSource: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureA
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        if outputSynchronizer != nil, output === videoOutput {
+            return
+        }
         if output === videoOutput {
             emit(sampleBuffer: sampleBuffer, mediaType: .video)
         } else if output === audioOutput {
@@ -883,13 +1063,72 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
             }
             return
         }
+        let deliveredDepthData: Bool
+        let deliveredPortraitEffectsMatte: Bool
+        if #available(iOS 11.0, *) {
+            deliveredDepthData = photo.depthData != nil
+        } else {
+            deliveredDepthData = false
+        }
+        if #available(iOS 12.0, *) {
+            deliveredPortraitEffectsMatte = photo.portraitEffectsMatte != nil
+        } else {
+            deliveredPortraitEffectsMatte = false
+        }
+        if deliveredDepthData, let lastPresentationTime {
+            advancedOutput.emitDepthData(.init(timestamp: lastPresentationTime))
+        }
+        if deliveredPortraitEffectsMatte {
+            advancedOutput.emitPortraitEffectsMatte(.init(deliveredInPhoto: true))
+        }
         let result = CameraPhotoCaptureResult(
             data: photo.fileDataRepresentation(),
             metadata: photo.metadata,
-            isFromCurrentFrame: false
+            isFromCurrentFrame: false,
+            depthDataDelivered: deliveredDepthData,
+            portraitEffectsMatteDelivered: deliveredPortraitEffectsMatte
         )
         DispatchQueue.main.async {
             self.photoCaptureHandler?(result)
+        }
+    }
+}
+
+extension CameraSource: AVCaptureMetadataOutputObjectsDelegate {
+    public func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        let transformed = metadataObjects.compactMap { previewLayer.transformedMetadataObject(for: $0) }
+        advancedOutput.emitMetadataObjects(.init(objects: transformed, timestamp: lastPresentationTime))
+    }
+}
+
+@available(iOS 11.0, *)
+extension CameraSource: AVCaptureDepthDataOutputDelegate {
+    public func depthDataOutput(
+        _ output: AVCaptureDepthDataOutput,
+        didOutput depthData: AVDepthData,
+        timestamp: CMTime,
+        connection: AVCaptureConnection
+    ) {
+        advancedOutput.emitDepthData(.init(timestamp: timestamp))
+    }
+}
+
+@available(iOS 11.0, *)
+extension CameraSource: AVCaptureDataOutputSynchronizerDelegate {
+    public func dataOutputSynchronizer(
+        _ synchronizer: AVCaptureDataOutputSynchronizer,
+        didOutput synchronizedDataCollection: AVCaptureSynchronizedDataCollection
+    ) {
+        guard let synchronizedSampleBuffer = synchronizedDataCollection.synchronizedData(for: videoOutput) as? AVCaptureSynchronizedSampleBufferData else {
+            return
+        }
+        if synchronizedSampleBuffer.sampleBufferWasDropped == false {
+            emit(sampleBuffer: synchronizedSampleBuffer.sampleBuffer, mediaType: .video)
+        }
+        if let depthDataOutput,
+           let synchronizedDepth = synchronizedDataCollection.synchronizedData(for: depthDataOutput) as? AVCaptureSynchronizedDepthData,
+           synchronizedDepth.depthDataWasDropped == false {
+            advancedOutput.emitDepthData(.init(timestamp: synchronizedDepth.timestamp))
         }
     }
 }

@@ -7,10 +7,14 @@
 
 import Foundation
 
-public enum CameraPosition: Equatable, Sendable {
+public enum CameraPosition: String, Equatable, Sendable, Codable, CustomStringConvertible {
     case front
     case back
     case unspecified
+
+    public var description: String {
+        rawValue
+    }
 }
 
 public enum CameraSessionState: Equatable {

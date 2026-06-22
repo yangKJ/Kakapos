@@ -36,18 +36,12 @@ public enum CameraAspectRatio: Equatable, Sendable {
                 return sourceDimensions
             }
             let ratio = CGFloat(height) / CGFloat(width)
-            return CGSize(
-                width: sourceDimensions.width,
-                height: (sourceDimensions.width * ratio).rounded()
-            )
+            return CGSize(width: sourceDimensions.width, height: (sourceDimensions.width * ratio).rounded())
         default:
             guard let ratioValue = aspectRatioFactor else {
                 return sourceDimensions
             }
-            return CGSize(
-                width: sourceDimensions.width,
-                height: (sourceDimensions.width * ratioValue).rounded()
-            )
+            return CGSize(width: sourceDimensions.width, height: (sourceDimensions.width * ratioValue).rounded())
         }
     }
 
@@ -152,6 +146,7 @@ public enum CameraDeviceType: Equatable, Sendable, CustomStringConvertible {
     case dualWide
     case ultraWide
     case triple
+    case trueDepth
     case microphone
 
     public var description: String {
@@ -168,11 +163,50 @@ public enum CameraDeviceType: Equatable, Sendable, CustomStringConvertible {
             return "ultraWide"
         case .triple:
             return "triple"
+        case .trueDepth:
+            return "trueDepth"
         case .microphone:
             return "microphone"
         }
     }
+}
 
+public enum CameraFocusMode: Equatable, Sendable {
+    case continuousAuto
+    case auto
+    case locked
+}
+
+public enum CameraExposureMode: Equatable, Sendable {
+    case continuousAuto
+    case auto
+    case custom
+    case locked
+}
+
+public enum CameraWhiteBalanceMode: Equatable, Sendable {
+    case continuousAuto
+    case auto
+    case locked
+}
+
+public enum CameraVideoStabilizationMode: String, Equatable, Sendable, Codable {
+    case off
+    case standard
+    case cinematic
+    case cinematicExtended
+    case auto
+    case previewOptimized
+}
+
+public struct CameraFrameRateRange: Equatable, Sendable {
+    public var minimumFramesPerSecond: Double
+    public var maximumFramesPerSecond: Double
+
+    public init(minimumFramesPerSecond: Double, maximumFramesPerSecond: Double) {
+        self.minimumFramesPerSecond = minimumFramesPerSecond
+        self.maximumFramesPerSecond = maximumFramesPerSecond
+    }
 }
 
 public struct CameraVideoConfiguration: Equatable, Sendable {
@@ -184,6 +218,8 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
     public var scalingMode: String
     public var transform: CGAffineTransform
     public var maximumCaptureDuration: CMTime?
+    public var preferredFrameRateRange: CameraFrameRateRange?
+    public var preferredStabilizationMode: CameraVideoStabilizationMode
 
     public init(
         sessionPreset: AVCaptureSession.Preset = .high,
@@ -193,7 +229,9 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         codec: AVVideoCodecType = .h264,
         scalingMode: String = AVVideoScalingModeResizeAspectFill,
         transform: CGAffineTransform = .identity,
-        maximumCaptureDuration: CMTime? = nil
+        maximumCaptureDuration: CMTime? = nil,
+        preferredFrameRateRange: CameraFrameRateRange? = nil,
+        preferredStabilizationMode: CameraVideoStabilizationMode = .auto
     ) {
         self.sessionPreset = sessionPreset
         self.aspectRatio = aspectRatio
@@ -203,12 +241,32 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         self.scalingMode = scalingMode
         self.transform = transform
         self.maximumCaptureDuration = maximumCaptureDuration
+        self.preferredFrameRateRange = preferredFrameRateRange
+        self.preferredStabilizationMode = preferredStabilizationMode
     }
 
     public func resolvedDimensions(from sourceDimensions: CGSize) -> CGSize {
         aspectRatio.resolvedDimensions(from: sourceDimensions)
     }
+}
 
+public struct CameraAudioConfiguration: Equatable, Sendable {
+    public var sampleRate: Double
+    public var channelCount: Int
+    public var bitRate: Int
+    public var prefersIndependentSession: Bool
+
+    public init(
+        sampleRate: Double = 44_100,
+        channelCount: Int = 1,
+        bitRate: Int = 128_000,
+        prefersIndependentSession: Bool = false
+    ) {
+        self.sampleRate = sampleRate
+        self.channelCount = channelCount
+        self.bitRate = bitRate
+        self.prefersIndependentSession = prefersIndependentSession
+    }
 }
 
 public struct CameraPhotoConfiguration: Equatable, Sendable {
@@ -217,21 +275,79 @@ public struct CameraPhotoConfiguration: Equatable, Sendable {
     public var isHighResolutionEnabled: Bool
     public var generateThumbnail: Bool
     public var photoQualityMode: CameraPhotoQualityMode
+    public var deliversDepthData: Bool
+    public var deliversPortraitEffectsMatte: Bool
 
     public init(
         sessionPreset: AVCaptureSession.Preset = .photo,
         flashMode: AVCaptureDevice.FlashMode = .off,
         isHighResolutionEnabled: Bool = true,
         generateThumbnail: Bool = true,
-        photoQualityMode: CameraPhotoQualityMode = .balanced
+        photoQualityMode: CameraPhotoQualityMode = .balanced,
+        deliversDepthData: Bool = false,
+        deliversPortraitEffectsMatte: Bool = false
     ) {
         self.sessionPreset = sessionPreset
         self.flashMode = flashMode
         self.isHighResolutionEnabled = isHighResolutionEnabled
         self.generateThumbnail = generateThumbnail
         self.photoQualityMode = photoQualityMode
+        self.deliversDepthData = deliversDepthData
+        self.deliversPortraitEffectsMatte = deliversPortraitEffectsMatte
     }
+}
 
+public struct CameraDeviceConfiguration: Equatable, Sendable {
+    public var preferredPosition: CameraPosition
+    public var preferredDeviceTypes: [CameraDeviceType]
+    public var mirroringMode: CameraMirroringMode
+    public var focusMode: CameraFocusMode
+    public var exposureMode: CameraExposureMode
+    public var whiteBalanceMode: CameraWhiteBalanceMode
+    public var initialZoomFactor: CGFloat
+
+    public init(
+        preferredPosition: CameraPosition = .back,
+        preferredDeviceTypes: [CameraDeviceType] = [.wideAngle],
+        mirroringMode: CameraMirroringMode = .automatic,
+        focusMode: CameraFocusMode = .continuousAuto,
+        exposureMode: CameraExposureMode = .continuousAuto,
+        whiteBalanceMode: CameraWhiteBalanceMode = .continuousAuto,
+        initialZoomFactor: CGFloat = 1
+    ) {
+        self.preferredPosition = preferredPosition
+        self.preferredDeviceTypes = preferredDeviceTypes
+        self.mirroringMode = mirroringMode
+        self.focusMode = focusMode
+        self.exposureMode = exposureMode
+        self.whiteBalanceMode = whiteBalanceMode
+        self.initialZoomFactor = initialZoomFactor
+    }
+}
+
+public struct CameraAdvancedCaptureSettings: Equatable, Sendable {
+    public var metadataObjectTypes: [AVMetadataObject.ObjectType]
+    public var enablesDepthData: Bool
+    public var enablesPortraitEffectsMatte: Bool
+    public var enablesARFrameSource: Bool
+    public var enablesMultiCam: Bool
+    public var requiresSynchronizedDepthData: Bool
+
+    public init(
+        metadataObjectTypes: [AVMetadataObject.ObjectType] = [],
+        enablesDepthData: Bool = false,
+        enablesPortraitEffectsMatte: Bool = false,
+        enablesARFrameSource: Bool = false,
+        enablesMultiCam: Bool = false,
+        requiresSynchronizedDepthData: Bool = true
+    ) {
+        self.metadataObjectTypes = metadataObjectTypes
+        self.enablesDepthData = enablesDepthData
+        self.enablesPortraitEffectsMatte = enablesPortraitEffectsMatte
+        self.enablesARFrameSource = enablesARFrameSource
+        self.enablesMultiCam = enablesMultiCam
+        self.requiresSynchronizedDepthData = requiresSynchronizedDepthData
+    }
 }
 
 public struct CameraSourceConfiguration: Equatable, Sendable {
@@ -242,7 +358,9 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
     public var automaticallyRequestsAuthorization: Bool
     public var previewGravity: AVLayerVideoGravity
     public var video: CameraVideoConfiguration
+    public var audio: CameraAudioConfiguration
     public var photo: CameraPhotoConfiguration
+    public var advanced: CameraAdvancedCaptureSettings
 
     public init(
         captureMode: CameraCaptureMode = .video,
@@ -252,7 +370,9 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
         automaticallyRequestsAuthorization: Bool = false,
         previewGravity: AVLayerVideoGravity = .resizeAspectFill,
         video: CameraVideoConfiguration = CameraVideoConfiguration(),
-        photo: CameraPhotoConfiguration = CameraPhotoConfiguration()
+        audio: CameraAudioConfiguration = CameraAudioConfiguration(),
+        photo: CameraPhotoConfiguration = CameraPhotoConfiguration(),
+        advanced: CameraAdvancedCaptureSettings = CameraAdvancedCaptureSettings()
     ) {
         self.captureMode = captureMode
         self.preferredPosition = preferredPosition
@@ -261,7 +381,9 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
         self.automaticallyRequestsAuthorization = automaticallyRequestsAuthorization
         self.previewGravity = previewGravity
         self.video = video
+        self.audio = audio
         self.photo = photo
+        self.advanced = advanced
     }
 
     public var requestedMediaTypes: [AVMediaType] {
@@ -275,17 +397,45 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
     public func effectiveMirroringValue(for position: CameraPosition) -> Bool {
         mirroringMode.resolvedValue(for: position)
     }
+
+    public var device: CameraDeviceConfiguration {
+        get {
+            CameraDeviceConfiguration(
+                preferredPosition: preferredPosition,
+                preferredDeviceTypes: preferredDeviceTypes,
+                mirroringMode: mirroringMode,
+                initialZoomFactor: 1
+            )
+        }
+        set {
+            preferredPosition = newValue.preferredPosition
+            preferredDeviceTypes = newValue.preferredDeviceTypes
+            mirroringMode = newValue.mirroringMode
+        }
+    }
 }
+
+public typealias CameraCaptureConfiguration = CameraSourceConfiguration
 
 public struct CameraPhotoCaptureResult {
     public let data: Data?
     public let metadata: [String: Any]
     public let isFromCurrentFrame: Bool
+    public let depthDataDelivered: Bool
+    public let portraitEffectsMatteDelivered: Bool
 
-    public init(data: Data?, metadata: [String: Any], isFromCurrentFrame: Bool) {
+    public init(
+        data: Data?,
+        metadata: [String: Any],
+        isFromCurrentFrame: Bool,
+        depthDataDelivered: Bool = false,
+        portraitEffectsMatteDelivered: Bool = false
+    ) {
         self.data = data
         self.metadata = metadata
         self.isFromCurrentFrame = isFromCurrentFrame
+        self.depthDataDelivered = depthDataDelivered
+        self.portraitEffectsMatteDelivered = portraitEffectsMatteDelivered
     }
 }
 
@@ -316,11 +466,7 @@ extension CameraAspectRatio {
             return CGSize(width: 4, height: 3)
         case .widescreen:
             return CGSize(width: 9, height: 16)
-        case .widescreenLandscape:
-            return CGSize(width: 16, height: 9)
-        case .twitter:
-            return CGSize(width: 16, height: 9)
-        case .youtube:
+        case .widescreenLandscape, .twitter, .youtube:
             return CGSize(width: 16, height: 9)
         case .instagram:
             return CGSize(width: 4, height: 5)
@@ -352,8 +498,74 @@ extension CameraDeviceType {
             return [.builtInUltraWideCamera]
         case .triple:
             return [.builtInTripleCamera]
+        case .trueDepth:
+            return [.builtInTrueDepthCamera]
         case .microphone:
             return []
+        }
+    }
+}
+
+extension CameraFocusMode {
+    var avFoundationMode: AVCaptureDevice.FocusMode {
+        switch self {
+        case .continuousAuto:
+            return .continuousAutoFocus
+        case .auto:
+            return .autoFocus
+        case .locked:
+            return .locked
+        }
+    }
+}
+
+extension CameraExposureMode {
+    var avFoundationMode: AVCaptureDevice.ExposureMode {
+        switch self {
+        case .continuousAuto:
+            return .continuousAutoExposure
+        case .auto:
+            return .autoExpose
+        case .custom:
+            return .custom
+        case .locked:
+            return .locked
+        }
+    }
+}
+
+extension CameraWhiteBalanceMode {
+    var avFoundationMode: AVCaptureDevice.WhiteBalanceMode {
+        switch self {
+        case .continuousAuto:
+            return .continuousAutoWhiteBalance
+        case .auto:
+            return .autoWhiteBalance
+        case .locked:
+            return .locked
+        }
+    }
+}
+
+extension CameraVideoStabilizationMode {
+    var avFoundationMode: AVCaptureVideoStabilizationMode {
+        switch self {
+        case .off:
+            return .off
+        case .standard:
+            return .standard
+        case .cinematic:
+            return .cinematic
+        case .cinematicExtended:
+            return .cinematicExtended
+        case .auto:
+            return .auto
+        case .previewOptimized:
+            if #available(iOS 17.0, tvOS 17.0, *) {
+                return .previewOptimized
+            } else {
+                return .auto
+            }
         }
     }
 }

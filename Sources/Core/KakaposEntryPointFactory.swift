@@ -97,6 +97,12 @@ enum KakaposEntryPointFactory {
             processors: processors
         )
     }
+
+    static func camera(
+        configuration: CameraCaptureConfiguration = .init()
+    ) throws -> CameraEngine {
+        try CameraEngine(configuration: configuration)
+    }
 #endif
 
     static func timeline(
