@@ -36,6 +36,41 @@ public struct RecordedClipSegment: Equatable, Sendable {
     }
 }
 
+public struct RecordedClipMergeHandoff: Equatable, Sendable {
+    public let outputURL: URL?
+    public let duration: CMTime
+    public let segmentCount: Int
+    public let containsVideo: Bool
+    public let containsAudio: Bool
+    public let thumbnailTime: CMTime?
+    public let isMutedOnMerge: Bool
+    public let sessionManifest: [String: String]
+
+    public init(
+        outputURL: URL?,
+        duration: CMTime,
+        segmentCount: Int,
+        containsVideo: Bool,
+        containsAudio: Bool,
+        thumbnailTime: CMTime?,
+        isMutedOnMerge: Bool,
+        sessionManifest: [String: String]
+    ) {
+        self.outputURL = outputURL
+        self.duration = duration
+        self.segmentCount = segmentCount
+        self.containsVideo = containsVideo
+        self.containsAudio = containsAudio
+        self.thumbnailTime = thumbnailTime
+        self.isMutedOnMerge = isMutedOnMerge
+        self.sessionManifest = sessionManifest
+    }
+
+    public var summaryText: String {
+        "segments \(segmentCount) · duration \(String(format: "%.2fs", duration.seconds)) · video \(containsVideo ? "yes" : "no") · audio \(containsAudio ? "yes" : "no") · mutedOnMerge \(isMutedOnMerge ? "yes" : "no")"
+    }
+}
+
 public final class RecordedClip: @unchecked Sendable {
     public let identifier: UUID
     public var outputURL: URL? {
@@ -74,6 +109,56 @@ public final class RecordedClip: @unchecked Sendable {
             return 0
         }
         return track.nominalFrameRate
+    }
+
+    public var containsVideo: Bool {
+        segments.contains(where: \.containsVideo)
+    }
+
+    public var containsAudio: Bool {
+        segments.contains(where: \.containsAudio)
+    }
+
+    public var segmentCount: Int {
+        segments.count
+    }
+
+    public var normalizedSessionManifest: [String: String] {
+        var result: [String: String] = [:]
+        sessionManifest?.forEach { key, value in
+            switch value {
+            case let value as String:
+                result[key] = value
+            case let value as Bool:
+                result[key] = value ? "true" : "false"
+            case let value as Int:
+                result[key] = "\(value)"
+            case let value as Double:
+                result[key] = String(format: "%.4f", value)
+            case let value as CMTime:
+                result[key] = String(format: "%.4f", value.seconds)
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    public var mergeHandoff: RecordedClipMergeHandoff {
+        RecordedClipMergeHandoff(
+            outputURL: outputURL,
+            duration: duration,
+            segmentCount: segmentCount,
+            containsVideo: containsVideo,
+            containsAudio: containsAudio,
+            thumbnailTime: thumbnailTime,
+            isMutedOnMerge: isMutedOnMerge,
+            sessionManifest: normalizedSessionManifest
+        )
+    }
+
+    public var summaryText: String {
+        mergeHandoff.summaryText
     }
 
     public var representationDictionary: [String: Any]? {
@@ -292,6 +377,8 @@ final class RecordingSession {
         let startedAt = clips.first?.startedAt ?? fallbackStartedAt
         let endedAt = clips.last?.endedAt ?? fallbackEndedAt
         let total = clips.reduce(.zero) { $0 + $1.duration }
+        let containsVideo = clips.contains(where: \.containsVideo)
+        let containsAudio = clips.contains(where: \.containsAudio)
         return RecordedClip(
             outputURL: outputURL,
             duration: total,
@@ -302,8 +389,14 @@ final class RecordingSession {
             thumbnailTime: startedAt,
             sessionManifest: [
                 "clipCount": clips.count,
+                "segmentCount": clips.count,
                 "videoSegments": clips.filter(\.containsVideo).count,
-                "audioSegments": clips.filter(\.containsAudio).count
+                "audioSegments": clips.filter(\.containsAudio).count,
+                "containsVideo": containsVideo,
+                "containsAudio": containsAudio,
+                "totalDurationSeconds": total.seconds,
+                "startedAtSeconds": startedAt?.seconds ?? 0,
+                "endedAtSeconds": endedAt?.seconds ?? 0
             ]
         )
     }

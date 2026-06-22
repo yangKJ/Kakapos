@@ -22,8 +22,12 @@ public final class RecorderSink: MediaSink {
         public let currentClipHasAudio: Bool
         public let recordedVideoSegmentCount: Int
         public let recordedAudioSegmentCount: Int
+        public let containsVideo: Bool
+        public let containsAudio: Bool
         public let lastPresentationTime: CMTime?
         public let pausedAt: CMTime?
+        public let maximumDuration: CMTime?
+        public let remainingDuration: CMTime?
 
         public var hasRecordedClip: Bool {
             recordedClipURL != nil
@@ -44,16 +48,27 @@ public final class RecorderSink: MediaSink {
         public let currentClipHasAudio: Bool
         public let recordedVideoSegmentCount: Int
         public let recordedAudioSegmentCount: Int
+        public let containsVideo: Bool
+        public let containsAudio: Bool
+        public let maximumDuration: CMTime?
+        public let remainingDuration: CMTime?
 
         public var summaryText: String {
             let durationText = String(format: "%.2fs", totalDuration.seconds)
             let currentClipText = String(format: "%.2fs", currentClipDuration.seconds)
             var text = "state \(state) · clips \(clipCount) · total \(durationText) · clip \(currentClipText) · recorded \(hasRecordedClip ? "yes" : "no") · started \(currentClipHasStarted ? "yes" : "no") · video \(currentClipHasVideo ? "yes" : "no") · audio \(currentClipHasAudio ? "yes" : "no") · segments v\(recordedVideoSegmentCount)/a\(recordedAudioSegmentCount)"
+            text += " · payload v\(containsVideo ? "yes" : "no")/a\(containsAudio ? "yes" : "no")"
             if let lastPresentationTime {
                 text += " · presentation \(String(format: "%.2fs", lastPresentationTime.seconds))"
             }
             if let pausedAt {
                 text += " · pausedAt \(String(format: "%.2fs", pausedAt.seconds))"
+            }
+            if let maximumDuration {
+                text += " · max \(String(format: "%.2fs", maximumDuration.seconds))"
+            }
+            if let remainingDuration {
+                text += " · remaining \(String(format: "%.2fs", remainingDuration.seconds))"
             }
             return text
         }
@@ -80,6 +95,7 @@ public final class RecorderSink: MediaSink {
     public var snapshot: Snapshot {
         queue.sync {
             let recordingSnapshot = session.snapshot()
+            let totalRecordedDuration = recordingSnapshot.totalDuration + recordingSnapshot.currentClipDuration
             return Snapshot(
                 state: state,
                 outputURL: outputURL,
@@ -92,8 +108,12 @@ public final class RecorderSink: MediaSink {
                 currentClipHasAudio: recordingSnapshot.currentClipHasAudio,
                 recordedVideoSegmentCount: recordingSnapshot.recordedVideoSegmentCount,
                 recordedAudioSegmentCount: recordingSnapshot.recordedAudioSegmentCount,
+                containsVideo: recordedClip?.containsVideo ?? (recordingSnapshot.recordedVideoSegmentCount > 0 || recordingSnapshot.currentClipHasVideo),
+                containsAudio: recordedClip?.containsAudio ?? (recordingSnapshot.recordedAudioSegmentCount > 0 || recordingSnapshot.currentClipHasAudio),
                 lastPresentationTime: lastPresentationTime,
-                pausedAt: pausedAt
+                pausedAt: pausedAt,
+                maximumDuration: maximumDuration,
+                remainingDuration: maximumDuration.map { max($0 - totalRecordedDuration, .zero) }
             )
         }
     }
@@ -113,7 +133,11 @@ public final class RecorderSink: MediaSink {
             currentClipHasVideo: currentSnapshot.currentClipHasVideo,
             currentClipHasAudio: currentSnapshot.currentClipHasAudio,
             recordedVideoSegmentCount: currentSnapshot.recordedVideoSegmentCount,
-            recordedAudioSegmentCount: currentSnapshot.recordedAudioSegmentCount
+            recordedAudioSegmentCount: currentSnapshot.recordedAudioSegmentCount,
+            containsVideo: currentSnapshot.containsVideo,
+            containsAudio: currentSnapshot.containsAudio,
+            maximumDuration: currentSnapshot.maximumDuration,
+            remainingDuration: currentSnapshot.remainingDuration
         )
     }
 
@@ -224,12 +248,12 @@ public final class RecorderSink: MediaSink {
                 if self.state == .paused, let lastPresentationTime = self.lastPresentationTime {
                     self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
                 }
-                self.setState(.finished)
                 if let error = self.writer.error {
                     self.setState(.failed)
                     self.runtimeErrorHandler?(error)
                     completion(.failure(error))
                 } else {
+                    self.setState(.finished)
                     let clip = self.session.makeRecordedClip(
                         outputURL: self.outputURL,
                         fallbackStartedAt: self.startTime,

@@ -324,6 +324,31 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertTrue(engine.diagnosticsSnapshot.recentEvents.contains("didStart"))
     }
 
+    #if canImport(ARKit) && (os(iOS) || os(visionOS))
+    @available(iOS 13.0, *)
+    func testARFrameSourceSummaryTracksSupportAndAudioFlag() {
+        let source = ARFrameSource(configuration: .init(includesAudio: true))
+        XCTAssertTrue(source.summaryText.contains("supported yes"))
+        XCTAssertTrue(source.summaryText.contains("audio yes"))
+        XCTAssertEqual(source.snapshot.includesAudio, true)
+    }
+    #endif
+
+    #if canImport(UIKit) && !os(watchOS)
+    @available(iOS 13.0, *)
+    func testMultiCameraSnapshotIncludesUnsupportedReasonAndBranchSummaries() throws {
+        let multiCamera = try MultiCameraSource()
+        let snapshot = multiCamera.snapshot
+
+        XCTAssertEqual(snapshot.branches.count, 2)
+        if snapshot.isSupported == false {
+            XCTAssertNotNil(snapshot.unsupportedReason)
+        }
+        XCTAssertTrue(multiCamera.summaryText.contains("events"))
+        XCTAssertTrue(snapshot.branches[0].summaryText.contains("capability"))
+    }
+    #endif
+
     func testRecordingPipelineCameraSourceSnapshotCarriesCapabilitySnapshot() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

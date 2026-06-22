@@ -15,25 +15,40 @@ import ARKit
 public final class ARFrameSource: NSObject, MediaSource {
     public struct Configuration {
         public let runHandler: ((ARSession) -> Void)?
+        public let pauseHandler: ((ARSession) -> Void)?
+        public let stopHandler: ((ARSession) -> Void)?
+        public let includesAudio: Bool
 
-        public init(runHandler: ((ARSession) -> Void)? = nil) {
+        public init(
+            runHandler: ((ARSession) -> Void)? = nil,
+            pauseHandler: ((ARSession) -> Void)? = nil,
+            stopHandler: ((ARSession) -> Void)? = nil,
+            includesAudio: Bool = false
+        ) {
             self.runHandler = runHandler
+            self.pauseHandler = pauseHandler
+            self.stopHandler = stopHandler
+            self.includesAudio = includesAudio
         }
     }
 
     public struct Snapshot: Equatable {
+        public let isSupported: Bool
         public let isRunning: Bool
+        public let includesAudio: Bool
         public let frameCount: Int64
         public let lastPresentationTime: CMTime?
     }
 
     public struct Summary {
+        public let isSupported: Bool
         public let isRunning: Bool
+        public let includesAudio: Bool
         public let frameCount: Int64
         public let lastPresentationTime: CMTime?
 
         public var summaryText: String {
-            var text = "running \(isRunning ? "yes" : "no") · frames \(frameCount)"
+            var text = "supported \(isSupported ? "yes" : "no") · running \(isRunning ? "yes" : "no") · audio \(includesAudio ? "yes" : "no") · frames \(frameCount)"
             if let lastPresentationTime {
                 text += " · presentation \(String(format: "%.2fs", lastPresentationTime.seconds))"
             }
@@ -49,12 +64,26 @@ public final class ARFrameSource: NSObject, MediaSource {
     public private(set) var frameCount: Int64 = 0
     public private(set) var lastPresentationTime: CMTime?
 
+    public static var isSupported: Bool { true }
+
     public var snapshot: Snapshot {
-        Snapshot(isRunning: isRunning, frameCount: frameCount, lastPresentationTime: lastPresentationTime)
+        Snapshot(
+            isSupported: Self.isSupported,
+            isRunning: isRunning,
+            includesAudio: configuration.includesAudio,
+            frameCount: frameCount,
+            lastPresentationTime: lastPresentationTime
+        )
     }
 
     public var summary: Summary {
-        Summary(isRunning: isRunning, frameCount: frameCount, lastPresentationTime: lastPresentationTime)
+        Summary(
+            isSupported: Self.isSupported,
+            isRunning: isRunning,
+            includesAudio: configuration.includesAudio,
+            frameCount: frameCount,
+            lastPresentationTime: lastPresentationTime
+        )
     }
 
     public var summaryText: String {
@@ -75,6 +104,7 @@ public final class ARFrameSource: NSObject, MediaSource {
 
     public func pause() {
         isRunning = false
+        configuration.pauseHandler?(session)
     }
 
     public func resume() {
@@ -85,6 +115,7 @@ public final class ARFrameSource: NSObject, MediaSource {
         isRunning = false
         frameCount = 0
         lastPresentationTime = nil
+        configuration.stopHandler?(session)
         delegate?.mediaSourceDidFinish(self)
     }
 
@@ -106,7 +137,10 @@ extension ARFrameSource: ARSessionDelegate {
                 presentationTime: timestamp,
                 sourceTime: timestamp,
                 frameIndex: frameCount - 1,
-                userInfo: ["kakapos.camera.ar-frame": true]
+                userInfo: [
+                    "kakapos.camera.ar-frame": true,
+                    "kakapos.camera.ar-audio": configuration.includesAudio
+                ]
             )
         )
         frameHandler?(mediaFrame)

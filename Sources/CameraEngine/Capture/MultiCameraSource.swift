@@ -14,12 +14,18 @@ public final class MultiCameraSource {
     public struct BranchSnapshot {
         public let branchID: String
         public let position: CameraPosition
+        public let stateDescription: String
         public let sourceSummaryText: String
         public let capabilitySummaryText: String
+
+        public var summaryText: String {
+            "\(branchID) state \(stateDescription) · \(sourceSummaryText) · capability \(capabilitySummaryText)"
+        }
     }
 
     public struct Snapshot {
         public let isSupported: Bool
+        public let unsupportedReason: String?
         public let branches: [BranchSnapshot]
         public let advancedEventCount: Int
         public let latestAdvancedEventSummaryText: String
@@ -33,9 +39,22 @@ public final class MultiCameraSource {
     public var snapshot: Snapshot {
         Snapshot(
             isSupported: Self.isSupported,
+            unsupportedReason: Self.isSupported ? nil : "AVCaptureMultiCamSession is unavailable on the current device",
             branches: [
-                BranchSnapshot(branchID: "front", position: .front, sourceSummaryText: frontSource.summaryText, capabilitySummaryText: frontSource.capabilitySnapshot.summaryText),
-                BranchSnapshot(branchID: "back", position: .back, sourceSummaryText: backSource.summaryText, capabilitySummaryText: backSource.capabilitySnapshot.summaryText)
+                BranchSnapshot(
+                    branchID: "front",
+                    position: .front,
+                    stateDescription: String(describing: frontSource.snapshot.state),
+                    sourceSummaryText: frontSource.summaryText,
+                    capabilitySummaryText: frontSource.capabilitySnapshot.summaryText
+                ),
+                BranchSnapshot(
+                    branchID: "back",
+                    position: .back,
+                    stateDescription: String(describing: backSource.snapshot.state),
+                    sourceSummaryText: backSource.summaryText,
+                    capabilitySummaryText: backSource.capabilitySnapshot.summaryText
+                )
             ],
             advancedEventCount: advancedOutput.eventCount,
             latestAdvancedEventSummaryText: advancedOutput.latestEventSummaryText
@@ -44,8 +63,13 @@ public final class MultiCameraSource {
 
     public var summaryText: String {
         let currentSnapshot = snapshot
-        let branchText = currentSnapshot.branches.map { "\($0.branchID) \($0.sourceSummaryText)" }.joined(separator: " · ")
-        return "supported \(currentSnapshot.isSupported ? "yes" : "no") · \(branchText) · events \(currentSnapshot.advancedEventCount) · latest \(currentSnapshot.latestAdvancedEventSummaryText)"
+        let branchText = currentSnapshot.branches.map(\.summaryText).joined(separator: " · ")
+        var text = "supported \(currentSnapshot.isSupported ? "yes" : "no")"
+        if let unsupportedReason = currentSnapshot.unsupportedReason {
+            text += " · reason \(unsupportedReason)"
+        }
+        text += " · \(branchText) · events \(currentSnapshot.advancedEventCount) · latest \(currentSnapshot.latestAdvancedEventSummaryText)"
+        return text
     }
 
     public static var isSupported: Bool {
