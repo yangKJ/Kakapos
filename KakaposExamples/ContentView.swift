@@ -611,7 +611,7 @@ private struct CameraRecordView: View {
                         )
                     )
                     let engine = try KakaposSurface.camera(configuration: configuration)
-                    let previewController = engine.makePreviewController(
+                    let previewController = engine.startPreview(
                         mode: .processed,
                         processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05), C7Exposure(exposure: 0.05)])],
                         callbackQueue: .main
@@ -700,11 +700,10 @@ private struct CameraRecordView: View {
                     deviceSnapshotText = engine.deviceSummaryText
                     advancedEventText = "Awaiting metadata, depth, or portrait events"
                     lastOutputText = "awaiting frames"
-                    engine.start()
                     message = recordingEnabled ? "Starting camera recording" : "Starting camera preview"
                     if recordingEnabled {
                         let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
-                        let recordingController = try engine.makeRecordingController(
+                        let recordingController = try engine.startRecording(
                             outputURL: outputURL,
                             processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05), C7Exposure(exposure: 0.05)])]
                         )
@@ -730,7 +729,6 @@ private struct CameraRecordView: View {
                             }
                         }
                         self.recordingController = recordingController
-                        recordingController.start()
                     }
                 } catch {
                     message = error.localizedDescription
@@ -744,9 +742,9 @@ private struct CameraRecordView: View {
 
     private func stopCamera() {
         #if canImport(UIKit) && !os(watchOS)
-        if let recordingController {
-            let recorder = recordingController.recorderSink
-            recordingController.stopRecording { result in
+        if let engine {
+            let recorder = engine.recordingController?.recorderSink
+            engine.stopRecording { result in
                 DispatchQueue.main.async {
                     switch result {
                     case .success(let clip):
@@ -759,7 +757,9 @@ private struct CameraRecordView: View {
                             message = "Recording finished"
                         }
                         recordedDurationText = String(format: "%.2fs", clip.duration.seconds)
-                        recorderSnapshotText = snapshotText(for: recorder.snapshot)
+                        if let recorder {
+                            recorderSnapshotText = snapshotText(for: recorder.snapshot)
+                        }
                     case .failure(let error):
                         message = error.localizedDescription
                     }
