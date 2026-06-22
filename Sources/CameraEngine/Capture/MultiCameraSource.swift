@@ -35,6 +35,8 @@ public final class MultiCameraSource {
     public let frontSource: CameraSource
     public let backSource: CameraSource
     public let advancedOutput = CameraAdvancedOutput()
+    private var frontAdvancedEventObserver: UUID?
+    private var backAdvancedEventObserver: UUID?
 
     public var snapshot: Snapshot {
         Snapshot(
@@ -96,6 +98,21 @@ public final class MultiCameraSource {
         }
         backSource.frameHandler = { [weak self] frame in
             self?.advancedOutput.emitMultiCamFrame(.init(branchID: "back", position: .back, frame: frame, connectionDescription: "back-camera"))
+        }
+        frontAdvancedEventObserver = frontSource.advancedOutput.addEventObserver { [weak self] event in
+            self?.advancedOutput.emit(event)
+        }
+        backAdvancedEventObserver = backSource.advancedOutput.addEventObserver { [weak self] event in
+            self?.advancedOutput.emit(event)
+        }
+    }
+
+    deinit {
+        if let frontAdvancedEventObserver {
+            frontSource.advancedOutput.removeEventObserver(frontAdvancedEventObserver)
+        }
+        if let backAdvancedEventObserver {
+            backSource.advancedOutput.removeEventObserver(backAdvancedEventObserver)
         }
     }
 

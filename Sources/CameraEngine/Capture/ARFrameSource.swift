@@ -38,6 +38,8 @@ public final class ARFrameSource: NSObject, MediaSource {
         public let includesAudio: Bool
         public let frameCount: Int64
         public let lastPresentationTime: CMTime?
+        public let advancedEventCount: Int
+        public let latestAdvancedEventSummaryText: String
     }
 
     public struct Summary {
@@ -46,12 +48,15 @@ public final class ARFrameSource: NSObject, MediaSource {
         public let includesAudio: Bool
         public let frameCount: Int64
         public let lastPresentationTime: CMTime?
+        public let advancedEventCount: Int
+        public let latestAdvancedEventSummaryText: String
 
         public var summaryText: String {
             var text = "supported \(isSupported ? "yes" : "no") · running \(isRunning ? "yes" : "no") · audio \(includesAudio ? "yes" : "no") · frames \(frameCount)"
             if let lastPresentationTime {
                 text += " · presentation \(String(format: "%.2fs", lastPresentationTime.seconds))"
             }
+            text += " · events \(advancedEventCount) · latest \(latestAdvancedEventSummaryText)"
             return text
         }
     }
@@ -59,6 +64,7 @@ public final class ARFrameSource: NSObject, MediaSource {
     public weak var delegate: MediaSourceDelegate?
     public let session: ARSession
     public let configuration: Configuration
+    public let advancedOutput = CameraAdvancedOutput()
     public var frameHandler: ((MediaFrame) -> Void)?
     public private(set) var isRunning = false
     public private(set) var frameCount: Int64 = 0
@@ -72,7 +78,9 @@ public final class ARFrameSource: NSObject, MediaSource {
             isRunning: isRunning,
             includesAudio: configuration.includesAudio,
             frameCount: frameCount,
-            lastPresentationTime: lastPresentationTime
+            lastPresentationTime: lastPresentationTime,
+            advancedEventCount: advancedOutput.eventCount,
+            latestAdvancedEventSummaryText: advancedOutput.latestEventSummaryText
         )
     }
 
@@ -82,7 +90,9 @@ public final class ARFrameSource: NSObject, MediaSource {
             isRunning: isRunning,
             includesAudio: configuration.includesAudio,
             frameCount: frameCount,
-            lastPresentationTime: lastPresentationTime
+            lastPresentationTime: lastPresentationTime,
+            advancedEventCount: advancedOutput.eventCount,
+            latestAdvancedEventSummaryText: advancedOutput.latestEventSummaryText
         )
     }
 
@@ -115,6 +125,7 @@ public final class ARFrameSource: NSObject, MediaSource {
         isRunning = false
         frameCount = 0
         lastPresentationTime = nil
+        advancedOutput.reset()
         configuration.stopHandler?(session)
         delegate?.mediaSourceDidFinish(self)
     }
@@ -143,6 +154,11 @@ extension ARFrameSource: ARSessionDelegate {
                 ]
             )
         )
+        advancedOutput.emitARFrame(.init(
+            frame: mediaFrame,
+            timestamp: timestamp,
+            includesAudio: configuration.includesAudio
+        ))
         frameHandler?(mediaFrame)
         delegate?.mediaSource(self, didOutput: mediaFrame)
     }

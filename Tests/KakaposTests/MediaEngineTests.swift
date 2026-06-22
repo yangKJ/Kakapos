@@ -3894,6 +3894,70 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    func testRecordedClipCanBuildAssetSourceAndPreserveMergeMetadata() throws {
+        let outputURL = try makeSampleAssetURL()
+        let clip = RecordedClip(
+            outputURL: outputURL,
+            duration: CMTime(value: 30, timescale: 30),
+            startedAt: .zero,
+            endedAt: CMTime(value: 30, timescale: 30),
+            segments: [
+                RecordedClipSegment(
+                    index: 0,
+                    startedAt: .zero,
+                    endedAt: CMTime(value: 30, timescale: 30),
+                    duration: CMTime(value: 30, timescale: 30),
+                    containsVideo: true,
+                    containsAudio: true
+                )
+            ],
+            isMutedOnMerge: true,
+            sessionManifest: ["origin": "camera", "clipCount": 1]
+        )
+        let source = try XCTUnwrap(AssetSource(recordedClip: clip))
+
+        XCTAssertEqual((source.asset as? AVURLAsset)?.url, outputURL)
+        XCTAssertEqual(source.frameUserInfo[AssetSource.MetadataKey.recordedClipIdentifier] as? String, clip.identifier.uuidString)
+        XCTAssertEqual(source.frameUserInfo[AssetSource.MetadataKey.recordedClipSegmentCount] as? Int, 1)
+        XCTAssertEqual(source.frameUserInfo[AssetSource.MetadataKey.recordedClipContainsVideo] as? Bool, true)
+        XCTAssertEqual(source.frameUserInfo[AssetSource.MetadataKey.recordedClipContainsAudio] as? Bool, true)
+        XCTAssertEqual(source.frameUserInfo[AssetSource.MetadataKey.recordedClipMutedOnMerge] as? Bool, true)
+        XCTAssertEqual(source.frameUserInfo["origin"] as? String, "camera")
+        XCTAssertEqual(source.frameUserInfo["clipCount"] as? String, "1")
+    }
+
+    func testRecordedClipCanBuildTimelinePipelineAndMutedClipLayer() throws {
+        let outputURL = try makeSampleAssetURL()
+        let duration = CMTime(value: 30, timescale: 30)
+        let clip = RecordedClip(
+            outputURL: outputURL,
+            duration: duration,
+            startedAt: .zero,
+            endedAt: duration,
+            segments: [
+                RecordedClipSegment(
+                    index: 0,
+                    startedAt: .zero,
+                    endedAt: duration,
+                    duration: duration,
+                    containsVideo: true,
+                    containsAudio: true
+                )
+            ],
+            isMutedOnMerge: true
+        )
+
+        let layer = try XCTUnwrap(ClipLayer(recordedClip: clip))
+        let pipeline = try XCTUnwrap(TimelinePipeline(recordedClip: clip))
+        let compiled = pipeline.compile()
+
+        XCTAssertEqual(layer.volume, 0)
+        XCTAssertEqual(layer.timeRange.duration, duration)
+        XCTAssertEqual(pipeline.layers.count, 1)
+        XCTAssertEqual(compiled.summary.videoLayerCount, 1)
+        XCTAssertEqual(compiled.summary.transitionCount, 0)
+    }
+
     func testRecorderSinkCancelMakesFinishReturnExportCancelled() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

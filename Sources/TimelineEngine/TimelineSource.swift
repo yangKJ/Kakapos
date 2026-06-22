@@ -44,6 +44,21 @@ public struct AssetClipSource: TimelineSourceDescriptor {
             ?? asset.tracks(withMediaType: .video).first?.preferredTransform
             ?? .identity
     }
+
+    public init?(
+        recordedClip: RecordedClip,
+        sourceTimeRange: CMTimeRange? = nil,
+        preferredTransform: CGAffineTransform? = nil
+    ) {
+        guard let asset = recordedClip.asset else {
+            return nil
+        }
+        self.init(
+            asset: asset,
+            sourceTimeRange: sourceTimeRange,
+            preferredTransform: preferredTransform
+        )
+    }
 }
 
 public struct AudioClipSource: TimelineSourceDescriptor {
@@ -62,6 +77,13 @@ public struct AudioClipSource: TimelineSourceDescriptor {
         self.asset = asset
         self.trackID = trackID
         self.sourceTimeRange = sourceTimeRange
+    }
+
+    public init?(recordedClip: RecordedClip, sourceTimeRange: CMTimeRange? = nil) {
+        guard let asset = recordedClip.asset else {
+            return nil
+        }
+        self.init(asset: asset, sourceTimeRange: sourceTimeRange)
     }
 }
 

@@ -50,7 +50,7 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertTrue(configuration.advanced.enablesMultiCam)
     }
 
-    func testCameraSnapshotsAndAdvancedEventsExposeReadableSummaries() {
+    func testCameraSnapshotsAndAdvancedEventsExposeReadableSummaries() throws {
         let capability = CameraCapabilitySnapshot(
             supportsAudioCapture: true,
             supportsPhotoCapture: true,
@@ -110,12 +110,26 @@ final class CameraEngineTests: XCTestCase {
         _ = advancedOutput.addEventObserver { observerKinds.append($0.kind) }
         advancedOutput.emitMetadataObjects(.init(objects: [], timestamp: CMTime(seconds: 3, preferredTimescale: 600)))
         advancedOutput.emitDepthData(.init(timestamp: CMTime(seconds: 5, preferredTimescale: 600)))
+        let pixelBuffer = try makeCameraTestPixelBuffer(width: 8, height: 8)
+        let frame = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(
+                presentationTime: CMTime(seconds: 6, preferredTimescale: 600),
+                sourceTime: CMTime(seconds: 6, preferredTimescale: 600),
+                frameIndex: 0
+            )
+        )
+        advancedOutput.emit(.arFrame(.init(
+            frame: frame,
+            timestamp: CMTime(seconds: 6, preferredTimescale: 600),
+            includesAudio: true
+        )))
 
-        XCTAssertEqual(receivedKinds, [.metadataObjects, .depthData])
-        XCTAssertEqual(observerKinds, [.metadataObjects, .depthData])
-        XCTAssertEqual(advancedOutput.eventCount, 2)
-        XCTAssertEqual(advancedOutput.latestEventKind, .depthData)
-        XCTAssertEqual(advancedOutput.latestEventSummaryText, "depthData synchronized no · timestamp 5.00s")
+        XCTAssertEqual(receivedKinds, [.metadataObjects, .depthData, .arFrame])
+        XCTAssertEqual(observerKinds, [.metadataObjects, .depthData, .arFrame])
+        XCTAssertEqual(advancedOutput.eventCount, 3)
+        XCTAssertEqual(advancedOutput.latestEventKind, .arFrame)
+        XCTAssertEqual(advancedOutput.latestEventSummaryText, "arFrame presentation 6.00s · audio yes")
         advancedOutput.reset()
         XCTAssertEqual(advancedOutput.eventCount, 0)
         XCTAssertNil(advancedOutput.latestEventKind)
@@ -330,7 +344,9 @@ final class CameraEngineTests: XCTestCase {
         let source = ARFrameSource(configuration: .init(includesAudio: true))
         XCTAssertTrue(source.summaryText.contains("supported yes"))
         XCTAssertTrue(source.summaryText.contains("audio yes"))
+        XCTAssertTrue(source.summaryText.contains("events 0"))
         XCTAssertEqual(source.snapshot.includesAudio, true)
+        XCTAssertEqual(source.snapshot.advancedEventCount, 0)
     }
     #endif
 
@@ -338,12 +354,15 @@ final class CameraEngineTests: XCTestCase {
     @available(iOS 13.0, *)
     func testMultiCameraSnapshotIncludesUnsupportedReasonAndBranchSummaries() throws {
         let multiCamera = try MultiCameraSource()
+        multiCamera.frontSource.advancedOutput.emitMetadataObjects(.init(objects: [], timestamp: CMTime(seconds: 2, preferredTimescale: 600)))
         let snapshot = multiCamera.snapshot
 
         XCTAssertEqual(snapshot.branches.count, 2)
         if snapshot.isSupported == false {
             XCTAssertNotNil(snapshot.unsupportedReason)
         }
+        XCTAssertEqual(multiCamera.advancedOutput.eventCount, 1)
+        XCTAssertEqual(multiCamera.advancedOutput.latestEventKind, .metadataObjects)
         XCTAssertTrue(multiCamera.summaryText.contains("events"))
         XCTAssertTrue(snapshot.branches[0].summaryText.contains("capability"))
     }

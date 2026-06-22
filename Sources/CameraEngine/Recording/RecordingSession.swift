@@ -69,6 +69,19 @@ public struct RecordedClipMergeHandoff: Equatable, Sendable {
     public var summaryText: String {
         "segments \(segmentCount) · duration \(String(format: "%.2fs", duration.seconds)) · video \(containsVideo ? "yes" : "no") · audio \(containsAudio ? "yes" : "no") · mutedOnMerge \(isMutedOnMerge ? "yes" : "no")"
     }
+
+    public var metadataUserInfo: [String: Any] {
+        var userInfo: [String: Any] = sessionManifest.reduce(into: [:]) { partialResult, element in
+            partialResult[element.key] = element.value
+        }
+        userInfo.merge([
+            AssetSource.MetadataKey.recordedClipSegmentCount: segmentCount,
+            AssetSource.MetadataKey.recordedClipContainsVideo: containsVideo,
+            AssetSource.MetadataKey.recordedClipContainsAudio: containsAudio,
+            AssetSource.MetadataKey.recordedClipMutedOnMerge: isMutedOnMerge
+        ]) { current, _ in current }
+        return userInfo
+    }
 }
 
 public final class RecordedClip: @unchecked Sendable {
