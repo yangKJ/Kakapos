@@ -237,6 +237,25 @@ public final class PreviewPipeline {
 
 #if canImport(UIKit) || os(macOS)
 public extension PreviewPipeline {
+    convenience init?(
+        recordedClip: RecordedClip,
+        preferredFramesPerSecond: Int = 30,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: @escaping PreviewSink.Handler
+    ) {
+        guard let asset = recordedClip.asset else {
+            return nil
+        }
+        self.init(
+            asset: asset,
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+    }
+
     convenience init(
         asset: AVAsset,
         preferredFramesPerSecond: Int = 30,

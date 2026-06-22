@@ -260,7 +260,125 @@ public final class RecordedClip: @unchecked Sendable {
             return
         }
     }
+
+    public func makeAssetSource(
+        timeRange: CMTimeRange? = nil,
+        videoOutputSettings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ],
+        audioOutputSettings: [String: Any]? = nil,
+        callbackQueue: DispatchQueue = .main
+    ) -> AssetSource? {
+        AssetSource(
+            recordedClip: self,
+            timeRange: timeRange,
+            videoOutputSettings: videoOutputSettings,
+            audioOutputSettings: audioOutputSettings,
+            callbackQueue: callbackQueue
+        )
+    }
+
+    public func makeTimelinePipeline(
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> TimelinePipeline? {
+        TimelinePipeline(
+            recordedClip: self,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
+    public func makeExportJob(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = [],
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> ReaderWriterExportJob? {
+        makeTimelinePipeline(
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )?.makeExportJob(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors
+        )
+    }
+
+    public func makeExportTask(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = [],
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> TimelineExportTask? {
+        makeTimelinePipeline(
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )?.makeExportTask(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors
+        )
+    }
 }
+
+#if canImport(UIKit) || os(macOS)
+public extension RecordedClip {
+    func makePlayerItem() -> AVPlayerItem? {
+        guard let asset else { return nil }
+        return AVPlayerItem(asset: asset)
+    }
+
+    func makePlayerFrameSource(
+        preferredFramesPerSecond: Int = 30
+    ) -> PlayerFrameSource? {
+        PlayerFrameSource(recordedClip: self, preferredFramesPerSecond: preferredFramesPerSecond)
+    }
+
+    func makePreviewPipeline(
+        preferredFramesPerSecond: Int = 30,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: @escaping PreviewSink.Handler
+    ) -> PreviewPipeline? {
+        PreviewPipeline(
+            recordedClip: self,
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+    }
+}
+#endif
 
 extension RecordedClip: Equatable {
     public static func == (lhs: RecordedClip, rhs: RecordedClip) -> Bool {

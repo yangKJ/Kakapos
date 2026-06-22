@@ -3958,6 +3958,71 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(compiled.summary.transitionCount, 0)
     }
 
+    #if canImport(UIKit) || os(macOS)
+    func testRecordedClipCanBuildPlayerAndPreviewBridges() throws {
+        let outputURL = try makeSampleAssetURL()
+        let duration = CMTime(value: 30, timescale: 30)
+        let clip = RecordedClip(
+            outputURL: outputURL,
+            duration: duration,
+            startedAt: .zero,
+            endedAt: duration,
+            segments: [
+                RecordedClipSegment(
+                    index: 0,
+                    startedAt: .zero,
+                    endedAt: duration,
+                    duration: duration,
+                    containsVideo: true,
+                    containsAudio: true
+                )
+            ]
+        )
+
+        let playerItem = try XCTUnwrap(clip.makePlayerItem())
+        let playerSource = try XCTUnwrap(clip.makePlayerFrameSource(preferredFramesPerSecond: 24))
+        let previewPipeline = try XCTUnwrap(clip.makePreviewPipeline(preferredFramesPerSecond: 24) { _, _ in })
+
+        XCTAssertEqual((playerItem.asset as? AVURLAsset)?.url, outputURL)
+        XCTAssertEqual(playerSource.preferredFramesPerSecond, 24)
+        XCTAssertEqual(previewPipeline.playerSource?.preferredFramesPerSecond, 24)
+        XCTAssertEqual(previewPipeline.summary.sourceTypeName, "PlayerFrameSource")
+    }
+    #endif
+
+    func testRecordedClipCanBuildExportJobAndTaskThroughTimelineBridge() throws {
+        let outputURL = try makeSampleAssetURL()
+        let duration = CMTime(value: 30, timescale: 30)
+        let clip = RecordedClip(
+            outputURL: outputURL,
+            duration: duration,
+            startedAt: .zero,
+            endedAt: duration,
+            segments: [
+                RecordedClipSegment(
+                    index: 0,
+                    startedAt: .zero,
+                    endedAt: duration,
+                    duration: duration,
+                    containsVideo: true,
+                    containsAudio: true
+                )
+            ],
+            isMutedOnMerge: true
+        )
+        let exportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+
+        let job = try XCTUnwrap(clip.makeExportJob(outputURL: exportURL))
+        let task = try XCTUnwrap(clip.makeExportTask(outputURL: exportURL))
+
+        XCTAssertEqual(job.summary.status, .idle)
+        XCTAssertEqual(task.status, .idle)
+        XCTAssertTrue(job.summary.summaryText.contains("state idle"))
+        XCTAssertTrue(task.summary.compiledSummary.videoLayerCount == 1)
+    }
+
     func testRecorderSinkCancelMakesFinishReturnExportCancelled() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

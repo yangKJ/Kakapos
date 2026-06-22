@@ -229,6 +229,112 @@ public final class CameraEngine {
         source.switchCameraPosition()
     }
 
+    public func makeRecordedClipAssetSource(
+        timeRange: CMTimeRange? = nil,
+        videoOutputSettings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ],
+        audioOutputSettings: [String: Any]? = nil,
+        callbackQueue: DispatchQueue = .main
+    ) -> AssetSource? {
+        recordingController?.makeRecordedClipAssetSource(
+            timeRange: timeRange,
+            videoOutputSettings: videoOutputSettings,
+            audioOutputSettings: audioOutputSettings,
+            callbackQueue: callbackQueue
+        )
+    }
+
+    public func makeRecordedClipTimelinePipeline(
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> TimelinePipeline? {
+        recordingController?.makeRecordedClipTimelinePipeline(
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
+    public func makeRecordedClipExportJob(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = [],
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> ReaderWriterExportJob? {
+        recordingController?.makeRecordedClipExportJob(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
+    public func makeRecordedClipExportTask(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = [],
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> TimelineExportTask? {
+        recordingController?.makeRecordedClipExportTask(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
+#if canImport(UIKit) || os(macOS)
+    public func makeRecordedClipPlayerFrameSource(
+        preferredFramesPerSecond: Int = 30
+    ) -> PlayerFrameSource? {
+        recordingController?.makeRecordedClipPlayerFrameSource(preferredFramesPerSecond: preferredFramesPerSecond)
+    }
+
+    public func makeRecordedClipPreviewPipeline(
+        preferredFramesPerSecond: Int = 30,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: @escaping PreviewSink.Handler
+    ) -> PreviewPipeline? {
+        recordingController?.makeRecordedClipPreviewPipeline(
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+    }
+#endif
+
     public func capturePhoto() {
         source.capturePhoto()
     }

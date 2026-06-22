@@ -145,6 +145,112 @@ public final class CameraRecordingController {
         }
     }
 
+    public func makeRecordedClipAssetSource(
+        timeRange: CMTimeRange? = nil,
+        videoOutputSettings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ],
+        audioOutputSettings: [String: Any]? = nil,
+        callbackQueue: DispatchQueue = .main
+    ) -> AssetSource? {
+        recordedClip?.makeAssetSource(
+            timeRange: timeRange,
+            videoOutputSettings: videoOutputSettings,
+            audioOutputSettings: audioOutputSettings,
+            callbackQueue: callbackQueue
+        )
+    }
+
+    public func makeRecordedClipTimelinePipeline(
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> TimelinePipeline? {
+        recordedClip?.makeTimelinePipeline(
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
+    public func makeRecordedClipExportJob(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = [],
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> ReaderWriterExportJob? {
+        recordedClip?.makeExportJob(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
+    public func makeRecordedClipExportTask(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = [],
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> TimelineExportTask? {
+        recordedClip?.makeExportTask(
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
+#if canImport(UIKit) || os(macOS)
+    public func makeRecordedClipPlayerFrameSource(
+        preferredFramesPerSecond: Int = 30
+    ) -> PlayerFrameSource? {
+        recordedClip?.makePlayerFrameSource(preferredFramesPerSecond: preferredFramesPerSecond)
+    }
+
+    public func makeRecordedClipPreviewPipeline(
+        preferredFramesPerSecond: Int = 30,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: @escaping PreviewSink.Handler
+    ) -> PreviewPipeline? {
+        recordedClip?.makePreviewPipeline(
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+    }
+#endif
+
     private func wireEvents() {
         recorderSink.durationChangedHandler = { [weak self] duration in
             self?.durationChangedHandler?(duration)

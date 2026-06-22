@@ -177,6 +177,19 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         super.init()
     }
 
+    public convenience init?(
+        recordedClip: RecordedClip,
+        preferredFramesPerSecond: Int = 30
+    ) {
+        guard let playerItem = recordedClip.makePlayerItem() else {
+            return nil
+        }
+        self.init(
+            player: AVPlayer(playerItem: playerItem),
+            preferredFramesPerSecond: preferredFramesPerSecond
+        )
+    }
+
     deinit {
         invalidateObservers()
     }
