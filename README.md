@@ -49,6 +49,8 @@ Start with the smallest entry points:
 - **Record**: `CameraEngine`, `RecordingPipeline`, `CameraSource`
 - **Timeline**: `TimelinePipeline`, `TimelineComposition`
 
+Recorded clips are also first-class bridge inputs. After camera recording finishes, `RecordedClip` can be sent back into preview, timeline, and export without rebuilding the media wiring by hand.
+
 The fuller surface stays available behind each board:
 
 - **Export**: `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, `WatermarkInstruction`, `ReaderWriterExportJob`
@@ -137,6 +139,22 @@ let filtering = FilterInstruction { buffer, time, callback in
         let dest = HarbethIO(element: buffer, filters: filters2)
         dest.transmitOutput(success: callback)
     }
+}
+```
+
+Recorded output can be promoted into downstream boards directly:
+
+```swift
+cameraEngine.stopRecording { result in
+    guard case .success(let clip) = result else { return }
+
+    let preview = clip.makePreviewPipeline { image, metadata in
+        // inspect the recorded result
+    }
+
+    let exportTask = clip.makeExportTask(outputURL: outputURL)
+    preview?.start()
+    exportTask?.start { _ in }
 }
 ```
 

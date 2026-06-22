@@ -229,6 +229,71 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(surfaceTask.summary.renderSize, boardsTask.summary.renderSize)
     }
 
+    #if canImport(UIKit) || os(macOS)
+    func testKakaposSurfaceCanBuildPreviewFromRecordedClip() throws {
+        let outputURL = try makeSampleAssetURL()
+        let duration = CMTime(value: 30, timescale: 30)
+        let clip = RecordedClip(
+            outputURL: outputURL,
+            duration: duration,
+            startedAt: .zero,
+            endedAt: duration,
+            segments: [
+                RecordedClipSegment(
+                    index: 0,
+                    startedAt: .zero,
+                    endedAt: duration,
+                    duration: duration,
+                    containsVideo: true,
+                    containsAudio: true
+                )
+            ]
+        )
+
+        let surfacePreview = try XCTUnwrap(KakaposSurface.preview(recordedClip: clip, preferredFramesPerSecond: 24) { _, _ in })
+        let boardPreview = try XCTUnwrap(KakaposSurface.previewBoard.preview(recordedClip: clip, preferredFramesPerSecond: 24) { _, _ in })
+
+        XCTAssertEqual(surfacePreview.playerSource?.preferredFramesPerSecond, 24)
+        XCTAssertEqual(boardPreview.playerSource?.preferredFramesPerSecond, 24)
+        XCTAssertEqual(surfacePreview.summary.sourceTypeName, "PlayerFrameSource")
+    }
+    #endif
+
+    func testKakaposSurfaceCanBuildTimelineAndExportTaskFromRecordedClip() throws {
+        let outputURL = try makeSampleAssetURL()
+        let duration = CMTime(value: 30, timescale: 30)
+        let clip = RecordedClip(
+            outputURL: outputURL,
+            duration: duration,
+            startedAt: .zero,
+            endedAt: duration,
+            segments: [
+                RecordedClipSegment(
+                    index: 0,
+                    startedAt: .zero,
+                    endedAt: duration,
+                    duration: duration,
+                    containsVideo: true,
+                    containsAudio: true
+                )
+            ],
+            isMutedOnMerge: true
+        )
+        let exportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+
+        let surfaceTimeline = try XCTUnwrap(KakaposSurface.timeline(recordedClip: clip))
+        let boardTimeline = try XCTUnwrap(KakaposSurface.timelineBoard.timeline(recordedClip: clip))
+        let surfaceTask = try XCTUnwrap(KakaposSurface.timelineExportTask(recordedClip: clip, outputURL: exportURL))
+        let boardTask = try XCTUnwrap(KakaposSurface.timelineBoard.timelineExportTask(recordedClip: clip, outputURL: exportURL))
+
+        XCTAssertEqual(surfaceTimeline.layers.count, 1)
+        XCTAssertEqual(boardTimeline.layers.count, 1)
+        XCTAssertEqual(surfaceTask.summary.compiledSummary.videoLayerCount, 1)
+        XCTAssertEqual(boardTask.summary.compiledSummary.videoLayerCount, 1)
+    }
+
     func testPassthroughFrameProcessorPreservesPixelBufferMetadata() throws {
         let pixelBuffer = try makePixelBuffer(width: 16, height: 16)
         let metadata = FrameMetadata(

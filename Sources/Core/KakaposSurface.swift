@@ -190,6 +190,22 @@ public enum KakaposSurface {
             handler: handler
         )
     }
+
+    public static func preview(
+        recordedClip: RecordedClip,
+        preferredFramesPerSecond: Int = 30,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: @escaping PreviewSink.Handler
+    ) -> PreviewPipeline? {
+        previewBoard.preview(
+            recordedClip: recordedClip,
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+    }
 #endif
 
     public static func record(
@@ -242,6 +258,24 @@ public enum KakaposSurface {
         )
     }
 
+    public static func timeline(
+        recordedClip: RecordedClip,
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) -> TimelinePipeline? {
+        timelineBoard.timeline(
+            recordedClip: recordedClip,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        )
+    }
+
     public static func timelineExportTask(
         renderSize: CGSize = CGSize(width: 720, height: 1280),
         frameDuration: CMTime = CMTime(value: 1, timescale: 30),
@@ -258,6 +292,34 @@ public enum KakaposSurface {
             frameDuration: frameDuration,
             layers: layers,
             transitions: transitions,
+            outputURL: outputURL,
+            fileType: fileType,
+            shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+            metadata: metadata,
+            videoProcessors: videoProcessors
+        )
+    }
+
+    public static func timelineExportTask(
+        recordedClip: RecordedClip,
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0,
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        shouldOptimizeForNetworkUse: Bool = true,
+        metadata: [AVMetadataItem] = [],
+        videoProcessors: [FrameProcessor] = []
+    ) -> TimelineExportTask? {
+        timelineBoard.timelineExportTask(
+            recordedClip: recordedClip,
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel,
             outputURL: outputURL,
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
@@ -341,6 +403,22 @@ public enum KakaposSurface {
                 handler: handler
             )
         }
+
+        public func preview(
+            recordedClip: RecordedClip,
+            preferredFramesPerSecond: Int = 30,
+            processors: [FrameProcessor] = [],
+            callbackQueue: DispatchQueue = .main,
+            handler: @escaping PreviewSink.Handler
+        ) -> PreviewPipeline? {
+            KakaposEntryPointFactory.preview(
+                recordedClip: recordedClip,
+                preferredFramesPerSecond: preferredFramesPerSecond,
+                processors: processors,
+                callbackQueue: callbackQueue,
+                handler: handler
+            )
+        }
     #endif
     }
 
@@ -411,6 +489,24 @@ public enum KakaposSurface {
             )
         }
 
+        public func timeline(
+            recordedClip: RecordedClip,
+            renderSize: CGSize = CGSize(width: 720, height: 1280),
+            frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+            startTime: CMTime = .zero,
+            sourceTimeRange: CMTimeRange? = nil,
+            layerLevel: Int = 0
+        ) -> TimelinePipeline? {
+            KakaposEntryPointFactory.timeline(
+                recordedClip: recordedClip,
+                renderSize: renderSize,
+                frameDuration: frameDuration,
+                startTime: startTime,
+                sourceTimeRange: sourceTimeRange,
+                layerLevel: layerLevel
+            )
+        }
+
         public func timelineExportTask(
             renderSize: CGSize = CGSize(width: 720, height: 1280),
             frameDuration: CMTime = CMTime(value: 1, timescale: 30),
@@ -427,6 +523,34 @@ public enum KakaposSurface {
                 frameDuration: frameDuration,
                 layers: layers,
                 transitions: transitions,
+                outputURL: outputURL,
+                fileType: fileType,
+                shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
+                metadata: metadata,
+                videoProcessors: videoProcessors
+            )
+        }
+
+        public func timelineExportTask(
+            recordedClip: RecordedClip,
+            renderSize: CGSize = CGSize(width: 720, height: 1280),
+            frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+            startTime: CMTime = .zero,
+            sourceTimeRange: CMTimeRange? = nil,
+            layerLevel: Int = 0,
+            outputURL: URL,
+            fileType: AVFileType = .mp4,
+            shouldOptimizeForNetworkUse: Bool = true,
+            metadata: [AVMetadataItem] = [],
+            videoProcessors: [FrameProcessor] = []
+        ) -> TimelineExportTask? {
+            KakaposEntryPointFactory.timelineExportTask(
+                recordedClip: recordedClip,
+                renderSize: renderSize,
+                frameDuration: frameDuration,
+                startTime: startTime,
+                sourceTimeRange: sourceTimeRange,
+                layerLevel: layerLevel,
                 outputURL: outputURL,
                 fileType: fileType,
                 shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
