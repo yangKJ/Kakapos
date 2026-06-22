@@ -13,6 +13,37 @@ public final class CameraRecordingController {
     public let recorderSink: RecorderSink
     public let pipeline: RecordingPipeline
     public var eventHandler: ((CameraRecordingEvent) -> Void)?
+    public var stateChangedHandler: ((RecorderSink.State) -> Void)?
+    public var durationChangedHandler: ((CMTime) -> Void)?
+    public var finishHandler: ((Result<RecordedClip, Error>) -> Void)?
+
+    public var state: RecorderSink.State {
+        recorderSink.state
+    }
+
+    public var snapshot: RecordingPipeline.Snapshot {
+        pipeline.snapshot
+    }
+
+    public var summary: RecordingPipeline.Summary {
+        pipeline.summary
+    }
+
+    public var summaryText: String {
+        pipeline.summaryText
+    }
+
+    public var outputURL: URL {
+        recorderSink.outputURL
+    }
+
+    public var recordedClip: RecordedClip? {
+        recorderSink.recordedClip
+    }
+
+    public var isRecordingActive: Bool {
+        state == .recording || state == .paused
+    }
 
     public init(
         source: MediaSource,
@@ -74,6 +105,14 @@ public final class CameraRecordingController {
         pipeline.stop()
     }
 
+    public func stopRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
+        recorderSink.finishRecording { [weak self] result in
+            self?.pipeline.stop()
+            self?.finishHandler?(result)
+            completion(result)
+        }
+    }
+
     public func cancel() {
         pipeline.cancel()
         eventHandler?(.didCancel)
@@ -83,17 +122,19 @@ public final class CameraRecordingController {
         recorderSink.finishRecording { [weak self] result in
             if case .success(let clip) = result {
                 self?.eventHandler?(.clipCountChanged(clip.segments.count))
-                self?.eventHandler?(.didFinish)
             }
+            self?.finishHandler?(result)
             completion(result)
         }
     }
 
     private func wireEvents() {
         recorderSink.durationChangedHandler = { [weak self] duration in
+            self?.durationChangedHandler?(duration)
             self?.eventHandler?(.durationChanged(duration))
         }
         recorderSink.stateChangedHandler = { [weak self] state in
+            self?.stateChangedHandler?(state)
             switch state {
             case .recording:
                 self?.eventHandler?(.didStart)

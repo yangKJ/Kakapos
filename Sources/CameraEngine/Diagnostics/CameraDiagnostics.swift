@@ -56,6 +56,23 @@ public struct CameraCapabilitySnapshot: Equatable, Sendable, Codable {
         self.isMirrored = isMirrored
         self.activeVideoDimensions = activeVideoDimensions
     }
+
+    public var summaryText: String {
+        var text = "audio \(supportsAudioCapture ? "yes" : "no") · photo \(supportsPhotoCapture ? "yes" : "no")"
+        text += " · metadata \(supportsMetadataObjects.rawValue)"
+        text += " · depth \(supportsDepthData.rawValue)"
+        text += " · portrait \(supportsPortraitEffectsMatte.rawValue)"
+        text += " · ar \(supportsARFrameSource.rawValue)"
+        text += " · multicam \(supportsMultiCam.rawValue)"
+        text += " · torch \(supportsTorch.rawValue)"
+        text += " · flash \(supportsFlash.rawValue)"
+        text += " · position \(currentPosition)"
+        text += " · mirrored \(isMirrored ? "yes" : "no")"
+        if let activeVideoDimensions {
+            text += " · size \(Int(activeVideoDimensions.width))x\(Int(activeVideoDimensions.height))"
+        }
+        return text
+    }
 }
 
 public struct CameraDeviceSnapshot: Equatable, Sendable {
@@ -95,6 +112,32 @@ public struct CameraDeviceSnapshot: Equatable, Sendable {
         self.exposurePoint = exposurePoint
         self.activeFormatDescription = activeFormatDescription
         self.activeFrameRateRange = activeFrameRateRange
+    }
+
+    public var summaryText: String {
+        var text = "position \(position) · zoom \(String(format: "%.2f", zoomFactor))x"
+        if let lensPosition {
+            text += " · lens \(String(format: "%.2f", lensPosition))"
+        }
+        if let exposureBias {
+            text += " · ev \(String(format: "%.2f", exposureBias))"
+        }
+        text += " · torch \(torchActive ? "on" : "off")"
+        text += " · flash \(flashAvailable ? "ready" : "off")"
+        text += " · torchAvailable \(torchAvailable ? "yes" : "no")"
+        if let focusPoint {
+            text += " · focus (\(String(format: "%.2f", focusPoint.x)), \(String(format: "%.2f", focusPoint.y)))"
+        }
+        if let exposurePoint {
+            text += " · exposure (\(String(format: "%.2f", exposurePoint.x)), \(String(format: "%.2f", exposurePoint.y)))"
+        }
+        if let activeFrameRateRange {
+            text += " · fps \(String(format: "%.1f", activeFrameRateRange.minimumFramesPerSecond))-\(String(format: "%.1f", activeFrameRateRange.maximumFramesPerSecond))"
+        }
+        if let activeFormatDescription {
+            text += " · format \(activeFormatDescription)"
+        }
+        return text
     }
 }
 
@@ -161,6 +204,45 @@ public enum CameraAdvancedEvent {
     case portraitEffectsMatte(CameraPortraitEffectsMattePayload)
     case arFrame(MediaFrame)
     case multiCamFrame(CameraMultiCamFramePayload)
+
+    public enum Kind: String, Equatable, Sendable, Codable {
+        case metadataObjects
+        case depthData
+        case portraitEffectsMatte
+        case arFrame
+        case multiCamFrame
+    }
+
+    public var kind: Kind {
+        switch self {
+        case .metadataObjects:
+            return .metadataObjects
+        case .depthData:
+            return .depthData
+        case .portraitEffectsMatte:
+            return .portraitEffectsMatte
+        case .arFrame:
+            return .arFrame
+        case .multiCamFrame:
+            return .multiCamFrame
+        }
+    }
+
+    public var summaryText: String {
+        switch self {
+        case .metadataObjects(let payload):
+            let timestampText = payload.timestamp.map { String(format: "%.2fs", $0.seconds) } ?? "n/a"
+            return "metadataObjects count \(payload.objects.count) · timestamp \(timestampText)"
+        case .depthData(let payload):
+            return "depthData timestamp \(String(format: "%.2fs", payload.timestamp.seconds))"
+        case .portraitEffectsMatte(let payload):
+            return "portraitEffectsMatte delivered \(payload.deliveredInPhoto ? "photo" : "stream")"
+        case .arFrame(let frame):
+            return "arFrame presentation \(String(format: "%.2fs", frame.metadata.presentationTime.seconds))"
+        case .multiCamFrame(let payload):
+            return "multiCamFrame position \(payload.position) · presentation \(String(format: "%.2fs", payload.frame.metadata.presentationTime.seconds))"
+        }
+    }
 }
 
 public final class CameraAdvancedOutput {

@@ -10,6 +10,36 @@ import AVFoundation
 
 #if canImport(UIKit) && !os(watchOS)
 public final class CameraPreviewController {
+    public struct Summary {
+        public let mode: Mode
+        public let sourceSummaryText: String
+        public let pipelineSummaryText: String?
+        public let previewState: PreviewSink.State?
+        public let lastFrameIndex: Int64?
+        public let lastPresentationTime: CMTime?
+        public let lastErrorDescription: String?
+
+        public var summaryText: String {
+            var text = "mode \(mode) · source \(sourceSummaryText)"
+            if let previewState {
+                text += " · preview \(previewState)"
+            }
+            if let lastFrameIndex {
+                text += " · frame \(lastFrameIndex)"
+            }
+            if let lastPresentationTime {
+                text += " · presentation \(String(format: "%.2fs", lastPresentationTime.seconds))"
+            }
+            if let pipelineSummaryText {
+                text += " · pipeline \(pipelineSummaryText)"
+            }
+            if let lastErrorDescription {
+                text += " · error \(lastErrorDescription)"
+            }
+            return text
+        }
+    }
+
     public enum Mode: Equatable, Sendable {
         case raw
         case processed
@@ -20,6 +50,26 @@ public final class CameraPreviewController {
     public let previewLayer: AVCaptureVideoPreviewLayer
     public let previewSink: PreviewSink?
     public let previewPipeline: PreviewPipeline?
+
+    public var state: PreviewSink.State? {
+        previewSink?.state
+    }
+
+    public var summary: Summary {
+        Summary(
+            mode: mode,
+            sourceSummaryText: source.summaryText,
+            pipelineSummaryText: previewPipeline?.summaryText,
+            previewState: previewSink?.state,
+            lastFrameIndex: previewSink?.snapshot.lastFrameIndex,
+            lastPresentationTime: previewSink?.snapshot.lastPresentationTime,
+            lastErrorDescription: previewPipeline?.lastErrorDescription
+        )
+    }
+
+    public var summaryText: String {
+        summary.summaryText
+    }
 
     public init(
         source: CameraSource,
