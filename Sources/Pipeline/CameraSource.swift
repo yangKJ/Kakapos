@@ -396,6 +396,10 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         self.isPaused = state == .paused
     }
 
+    func _handleLifecycleActionForTesting(_ action: CameraLifecycleAction) {
+        publish(action)
+    }
+
     @discardableResult
     public func add<T: MediaFrameConsumerNode>(consumer: T) -> T {
         outputNode.add(consumer: consumer)
