@@ -28,6 +28,34 @@ public final class CameraEngine {
         source.summaryText
     }
 
+    public var capabilitySnapshot: CameraCapabilitySnapshot {
+        source.capabilitySnapshot
+    }
+
+    public var capabilitySummaryText: String {
+        source.capabilitySnapshot.summaryText
+    }
+
+    public var deviceSnapshot: CameraDeviceSnapshot {
+        deviceController.snapshot
+    }
+
+    public var deviceSummaryText: String {
+        deviceController.snapshot.summaryText
+    }
+
+    public var previewSummaryText: String? {
+        previewController?.summaryText
+    }
+
+    public var recordingSummaryText: String? {
+        recordingController?.summaryText
+    }
+
+    public var recordedClip: RecordedClip? {
+        recordingController?.recordedClip
+    }
+
     public init(configuration: CameraCaptureConfiguration = .init()) throws {
         let source = try CameraSource(configuration: configuration)
         self.source = source

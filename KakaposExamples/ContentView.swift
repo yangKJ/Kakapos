@@ -669,17 +669,20 @@ private struct CameraRecordView: View {
                     engine.advancedOutput.metadataObjectsHandler = { payload in
                         DispatchQueue.main.async {
                             let ts = payload.timestamp?.seconds ?? 0
-                            advancedEventText = "metadata \(payload.objects.count) @ \(String(format: "%.2fs", ts))"
+                            advancedEventText = CameraAdvancedEvent.metadataObjects(.init(objects: payload.objects, timestamp: payload.timestamp)).summaryText
+                            if payload.objects.isEmpty {
+                                advancedEventText = "metadataObjects count 0 · timestamp \(String(format: "%.2fs", ts))"
+                            }
                         }
                     }
                     engine.advancedOutput.depthDataHandler = { payload in
                         DispatchQueue.main.async {
-                            advancedEventText = "depth @ \(String(format: "%.2fs", payload.timestamp.seconds))"
+                            advancedEventText = CameraAdvancedEvent.depthData(payload).summaryText
                         }
                     }
                     engine.advancedOutput.portraitEffectsMatteHandler = { payload in
                         DispatchQueue.main.async {
-                            advancedEventText = "portrait matte \(payload.deliveredInPhoto ? "photo" : "stream")"
+                            advancedEventText = CameraAdvancedEvent.portraitEffectsMatte(payload).summaryText
                         }
                     }
                     self.engine = engine
@@ -694,7 +697,7 @@ private struct CameraRecordView: View {
                     recorderStateText = "idle"
                     previewStateText = String(describing: previewController.previewSink?.state ?? .idle)
                     recorderSnapshotText = "segments: 0 · duration: 0.00s"
-                    deviceSnapshotText = snapshotText(for: engine.deviceController.snapshot)
+                    deviceSnapshotText = engine.deviceSummaryText
                     advancedEventText = "Awaiting metadata, depth, or portrait events"
                     lastOutputText = "awaiting frames"
                     engine.start()
@@ -743,7 +746,7 @@ private struct CameraRecordView: View {
         #if canImport(UIKit) && !os(watchOS)
         if let recordingController {
             let recorder = recordingController.recorderSink
-            recordingController.finishRecording { result in
+            recordingController.stopRecording { result in
                 DispatchQueue.main.async {
                     switch result {
                     case .success(let clip):
@@ -810,7 +813,7 @@ private struct CameraRecordView: View {
         if !didSwitch {
             message = "Failed to switch camera"
         } else {
-            deviceSnapshotText = snapshotText(for: engine.deviceController.snapshot)
+            deviceSnapshotText = engine.deviceSummaryText
             lastOutputText = "camera: \(String(describing: engine.source.currentPosition))"
         }
         #endif
@@ -830,7 +833,7 @@ private struct CameraRecordView: View {
         #if canImport(UIKit) && !os(watchOS)
         do {
             if let snapshot = try engine?.setZoomFactor(zoomFactor) {
-                deviceSnapshotText = snapshotText(for: snapshot)
+                deviceSnapshotText = snapshot.summaryText
             }
         } catch {
             message = error.localizedDescription
@@ -842,7 +845,7 @@ private struct CameraRecordView: View {
         #if canImport(UIKit) && !os(watchOS)
         do {
             if let snapshot = try engine?.setExposureBias(bias) {
-                deviceSnapshotText = snapshotText(for: snapshot)
+                deviceSnapshotText = snapshot.summaryText
             }
         } catch {
             message = error.localizedDescription
@@ -854,7 +857,7 @@ private struct CameraRecordView: View {
         #if canImport(UIKit) && !os(watchOS)
         do {
             if let snapshot = try engine?.setTorchActive(enabled) {
-                deviceSnapshotText = snapshotText(for: snapshot)
+                deviceSnapshotText = snapshot.summaryText
             }
         } catch {
             message = error.localizedDescription
@@ -867,11 +870,6 @@ private struct CameraRecordView: View {
         return "segments: \(snapshot.clipCount) · video: \(snapshot.recordedVideoSegmentCount) · audio: \(snapshot.recordedAudioSegmentCount) · duration: \(duration)"
     }
 
-    private func snapshotText(for snapshot: CameraDeviceSnapshot) -> String {
-        let zoom = String(format: "%.1f", snapshot.zoomFactor)
-        let bias = String(format: "%.1f", snapshot.exposureBias ?? 0)
-        return "zoom \(zoom)x · ev \(bias) · torch \(snapshot.torchActive ? "on" : "off") · flash \(snapshot.flashAvailable ? "ready" : "off")"
-    }
 }
 
 private struct TimelineExportView: View {
