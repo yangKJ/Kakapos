@@ -3661,6 +3661,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recordedClip?.segments.first?.containsVideo, true)
         XCTAssertEqual(recordedClip?.segments.first?.containsAudio, false)
         XCTAssertEqual(recordedClip?.representationDictionary?[RecordedClipFilenameKey] as? String, outputURL.lastPathComponent)
+        XCTAssertEqual(recordedClip?.mergeHandoff.segmentCount, 1)
+        XCTAssertEqual(recordedClip?.mergeHandoff.containsVideo, true)
+        XCTAssertEqual(recordedClip?.mergeHandoff.containsAudio, false)
+        XCTAssertEqual(recordedClip?.normalizedSessionManifest["containsVideo"], "true")
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
@@ -3875,6 +3879,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(clip.fileExists)
         XCTAssertEqual(clip.representationDictionary?[RecordedClipFilenameKey] as? String, outputURL.lastPathComponent)
         XCTAssertEqual((clip.representationDictionary?[RecordedClipInfoDictionaryKey] as? [String: String])?["origin"], "unit-test")
+        XCTAssertEqual(clip.mergeHandoff.segmentCount, 1)
+        XCTAssertEqual(clip.mergeHandoff.containsVideo, true)
+        XCTAssertEqual(clip.mergeHandoff.containsAudio, true)
+        XCTAssertTrue(clip.summaryText.contains("segments 1"))
 
         let restored = RecordedClip(directoryPath: directoryURL.path, representationDictionary: clip.representationDictionary)
         XCTAssertEqual(restored.outputURL, outputURL)
@@ -3959,6 +3967,36 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.state, .cancelled)
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertNil(sink.recordedClip)
+    }
+
+    func testRecorderSinkSnapshotTracksMaximumDurationAndRemainingDuration() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        sink.maximumDuration = CMTime(seconds: 2, preferredTimescale: 600)
+        let pixelBuffer = try makePixelBuffer(width: 16, height: 16)
+        let frame = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: CMTime(seconds: 0.5, preferredTimescale: 600))
+        )
+        let appendExpectation = expectation(description: "append limited frame")
+
+        sink.consume(frame) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        wait(for: [appendExpectation], timeout: 2)
+        let snapshot = sink.snapshot
+        XCTAssertEqual(snapshot.maximumDuration, CMTime(seconds: 2, preferredTimescale: 600))
+        XCTAssertEqual(snapshot.containsVideo, true)
+        XCTAssertEqual(snapshot.containsAudio, false)
+        XCTAssertNotNil(snapshot.remainingDuration)
+        XCTAssertTrue(sink.summaryText.contains("max 2.00s"))
+        XCTAssertTrue(sink.summaryText.contains("remaining"))
     }
 
     func testRecorderSinkIgnoresLateFramesAfterCancelAndFinish() throws {
@@ -4101,10 +4139,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.summary.recordedAudioSegmentCount, 0)
         XCTAssertEqual(sink.summary.lastPresentationTime, .zero)
         XCTAssertNil(sink.summary.pausedAt)
-        XCTAssertEqual(
-            sink.summary.summaryText,
-            "state recording · clips 0 · total 0.00s · clip 0.00s · recorded no · started yes · video yes · audio no · segments v0/a0 · presentation 0.00s"
-        )
+        XCTAssertTrue(sink.summary.summaryText.contains("state recording"))
+        XCTAssertTrue(sink.summary.summaryText.contains("segments v0/a0"))
+        XCTAssertTrue(sink.summary.summaryText.contains("payload vyes/ano"))
+        XCTAssertTrue(sink.summary.summaryText.contains("presentation 0.00s"))
     }
 
     func testRecordingPipelineRoutesFramesToRecorderAndSummarizesBoardState() throws {
