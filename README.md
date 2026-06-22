@@ -32,7 +32,7 @@ At the top level, Kakapos can also be understood as three public engines over on
 Kakapos keeps a small board surface for day-to-day use, while the engine view explains the larger responsibility boundaries.
 
 - **Video Engine**: asset input, player-frame preview, offline export, reader/writer export, and export instructions.
-- **Camera Engine**: realtime camera capture, camera preview, recording, and session lifecycle.
+- **Camera Engine**: realtime camera capture, processed preview, device control, multi-segment recording, advanced outputs, and session lifecycle.
 - **Timeline Engine**: timeline layers, groups, keyframes, transitions, audio mix, and timeline export.
 - **Media Core**: shared `MediaFrame`, `FrameMetadata`, `FrameProcessor`, `MediaSource`, `MediaSink`, and `MediaPipeline` contracts.
 
@@ -46,20 +46,29 @@ Start with the smallest entry points:
 
 - **Export**: `VideoX`, `ReaderWriterExportJob`
 - **Preview**: `PreviewPipeline`, `PlayerFrameSource`, `PreviewSink`
-- **Record**: `RecordingPipeline`, `CameraSource`, `RecorderSink`
+- **Record**: `CameraEngine`, `RecordingPipeline`, `CameraSource`
 - **Timeline**: `TimelinePipeline`, `TimelineComposition`
 
 The fuller surface stays available behind each board:
 
 - **Export**: `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, `WatermarkInstruction`, `ReaderWriterExportJob`
 - **Preview**: `PlayerFrameSource`, `PreviewSink`, `MediaPipeline`, `MediaProcessorChain`
-- **Record**: `CameraSource`, `RecorderSink`, `RecordingSession`
+- **Record**: `CameraEngine`, `RecordingPipeline`, `CameraSource`, `CameraDeviceController`, `CameraPreviewController`, `CameraRecordingController`, `RecorderSink`, `RecordingSession`, `CameraAdvancedOutput`
 - **Timeline**: `TimelineComposition`, `ClipLayer`, `ImageLayer`, `AudioLayer`, `EffectLayer`, `GroupLayer`, `Transition`, `KeyframeAnimation`
 
 You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface and its starter types. For a thinner starting layer, use `KakaposBoards` to build the four boards without touching the wider public surface.
 `KakaposCapabilityCatalog.starterBoards` and `KakaposSurface.starterBoards` expose the same ordered starter path when you want the narrowest read-only entry list.
 
 The board entry points above are the recommended path for new code.
+
+### Camera Engine Highlights
+
+- `CameraEngine`: top-level camera orchestration entry that assembles source, preview, recording, and processor routing.
+- `CameraSource`: video, audio, photo, metadata-object, depth, and portrait-matte capture output.
+- `CameraDeviceController`: focus, exposure, white balance, zoom, torch, flash, frame-rate, and format control.
+- `CameraPreviewController`: raw preview-layer mode and processed preview mode through `FrameProcessor`.
+- `CameraRecordingController`: recorder orchestration over `RecorderSink` and `RecordingSession`.
+- `CameraAdvancedOutput`: metadata, depth, portrait matte, AR frame, and multicam event fan-out.
 
 ### 🔧 How It Works
 

@@ -127,6 +127,12 @@ public enum KakaposBoards {
             processors: processors
         )
     }
+
+    public static func camera(
+        configuration: CameraCaptureConfiguration = .init()
+    ) throws -> CameraEngine {
+        try recordBoard.camera(configuration: configuration)
+    }
 #endif
 
     public static func timeline(

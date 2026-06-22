@@ -59,7 +59,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable, Codable {
         case .preview:
             return ["PreviewPipeline", "PlayerFrameSource", "PreviewSink", "MediaPipeline", "MediaProcessorChain"]
         case .record:
-            return ["RecordingPipeline", "CameraSource", "RecorderSink", "RecordingSession"]
+            return ["CameraEngine", "RecordingPipeline", "CameraSource", "CameraDeviceController", "CameraPreviewController", "CameraRecordingController", "RecorderSink", "RecordingSession", "CameraAdvancedOutput"]
         case .timeline:
             return ["TimelinePipeline", "TimelineExportTask", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"]
         }
@@ -72,7 +72,7 @@ public enum KakaposCapabilityBoard: String, CaseIterable, Sendable, Codable {
         case .preview:
             return ["PreviewPipeline", "PlayerFrameSource", "PreviewSink"]
         case .record:
-            return ["RecordingPipeline", "CameraSource", "RecorderSink"]
+            return ["CameraEngine", "RecordingPipeline", "CameraSource"]
         case .timeline:
             return ["TimelinePipeline", "TimelineExportTask", "TimelineComposition"]
         }

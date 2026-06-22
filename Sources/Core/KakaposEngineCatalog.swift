@@ -33,7 +33,7 @@ public enum KakaposEngine: String, CaseIterable, Sendable, Codable {
         case .video:
             return "Asset, player-frame preview, offline export, and export instruction workflows."
         case .camera:
-            return "Realtime camera capture, camera preview, recording, and session lifecycle."
+            return "Realtime camera capture, processed preview, recording, device control, and advanced outputs."
         case .timeline:
             return "Layered composition, keyframes, transitions, audio mix, and timeline export."
         }
@@ -59,7 +59,7 @@ public enum KakaposEngine: String, CaseIterable, Sendable, Codable {
         case .video:
             return ["VideoX", "ReaderWriterExportJob", "PlayerFrameSource", "PreviewPipeline", "Provider", "Instruction", "FilterInstruction", "RotateInstruction", "WatermarkInstruction"]
         case .camera:
-            return ["CameraSource", "PreviewPipeline", "RecordingPipeline", "PreviewSink", "RecorderSink", "RecordingSession"]
+            return ["CameraEngine", "CameraSource", "CameraDeviceController", "CameraPreviewController", "CameraRecordingController", "CameraAdvancedOutput", "RecordingPipeline", "PreviewSink", "RecorderSink", "RecordingSession"]
         case .timeline:
             return ["TimelinePipeline", "TimelineExportTask", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"]
         }
@@ -72,7 +72,7 @@ public enum KakaposEngine: String, CaseIterable, Sendable, Codable {
         case .video:
             return "Export instructions belong here as the offline export instruction layer."
         case .camera:
-            return "Camera preview and recording belong here, but player preview remains part of video workflows."
+            return "Camera preview, recording, device control, depth, metadata, portrait, AR, and multicam belong here, but player preview remains part of video workflows."
         case .timeline:
             return "Timeline compiles processor plans and export tasks without becoming a filter-kernel layer."
         }
