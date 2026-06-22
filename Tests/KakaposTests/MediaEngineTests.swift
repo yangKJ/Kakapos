@@ -4726,7 +4726,120 @@ final class MediaEngineTests: XCTestCase {
         source._emitForTesting(sampleBuffer: secondBuffer, mediaType: .video)
         XCTAssertEqual(receivedFrames.count, 2)
     }
+
+    func testCameraSourceInterruptionCallbacksAndSnapshotStayInSync() throws {
+        let source = try CameraSource(configuration: .init(captureMode: .videoWithoutAudio))
+        var events: [CameraSessionEvent] = []
+
+        source.sessionEventHandler = { event in
+            events.append(event)
+        }
+
+        source._handleLifecycleActionForTesting(.didStartRunning)
+        source._handleLifecycleActionForTesting(.wasInterrupted)
+        source._handleLifecycleActionForTesting(.interruptionEnded)
+
+        XCTAssertEqual(events, [.didStart, .wasInterrupted, .interruptionEnded])
+        XCTAssertEqual(source.snapshot.state, .running)
+        XCTAssertEqual(source.summary.state, .running)
+    }
+
+    func testCameraSourcePositionAndAuthorizationTestingHooksUpdateSnapshotDetails() throws {
+        let source = try CameraSource(
+            configuration: .init(
+                captureMode: .videoWithoutAudio,
+                preferredPosition: .back,
+                mirroringMode: .automatic
+            )
+        )
+
+        source._handleLifecycleActionForTesting(.positionChanged(.front))
+        source._handleLifecycleActionForTesting(.authorizationChanged(.denied))
+
+        XCTAssertEqual(source.snapshot.position, .front)
+        XCTAssertEqual(source.summary.position, .front)
+        XCTAssertEqual(source.snapshot.authorizationStatus, .denied)
+        XCTAssertEqual(source.summary.authorizationStatus, .denied)
+        XCTAssertTrue(source.snapshot.isMirrored)
+        XCTAssertEqual(source.sourceSnapshot.details["position"], "front")
+        XCTAssertEqual(source.sourceSnapshot.details["auth"], "denied")
+    }
     #endif
+
+    func testRecordingSessionAccumulatesMultipleSegmentsAndTracksAudioVideoFlags() {
+        let session = RecordingSession()
+
+        session.markVideoFrame(at: .zero)
+        session.pause(at: CMTime(value: 30, timescale: 30))
+        session.finalizeCurrentClipIfNeeded(preferredEndTime: CMTime(value: 30, timescale: 30))
+        session.resume(at: CMTime(value: 90, timescale: 30))
+        session.markAudioFrame(at: CMTime(value: 30, timescale: 30))
+        session.markVideoFrame(at: CMTime(value: 60, timescale: 30))
+        session.finalizeCurrentClipIfNeeded(preferredEndTime: CMTime(value: 60, timescale: 30))
+
+        let snapshot = session.snapshot()
+
+        XCTAssertEqual(snapshot.clipCount, 2)
+        XCTAssertEqual(snapshot.recordedVideoSegmentCount, 2)
+        XCTAssertEqual(snapshot.recordedAudioSegmentCount, 1)
+        XCTAssertEqual(snapshot.totalDuration, CMTime(value: 60, timescale: 30))
+        XCTAssertEqual(session.clips.first?.containsAudio, false)
+        XCTAssertEqual(session.clips.last?.containsAudio, true)
+        XCTAssertEqual(session.clips.last?.containsVideo, true)
+    }
+
+    func testRecorderSinkMultiSegmentSummaryTracksFinishedSegmentCounts() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
+        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = MediaFrame(
+            pixelBuffer: pixelBuffer,
+            metadata: FrameMetadata(presentationTime: CMTime(value: 90, timescale: 30))
+        )
+        let appendExpectation = expectation(description: "append multi segment frames")
+        appendExpectation.expectedFulfillmentCount = 2
+        let finishExpectation = expectation(description: "finish multi segment recording")
+        var recordedClip: RecordedClip?
+
+        sink.consume(first) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        sink.pauseRecording(at: CMTime(value: 30, timescale: 30))
+        sink.resumeRecording()
+
+        sink.consume(second) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected recorder failure: \(error)")
+            }
+            appendExpectation.fulfill()
+        }
+
+        wait(for: [appendExpectation], timeout: 2)
+
+        sink.finishRecording { result in
+            switch result {
+            case .success(let clip):
+                recordedClip = clip
+            case .failure(let error):
+                XCTFail("Unexpected finish recording failure: \(error)")
+            }
+            finishExpectation.fulfill()
+        }
+
+        wait(for: [finishExpectation], timeout: 5)
+
+        XCTAssertEqual(sink.summary.clipCount, 2)
+        XCTAssertEqual(sink.summary.recordedVideoSegmentCount, 2)
+        XCTAssertEqual(sink.summary.recordedAudioSegmentCount, 0)
+        XCTAssertEqual(recordedClip?.segments.count, 2)
+    }
 }
 
 private final class TestSource: MediaSource {
