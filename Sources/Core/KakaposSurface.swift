@@ -81,6 +81,18 @@ public enum KakaposSurface {
         KakaposCapabilityCatalog.manifest
     }
 
+    public static var engines: [KakaposEngineInfo] {
+        KakaposEngineCatalog.engines
+    }
+
+    public static var publicEngines: [KakaposEngineInfo] {
+        KakaposEngineCatalog.publicEngines
+    }
+
+    public static func engine(named name: String) -> KakaposEngineInfo? {
+        KakaposEngineCatalog.engine(named: name)
+    }
+
     public static func board(named name: String) -> KakaposCapabilityBoardInfo? {
         KakaposCapabilityCatalog.board(named: name)
     }

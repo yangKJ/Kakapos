@@ -16,14 +16,25 @@ To keep adoption lightweight, the public surface is grouped into four small boar
 
 Kakapos is not a filter-kernel library. It owns media lifecycle, frame sourcing, preview routing, recording, offline export, and timeline composition. When paired with [Harbeth](https://github.com/yangKJ/Harbeth), Kakapos handles the media engine layer while Harbeth handles high-quality GPU rendering for each frame.
 
+At the top level, Kakapos can also be understood as three public engines over one shared core: **Video Engine**, **Camera Engine**, and **Timeline Engine**. `Media Core` provides the shared frame, processor, source, sink, and pipeline contracts.
+
 ### ✨ Key Features
 
 - **Processor-neutral frame pipeline**: Connect any processor that can transform `CVPixelBuffer`, `CMSampleBuffer`, or `MTLTexture` through `FrameProcessor`.
 - **Harbeth integration**: Use `HarbethFrameProcessor` when you want the official Kakapos + Harbeth render path.
 - **Media sources**: Build pipelines from assets, player frames, camera frames, and image-backed timeline layers.
 - **Media sinks**: Route processed frames to preview callbacks, recorders, offline exporters, or custom pixel-buffer consumers.
-- **Offline compatibility**: Existing `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, and `WatermarkInstruction` APIs remain available.
+- **Export instruction layer**: `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, and `WatermarkInstruction` are part of the Export board.
 - **Timeline foundation**: Compose clip, image, audio, effect, group, transition, and keyframe-driven media models.
+
+### Public Engines
+
+Kakapos keeps a small board surface for day-to-day use, while the engine view explains the larger responsibility boundaries.
+
+- **Video Engine**: asset input, player-frame preview, offline export, reader/writer export, and export instructions.
+- **Camera Engine**: realtime camera capture, camera preview, recording, and session lifecycle.
+- **Timeline Engine**: timeline layers, groups, keyframes, transitions, audio mix, and timeline export.
+- **Media Core**: shared `MediaFrame`, `FrameMetadata`, `FrameProcessor`, `MediaSource`, `MediaSink`, and `MediaPipeline` contracts.
 
 ### Lightweight Boards
 
@@ -79,11 +90,11 @@ let previewChain = MediaProcessorChain(
 )
 ```
 
-For existing offline export users, the instruction-based API still works:
+For offline export users, the instruction-based API is part of the Export board:
 
 ---
 
-### VideoX Compatibility
+### Export Instructions
 
 - Create the video exporter provider.
 
