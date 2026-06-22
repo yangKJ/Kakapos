@@ -95,6 +95,12 @@ final class CameraEngineTests: XCTestCase {
         advancedOutput.emitDepthData(.init(timestamp: CMTime(seconds: 5, preferredTimescale: 600)))
 
         XCTAssertEqual(receivedKinds, [.metadataObjects, .depthData])
+        XCTAssertEqual(advancedOutput.eventCount, 2)
+        XCTAssertEqual(advancedOutput.latestEventKind, .depthData)
+        XCTAssertEqual(advancedOutput.latestEventSummaryText, "depthData timestamp 5.00s")
+        advancedOutput.reset()
+        XCTAssertEqual(advancedOutput.eventCount, 0)
+        XCTAssertNil(advancedOutput.latestEventKind)
         XCTAssertEqual(
             CameraAdvancedEvent.depthData(.init(timestamp: CMTime(seconds: 5, preferredTimescale: 600))).summaryText,
             "depthData timestamp 5.00s"
@@ -209,6 +215,35 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertTrue(engine.capabilitySummaryText.contains("position"))
         XCTAssertNotNil(engine.previewSummaryText)
         XCTAssertNotNil(engine.recordingSummaryText)
+    }
+
+    func testCameraPreviewControllerSummarizesModeAndSourceState() throws {
+        let engine = try CameraEngine(
+            configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
+        )
+        let previewController = engine.makePreviewController(mode: .processed, processors: [])
+
+        XCTAssertEqual(previewController.state, .idle)
+        XCTAssertTrue(previewController.summaryText.contains("mode processed"))
+        XCTAssertTrue(previewController.summaryText.contains("source state"))
+    }
+
+    func testCameraEngineStopRecordingFailsWithoutRecordingController() throws {
+        let engine = try CameraEngine(
+            configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
+        )
+        let expectation = expectation(description: "missing recording controller")
+        var receivedError: Error?
+
+        engine.stopRecording { result in
+            if case .failure(let error) = result {
+                receivedError = error
+            }
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(receivedError as? CameraEngineError, .recordingControllerUnavailable)
     }
 
     func testRecordingPipelineCameraSourceSnapshotCarriesCapabilitySnapshot() throws {

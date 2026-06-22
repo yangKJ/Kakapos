@@ -9,6 +9,17 @@ import Foundation
 import AVFoundation
 
 #if canImport(UIKit) && !os(watchOS)
+public enum CameraEngineError: Error, LocalizedError, Equatable {
+    case recordingControllerUnavailable
+
+    public var errorDescription: String? {
+        switch self {
+        case .recordingControllerUnavailable:
+            return "Recording controller unavailable"
+        }
+    }
+}
+
 public final class CameraEngine {
     public let source: CameraSource
     public let deviceController: CameraDeviceController
@@ -100,6 +111,23 @@ public final class CameraEngine {
         previewController?.start()
     }
 
+    public func startPreview(
+        mode: CameraPreviewController.Mode = .processed,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        handler: PreviewSink.Handler? = nil
+    ) -> CameraPreviewController {
+        let controller = previewController ?? makePreviewController(
+            mode: mode,
+            processors: processors,
+            callbackQueue: callbackQueue,
+            handler: handler
+        )
+        source.start()
+        controller.start()
+        return controller
+    }
+
     public func pause() {
         source.pause()
         previewController?.pause()
@@ -122,6 +150,47 @@ public final class CameraEngine {
         source.cancel()
         previewController?.stop()
         recordingController?.cancel()
+    }
+
+    @discardableResult
+    public func startRecording(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        processors: [FrameProcessor] = []
+    ) throws -> CameraRecordingController {
+        let controller: CameraRecordingController
+        if let recordingController {
+            controller = recordingController
+            controller.start()
+        } else {
+            controller = try makeRecordingController(
+                outputURL: outputURL,
+                fileType: fileType,
+                processors: processors
+            )
+            source.start()
+            previewController?.start()
+            controller.start()
+        }
+        return controller
+    }
+
+    public func stopRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
+        guard let recordingController else {
+            completion(.failure(CameraEngineError.recordingControllerUnavailable))
+            return
+        }
+        recordingController.stopRecording { [weak self] result in
+            self?.previewController?.stop()
+            self?.source.stop()
+            completion(result)
+        }
+    }
+
+    public func cancelRecording() {
+        recordingController?.cancel()
+        previewController?.stop()
+        source.cancel()
     }
 
     @discardableResult

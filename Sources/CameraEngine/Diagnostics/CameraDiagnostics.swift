@@ -252,31 +252,52 @@ public final class CameraAdvancedOutput {
     public var arFrameHandler: ((MediaFrame) -> Void)?
     public var multiCamFrameHandler: ((CameraMultiCamFramePayload) -> Void)?
     public var eventHandler: ((CameraAdvancedEvent) -> Void)?
+    public private(set) var latestEvent: CameraAdvancedEvent?
+    public private(set) var eventCount: Int = 0
+
+    public var latestEventKind: CameraAdvancedEvent.Kind? {
+        latestEvent?.kind
+    }
+
+    public var latestEventSummaryText: String {
+        latestEvent?.summaryText ?? "No advanced camera events yet"
+    }
 
     public init() {}
 
     public func emitMetadataObjects(_ payload: CameraMetadataObjectPayload) {
+        record(.metadataObjects(payload))
         metadataObjectsHandler?(payload)
-        eventHandler?(.metadataObjects(payload))
     }
 
     public func emitDepthData(_ payload: CameraDepthDataPayload) {
+        record(.depthData(payload))
         depthDataHandler?(payload)
-        eventHandler?(.depthData(payload))
     }
 
     public func emitPortraitEffectsMatte(_ payload: CameraPortraitEffectsMattePayload) {
+        record(.portraitEffectsMatte(payload))
         portraitEffectsMatteHandler?(payload)
-        eventHandler?(.portraitEffectsMatte(payload))
     }
 
     public func emitARFrame(_ frame: MediaFrame) {
+        record(.arFrame(frame))
         arFrameHandler?(frame)
-        eventHandler?(.arFrame(frame))
     }
 
     public func emitMultiCamFrame(_ payload: CameraMultiCamFramePayload) {
+        record(.multiCamFrame(payload))
         multiCamFrameHandler?(payload)
-        eventHandler?(.multiCamFrame(payload))
+    }
+
+    public func reset() {
+        latestEvent = nil
+        eventCount = 0
+    }
+
+    private func record(_ event: CameraAdvancedEvent) {
+        latestEvent = event
+        eventCount += 1
+        eventHandler?(event)
     }
 }
