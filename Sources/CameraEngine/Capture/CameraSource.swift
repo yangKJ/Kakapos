@@ -121,6 +121,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     public var sessionEventHandler: ((CameraSessionEvent) -> Void)?
     public var photoCaptureHandler: ((CameraPhotoCaptureResult) -> Void)?
     public var authorizationStatusChangedHandler: ((CameraAuthorizationStatus) -> Void)?
+    public var isRecordingActiveProvider: (() -> Bool)?
 
     public var snapshot: Snapshot {
         Snapshot(
@@ -248,11 +249,15 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     private let ciContext = CIContext(options: nil)
     private var notificationObservers: [NSObjectProtocol] = []
     private var deviceObservers: [NSKeyValueObservation] = []
+    private let sessionEventDispatcher = CameraEventDispatcher<CameraSessionEvent>()
+    private let authorizationDispatcher = CameraEventDispatcher<CameraAuthorizationStatus>()
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
     private var isSessionConfigured = false
     private var lastVideoPixelBuffer: CVPixelBuffer?
     private var lastVideoSampleBuffer: CMSampleBuffer?
+    private var shouldResumeAfterInterruption = false
+    private var audioSessionEventToken: UUID?
 
     public init(configuration: CameraSourceConfiguration = CameraSourceConfiguration()) throws {
         let session = AVCaptureSession()
@@ -272,6 +277,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         applySessionPreset()
         updateCurrentOrientation()
         startObservingNotifications()
+        wireAudioSessionEvents()
     }
 
     public init(session: AVCaptureSession, configuration: CameraSourceConfiguration) throws {
@@ -291,6 +297,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         applySessionPreset()
         updateCurrentOrientation()
         startObservingNotifications()
+        wireAudioSessionEvents()
     }
 
     deinit {
@@ -492,6 +499,24 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         }
     }
 
+    @discardableResult
+    public func addSessionEventObserver(_ handler: @escaping (CameraSessionEvent) -> Void) -> UUID {
+        sessionEventDispatcher.addObserver(handler)
+    }
+
+    public func removeSessionEventObserver(_ token: UUID) {
+        sessionEventDispatcher.removeObserver(token)
+    }
+
+    @discardableResult
+    public func addAuthorizationObserver(_ handler: @escaping (CameraAuthorizationStatus) -> Void) -> UUID {
+        authorizationDispatcher.addObserver(handler)
+    }
+
+    public func removeAuthorizationObserver(_ token: UUID) {
+        authorizationDispatcher.removeObserver(token)
+    }
+
     func _emitForTesting(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
         emit(sampleBuffer: sampleBuffer, mediaType: mediaType)
     }
@@ -503,6 +528,14 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
 
     func _handleLifecycleActionForTesting(_ action: CameraLifecycleAction) {
         publish(action)
+    }
+
+    func _handleSessionInterruptionForTesting(recordingActive: Bool) {
+        handleSessionInterruption(isRecordingActive: recordingActive)
+    }
+
+    func _handleSessionInterruptionEndedForTesting() {
+        handleSessionInterruptionEnded()
     }
 
     @discardableResult
@@ -822,8 +855,10 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         authorizationStatus = lifecycle.authorizationStatus
         DispatchQueue.main.async {
             self.sessionEventHandler?(event)
+            self.sessionEventDispatcher.emit(event)
             if case .authorizationChanged(let status) = event {
                 self.authorizationStatusChangedHandler?(status)
+                self.authorizationDispatcher.emit(status)
             }
         }
     }
@@ -975,12 +1010,12 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil) { [weak self] _ in
-                self?.publish(.wasInterrupted)
+                self?.handleSessionInterruption(isRecordingActive: self?.isRecordingActiveProvider?() == true)
             }
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: session, queue: nil) { [weak self] _ in
-                self?.publish(.interruptionEnded)
+                self?.handleSessionInterruptionEnded()
             }
         )
         notificationObservers.append(
@@ -1006,6 +1041,12 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         notificationObservers.forEach(NotificationCenter.default.removeObserver)
         notificationObservers.removeAll()
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
+    }
+
+    private func wireAudioSessionEvents() {
+        audioSessionEventToken = audioSessionController.addEventObserver { [weak self] event in
+            self?.handleAudioSessionEvent(event)
+        }
     }
 
     private func updateCurrentOrientation() {
@@ -1044,37 +1085,65 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         }
     }
 
+    private func handleSessionInterruption(isRecordingActive: Bool) {
+        if !isPaused {
+            isPaused = true
+            shouldResumeAfterInterruption = true
+        } else {
+            shouldResumeAfterInterruption = false
+        }
+        publish(isRecordingActive ? .wasInterruptedWhileRecording : .wasInterrupted)
+    }
+
+    private func handleSessionInterruptionEnded() {
+        if shouldResumeAfterInterruption {
+            isPaused = false
+            publish(.resumeRequested)
+        }
+        shouldResumeAfterInterruption = false
+        publish(.interruptionEnded)
+    }
+
+    private func handleAudioSessionEvent(_ event: CameraAudioSessionController.Event) {
+        switch event {
+        case .routeChanged(let route):
+            publish(.audioRouteChanged(route))
+        case .didActivate, .didDeactivate, .activationFailed, .interruptionBegan, .interruptionEnded:
+            break
+        }
+    }
+
     private func installDeviceObservers() {
         deviceObservers.removeAll()
         guard let device = videoInput?.device else { return }
         deviceObservers.append(
             device.observe(\.isAdjustingFocus, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.eventHandler?(.focusAdjustmentChanged(value))
+                self?.deviceController.emit(.focusAdjustmentChanged(value))
             }
         )
         deviceObservers.append(
             device.observe(\.isAdjustingExposure, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.eventHandler?(.exposureAdjustmentChanged(value))
+                self?.deviceController.emit(.exposureAdjustmentChanged(value))
             }
         )
         deviceObservers.append(
             device.observe(\.lensPosition, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.eventHandler?(.lensPositionChanged(value))
+                self?.deviceController.emit(.lensPositionChanged(value))
             }
         )
         deviceObservers.append(
             device.observe(\.exposureDuration, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.eventHandler?(.exposureDurationChanged(value))
+                self?.deviceController.emit(.exposureDurationChanged(value))
             }
         )
         deviceObservers.append(
             device.observe(\.iso, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.eventHandler?(.isoChanged(value))
+                self?.deviceController.emit(.isoChanged(value))
             }
         )
     }

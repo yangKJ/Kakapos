@@ -24,10 +24,20 @@ public final class CameraAudioSessionController {
 
     private let audioSession: AVAudioSession
     private var observers: [NSObjectProtocol] = []
+    private let eventDispatcher = CameraEventDispatcher<Event>()
 
     public init(audioSession: AVAudioSession = .sharedInstance()) {
         self.audioSession = audioSession
         startObserving()
+    }
+
+    @discardableResult
+    public func addEventObserver(_ handler: @escaping (Event) -> Void) -> UUID {
+        eventDispatcher.addObserver(handler)
+    }
+
+    public func removeEventObserver(_ token: UUID) {
+        eventDispatcher.removeObserver(token)
     }
 
     deinit {
@@ -40,9 +50,9 @@ public final class CameraAudioSessionController {
             try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: options)
             try audioSession.setActive(true)
             isActive = true
-            eventHandler?(.didActivate)
+            emit(.didActivate)
         } catch {
-            eventHandler?(.activationFailed(error.localizedDescription))
+            emit(.activationFailed(error.localizedDescription))
         }
     }
 
@@ -50,11 +60,11 @@ public final class CameraAudioSessionController {
         do {
             try audioSession.setActive(false, options: [.notifyOthersOnDeactivation])
         } catch {
-            eventHandler?(.activationFailed(error.localizedDescription))
+            emit(.activationFailed(error.localizedDescription))
             return
         }
         isActive = false
-        eventHandler?(.didDeactivate)
+        emit(.didDeactivate)
     }
 
     private func startObserving() {
@@ -63,7 +73,7 @@ public final class CameraAudioSessionController {
             center.addObserver(forName: AVAudioSession.routeChangeNotification, object: audioSession, queue: nil) { [weak self] notification in
                 let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
                 let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue)
-                self?.eventHandler?(.routeChanged(String(describing: reason)))
+                self?.emit(.routeChanged(String(describing: reason)))
             }
         )
         observers.append(
@@ -72,16 +82,21 @@ public final class CameraAudioSessionController {
                 let type = AVAudioSession.InterruptionType(rawValue: typeValue)
                 switch type {
                 case .began:
-                    self?.eventHandler?(.interruptionBegan)
+                    self?.emit(.interruptionBegan)
                 case .ended:
                     let optionsValue = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                     let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-                    self?.eventHandler?(.interruptionEnded(shouldResume: options.contains(.shouldResume)))
+                    self?.emit(.interruptionEnded(shouldResume: options.contains(.shouldResume)))
                 default:
                     break
                 }
             }
         )
+    }
+
+    private func emit(_ event: Event) {
+        eventHandler?(event)
+        eventDispatcher.emit(event)
     }
 }
 #endif

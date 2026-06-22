@@ -17,6 +17,8 @@ public final class CameraRecordingController {
     public var durationChangedHandler: ((CMTime) -> Void)?
     public var finishHandler: ((Result<RecordedClip, Error>) -> Void)?
 
+    private let eventDispatcher = CameraEventDispatcher<CameraRecordingEvent>()
+
     public var state: RecorderSink.State {
         recorderSink.state
     }
@@ -86,20 +88,29 @@ public final class CameraRecordingController {
         wireEvents()
     }
 
+    @discardableResult
+    public func addEventObserver(_ handler: @escaping (CameraRecordingEvent) -> Void) -> UUID {
+        eventDispatcher.addObserver(handler)
+    }
+
+    public func removeEventObserver(_ token: UUID) {
+        eventDispatcher.removeObserver(token)
+    }
+
     public func start() {
-        eventHandler?(.willStart)
+        emit(.willStart)
         pipeline.start()
-        eventHandler?(.didStart)
+        emit(.didStart)
     }
 
     public func pause() {
         recorderSink.pauseRecording()
-        eventHandler?(.didPause)
+        emit(.didPause)
     }
 
     public func resume() {
         recorderSink.resumeRecording()
-        eventHandler?(.didResume)
+        emit(.didResume)
     }
 
     public func stop() {
@@ -110,9 +121,9 @@ public final class CameraRecordingController {
         recorderSink.finishRecording { [weak self] result in
             self?.pipeline.stop()
             if case .success(let clip) = result {
-                clip.segments.last.map { self?.eventHandler?(.clipCompleted($0)) }
+                clip.segments.last.map { self?.emit(.clipCompleted($0)) }
             } else if case .failure(let error) = result {
-                self?.eventHandler?(.didFail(error.localizedDescription))
+                self?.emit(.didFail(error.localizedDescription))
             }
             self?.finishHandler?(result)
             completion(result)
@@ -121,13 +132,13 @@ public final class CameraRecordingController {
 
     public func cancel() {
         pipeline.cancel()
-        eventHandler?(.didCancel)
+        emit(.didCancel)
     }
 
     public func finishRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
         recorderSink.finishRecording { [weak self] result in
             if case .success(let clip) = result {
-                self?.eventHandler?(.clipCountChanged(clip.segments.count))
+                self?.emit(.clipCountChanged(clip.segments.count))
             }
             self?.finishHandler?(result)
             completion(result)
@@ -137,34 +148,39 @@ public final class CameraRecordingController {
     private func wireEvents() {
         recorderSink.durationChangedHandler = { [weak self] duration in
             self?.durationChangedHandler?(duration)
-            self?.eventHandler?(.durationChanged(duration))
+            self?.emit(.durationChanged(duration))
         }
         recorderSink.droppedFrameHandler = { [weak self] metadata in
-            self?.eventHandler?(.droppedFrame(metadata))
+            self?.emit(.droppedFrame(metadata))
         }
         recorderSink.runtimeErrorHandler = { [weak self] error in
-            self?.eventHandler?(.didFail(error.localizedDescription))
+            self?.emit(.didFail(error.localizedDescription))
         }
         recorderSink.stateChangedHandler = { [weak self] state in
             self?.stateChangedHandler?(state)
             switch state {
             case .preparing:
-                self?.eventHandler?(.willStart)
+                self?.emit(.willStart)
             case .recording:
-                self?.eventHandler?(.didStart)
+                self?.emit(.didStart)
             case .paused:
-                self?.eventHandler?(.didPause)
+                self?.emit(.didPause)
             case .finishing:
-                self?.eventHandler?(.didFinish)
+                self?.emit(.didFinish)
             case .finished:
-                self?.eventHandler?(.didFinish)
+                self?.emit(.didFinish)
             case .cancelled:
-                self?.eventHandler?(.didCancel)
+                self?.emit(.didCancel)
             case .failed:
-                self?.eventHandler?(.didFail("recorder failed"))
+                self?.emit(.didFail("recorder failed"))
             case .idle:
                 break
             }
         }
+    }
+
+    private func emit(_ event: CameraRecordingEvent) {
+        eventHandler?(event)
+        eventDispatcher.emit(event)
     }
 }

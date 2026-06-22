@@ -29,6 +29,8 @@ public final class CameraEngine {
     public private(set) var recordingController: CameraRecordingController?
     public private(set) var recentEvents: [String] = []
 
+    private var recordingEventObserver: UUID?
+
     public var previewLayer: AVCaptureVideoPreviewLayer {
         source.previewLayer
     }
@@ -72,6 +74,7 @@ public final class CameraEngine {
             previewSummaryText: previewSummaryText,
             recordingSummaryText: recordingSummaryText,
             capabilitySummaryText: capabilitySummaryText,
+            capabilityGateStatuses: capabilitySnapshot.gateStatuses,
             advancedEventSummaryText: advancedOutput.latestEventSummaryText,
             recentEvents: recentEvents
         )
@@ -112,13 +115,18 @@ public final class CameraEngine {
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = []
     ) throws -> CameraRecordingController {
+        let previousController = recordingController
         let controller = try CameraRecordingController(
             source: source,
             outputURL: outputURL,
             fileType: fileType,
             processors: processors
         )
+        source.isRecordingActiveProvider = { [weak controller] in
+            controller?.isRecordingActive ?? false
+        }
         recordingController = controller
+        wireRecordingDiagnostics(for: controller, previousController: previousController)
         return controller
     }
 
@@ -316,20 +324,56 @@ public final class CameraEngine {
     }
 
     private func wireDiagnostics() {
-        source.sessionEventHandler = { [weak self] event in
+        source.addSessionEventObserver { [weak self] event in
             self?.appendEvent(String(describing: event))
+            self?.synchronizeControllers(for: event)
         }
-        source.authorizationStatusChangedHandler = { [weak self] status in
+        source.addAuthorizationObserver { [weak self] status in
             self?.appendEvent("auth \(status)")
         }
-        deviceController.eventHandler = { [weak self] event in
+        deviceController.addEventObserver { [weak self] event in
             self?.appendEvent(String(describing: event))
         }
-        advancedOutput.eventHandler = { [weak self] event in
+        advancedOutput.addEventObserver { [weak self] event in
             self?.appendEvent(event.summaryText)
         }
-        audioSessionController.eventHandler = { [weak self] event in
+        audioSessionController.addEventObserver { [weak self] event in
             self?.appendEvent(String(describing: event))
+        }
+    }
+
+    private func wireRecordingDiagnostics(for controller: CameraRecordingController, previousController: CameraRecordingController?) {
+        if let recordingEventObserver, let previousController {
+            previousController.removeEventObserver(recordingEventObserver)
+        }
+        recordingEventObserver = controller.addEventObserver { [weak self] event in
+            self?.appendEvent("recording \(String(describing: event))")
+        }
+    }
+
+    private func synchronizeControllers(for event: CameraSessionEvent) {
+        switch event {
+        case .didPause, .wasInterrupted, .wasInterruptedWhileRecording:
+            previewController?.pause()
+            if recordingController?.state == .recording {
+                recordingController?.pause()
+            }
+        case .didResume:
+            previewController?.resume()
+            if recordingController?.state == .paused {
+                recordingController?.resume()
+            }
+        case .interruptionEnded:
+            if source.snapshot.isPaused == false {
+                previewController?.resume()
+                if recordingController?.state == .paused {
+                    recordingController?.resume()
+                }
+            }
+        case .didStop:
+            previewController?.stop()
+        case .willStart, .didStart, .willSwitchPosition, .runtimeError, .systemPressureChanged, .audioRouteChanged, .positionChanged, .authorizationChanged:
+            break
         }
     }
 

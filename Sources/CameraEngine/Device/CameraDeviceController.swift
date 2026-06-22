@@ -42,6 +42,7 @@ public final class CameraDeviceController {
 
     private let deviceProvider: DeviceProvider
     private let positionProvider: PositionProvider
+    private let eventDispatcher = CameraEventDispatcher<CameraDeviceEvent>()
 
     public init(
         deviceProvider: @escaping DeviceProvider,
@@ -49,6 +50,15 @@ public final class CameraDeviceController {
     ) {
         self.deviceProvider = deviceProvider
         self.positionProvider = positionProvider
+    }
+
+    @discardableResult
+    public func addEventObserver(_ handler: @escaping (CameraDeviceEvent) -> Void) -> UUID {
+        eventDispatcher.addObserver(handler)
+    }
+
+    public func removeEventObserver(_ token: UUID) {
+        eventDispatcher.removeObserver(token)
     }
 
     public var snapshot: CameraDeviceSnapshot {
@@ -120,7 +130,7 @@ public final class CameraDeviceController {
         return try withLockedDevice(operation: "set zoom factor") { device in
             let resolved = min(max(zoomFactor, 1), device.activeFormat.videoMaxZoomFactor)
             device.videoZoomFactor = resolved
-            eventHandler?(.zoomFactorChanged(resolved))
+            emit(.zoomFactorChanged(resolved))
         }
     }
 
@@ -132,7 +142,7 @@ public final class CameraDeviceController {
         return try withLockedDevice(operation: "ramp zoom factor") { device in
             let resolved = min(max(zoomFactor, 1), device.activeFormat.videoMaxZoomFactor)
             device.ramp(toVideoZoomFactor: resolved, withRate: rate)
-            eventHandler?(.zoomFactorChanged(resolved))
+            emit(.zoomFactorChanged(resolved))
         }
     }
 
@@ -147,7 +157,7 @@ public final class CameraDeviceController {
                 device.focusMode = mode.avFoundationMode
             }
             device.focusPointOfInterest = point
-            eventHandler?(.focusPointChanged(point))
+            emit(.focusPointChanged(point))
         }
     }
 
@@ -162,7 +172,7 @@ public final class CameraDeviceController {
                 device.exposureMode = mode.avFoundationMode
             }
             device.exposurePointOfInterest = point
-            eventHandler?(.exposurePointChanged(point))
+            emit(.exposurePointChanged(point))
         }
     }
 
@@ -171,7 +181,7 @@ public final class CameraDeviceController {
         return try withLockedDevice(operation: "set exposure bias") { device in
             let resolved = min(max(bias, device.minExposureTargetBias), device.maxExposureTargetBias)
             device.setExposureTargetBias(resolved)
-            eventHandler?(.exposureBiasChanged(resolved))
+            emit(.exposureBiasChanged(resolved))
         }
     }
 
@@ -182,7 +192,7 @@ public final class CameraDeviceController {
                 throw CameraDeviceControlError.unsupportedControl("focus mode \(focusMode)")
             }
             device.focusMode = focusMode.avFoundationMode
-            eventHandler?(.focusModeChanged(focusMode))
+            emit(.focusModeChanged(focusMode))
         }
     }
 
@@ -194,8 +204,8 @@ public final class CameraDeviceController {
             }
             let resolved = min(max(lensPosition, 0), 1)
             device.setFocusModeLocked(lensPosition: resolved)
-            eventHandler?(.lensPositionChanged(resolved))
-            eventHandler?(.focusModeChanged(.locked))
+            emit(.lensPositionChanged(resolved))
+            emit(.focusModeChanged(.locked))
         }
     }
 
@@ -206,7 +216,7 @@ public final class CameraDeviceController {
                 throw CameraDeviceControlError.unsupportedControl("exposure mode \(exposureMode)")
             }
             device.exposureMode = exposureMode.avFoundationMode
-            eventHandler?(.exposureModeChanged(exposureMode))
+            emit(.exposureModeChanged(exposureMode))
         }
     }
 
@@ -218,9 +228,9 @@ public final class CameraDeviceController {
             }
             let resolvedISO = min(max(iso, device.activeFormat.minISO), device.activeFormat.maxISO)
             device.setExposureModeCustom(duration: duration, iso: resolvedISO)
-            eventHandler?(.exposureModeChanged(.custom))
-            eventHandler?(.exposureDurationChanged(duration))
-            eventHandler?(.isoChanged(resolvedISO))
+            emit(.exposureModeChanged(.custom))
+            emit(.exposureDurationChanged(duration))
+            emit(.isoChanged(resolvedISO))
         }
     }
 
@@ -231,7 +241,7 @@ public final class CameraDeviceController {
                 throw CameraDeviceControlError.unsupportedControl("white balance mode \(whiteBalanceMode)")
             }
             device.whiteBalanceMode = whiteBalanceMode.avFoundationMode
-            eventHandler?(.whiteBalanceModeChanged(whiteBalanceMode))
+            emit(.whiteBalanceModeChanged(whiteBalanceMode))
         }
     }
 
@@ -250,8 +260,8 @@ public final class CameraDeviceController {
             gains.greenGain = min(max(1, gains.greenGain), device.maxWhiteBalanceGain)
             gains.blueGain = min(max(1, gains.blueGain), device.maxWhiteBalanceGain)
             device.setWhiteBalanceModeLocked(with: gains)
-            eventHandler?(.whiteBalanceModeChanged(.locked))
-            eventHandler?(.whiteBalanceGainsChanged([gains.redGain, gains.greenGain, gains.blueGain]))
+            emit(.whiteBalanceModeChanged(.locked))
+            emit(.whiteBalanceGainsChanged([gains.redGain, gains.greenGain, gains.blueGain]))
         }
     }
 
@@ -262,7 +272,7 @@ public final class CameraDeviceController {
                 throw CameraDeviceControlError.unsupportedControl("smooth auto focus")
             }
             device.isSmoothAutoFocusEnabled = isEnabled
-            eventHandler?(.smoothAutoFocusChanged(isEnabled))
+            emit(.smoothAutoFocusChanged(isEnabled))
         }
     }
 
@@ -270,7 +280,7 @@ public final class CameraDeviceController {
     public func resetSubjectAreaMonitoring(enabled: Bool = true) throws -> CameraDeviceSnapshot {
         try withLockedDevice(operation: "reset subject area monitoring") { device in
             device.isSubjectAreaChangeMonitoringEnabled = enabled
-            eventHandler?(.subjectAreaMonitoringChanged(enabled))
+            emit(.subjectAreaMonitoringChanged(enabled))
         }
     }
 
@@ -285,14 +295,14 @@ public final class CameraDeviceController {
             } else {
                 device.torchMode = .off
             }
-            eventHandler?(.torchActiveChanged(isActive))
+            emit(.torchActiveChanged(isActive))
         }
     }
 
     @discardableResult
     public func setPreferredFlashMode(_ flashMode: AVCaptureDevice.FlashMode) -> CameraDeviceSnapshot {
         preferredFlashMode = flashMode
-        eventHandler?(.flashModeChanged(flashMode))
+        emit(.flashModeChanged(flashMode))
         return snapshot
     }
 
@@ -312,7 +322,7 @@ public final class CameraDeviceController {
             }
             device.activeVideoMinFrameDuration = minDuration
             device.activeVideoMaxFrameDuration = maxDuration
-            eventHandler?(.frameRateChanged(range))
+            emit(.frameRateChanged(range))
         }
     }
 
@@ -323,7 +333,7 @@ public final class CameraDeviceController {
                 throw CameraDeviceControlError.unsupportedControl("matching format")
             }
             device.activeFormat = format
-            eventHandler?(.formatChanged("\(format.formatDescription)"))
+            emit(.formatChanged("\(format.formatDescription)"))
         }
     }
 
@@ -335,26 +345,31 @@ public final class CameraDeviceController {
                 throw CameraDeviceControlError.unsupportedControl("best format")
             }
             device.activeFormat = best
-            eventHandler?(.formatChanged("\(best.formatDescription)"))
+            emit(.formatChanged("\(best.formatDescription)"))
         }
     }
 
     public func notifySubjectAreaChanged() {
-        eventHandler?(.subjectAreaChanged)
+        emit(.subjectAreaChanged)
     }
 
     public func notifyCleanApertureChanged(_ aperture: CGRect) {
-        eventHandler?(.cleanApertureChanged(aperture))
+        emit(.cleanApertureChanged(aperture))
     }
 
     public func notifySystemPressureChanged(_ level: String) {
-        eventHandler?(.systemPressureChanged(level))
+        emit(.systemPressureChanged(level))
     }
 
     public func refreshAdjustingState() {
         guard let device = deviceProvider() else { return }
-        eventHandler?(.focusAdjustmentChanged(device.isAdjustingFocus))
-        eventHandler?(.exposureAdjustmentChanged(device.isAdjustingExposure))
+        emit(.focusAdjustmentChanged(device.isAdjustingFocus))
+        emit(.exposureAdjustmentChanged(device.isAdjustingExposure))
+    }
+
+    func emit(_ event: CameraDeviceEvent) {
+        eventHandler?(event)
+        eventDispatcher.emit(event)
     }
 
     private func withLockedDevice(

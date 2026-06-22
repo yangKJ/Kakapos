@@ -4772,18 +4772,35 @@ final class MediaEngineTests: XCTestCase {
     func testCameraSourceInterruptionCallbacksAndSnapshotStayInSync() throws {
         let source = try CameraSource(configuration: .init(captureMode: .videoWithoutAudio))
         var events: [CameraSessionEvent] = []
+        var observerEvents: [CameraSessionEvent] = []
 
         source.sessionEventHandler = { event in
             events.append(event)
         }
+        _ = source.addSessionEventObserver { observerEvents.append($0) }
 
         source._handleLifecycleActionForTesting(.didStartRunning)
         source._handleLifecycleActionForTesting(.wasInterrupted)
         source._handleLifecycleActionForTesting(.interruptionEnded)
 
         XCTAssertEqual(events, [.didStart, .wasInterrupted, .interruptionEnded])
+        XCTAssertEqual(observerEvents, [.didStart, .wasInterrupted, .interruptionEnded])
         XCTAssertEqual(source.snapshot.state, .running)
         XCTAssertEqual(source.summary.state, .running)
+    }
+
+    func testCameraSourceRecordingAwareInterruptionPublishesDedicatedEventAndResumes() throws {
+        let source = try CameraSource(configuration: .init(captureMode: .videoWithoutAudio))
+        var events: [CameraSessionEvent] = []
+        source.sessionEventHandler = { events.append($0) }
+
+        source._handleLifecycleActionForTesting(.didStartRunning)
+        source._handleSessionInterruptionForTesting(recordingActive: true)
+        source._handleSessionInterruptionEndedForTesting()
+
+        XCTAssertEqual(events, [.didStart, .wasInterruptedWhileRecording, .interruptionEnded])
+        XCTAssertEqual(source.snapshot.state, .running)
+        XCTAssertFalse(source.snapshot.isPaused)
     }
 
     func testCameraSourcePositionAndAuthorizationTestingHooksUpdateSnapshotDetails() throws {
