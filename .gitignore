@@ -92,3 +92,5 @@ iOSInjectionProject/
 # VideoTools
 # Ignore all files in VideoTools directory
 VideoTools/
+AGENTS.md
+.codex/

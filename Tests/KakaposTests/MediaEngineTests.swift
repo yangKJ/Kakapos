@@ -5,6 +5,48 @@ import CoreGraphics
 
 final class MediaEngineTests: XCTestCase {
 
+    func testEngineCatalogDefinesPublicEnginesAndSharedMediaCore() throws {
+        let engines = KakaposEngineCatalog.engines
+        let publicEngines = KakaposEngineCatalog.publicEngines
+
+        XCTAssertEqual(engines.map(\.engine), [.mediaCore, .video, .camera, .timeline])
+        XCTAssertEqual(publicEngines.map(\.engine), [.video, .camera, .timeline])
+        XCTAssertEqual(KakaposSurface.engines.map(\.engine), engines.map(\.engine))
+        XCTAssertEqual(KakaposSurface.publicEngines.map(\.engine), publicEngines.map(\.engine))
+
+        let core = try XCTUnwrap(KakaposSurface.engine(named: "mediaCore"))
+        XCTAssertEqual(core.displayName, "Media Core")
+        XCTAssertEqual(core.primaryTypes, ["FrameProcessor", "MediaFrame", "FrameMetadata", "MediaSource", "MediaSink", "MediaPipeline", "MediaProcessorChain"])
+        XCTAssertTrue(core.boundary.contains("Foundation layer only"))
+
+        let video = try XCTUnwrap(KakaposSurface.engine(named: "video"))
+        XCTAssertEqual(video.displayName, "Video Engine")
+        XCTAssertEqual(video.boards, [.export, .preview])
+        XCTAssertTrue(video.primaryTypes.contains("Instruction"))
+        XCTAssertTrue(video.primaryTypes.contains("FilterInstruction"))
+        XCTAssertTrue(video.boundary.contains("Export instructions belong here"))
+
+        let camera = try XCTUnwrap(KakaposSurface.engine(named: "camera"))
+        XCTAssertEqual(camera.boards, [.preview, .record])
+        XCTAssertTrue(camera.primaryTypes.contains("CameraSource"))
+        XCTAssertTrue(camera.primaryTypes.contains("RecordingPipeline"))
+
+        let timeline = try XCTUnwrap(KakaposSurface.engine(named: "timeline"))
+        XCTAssertEqual(timeline.boards, [.timeline])
+        XCTAssertTrue(timeline.primaryTypes.contains("TimelineComposition"))
+        XCTAssertTrue(timeline.boundary.contains("processor plans"))
+    }
+
+    func testEngineCatalogIsCodableForExternalInspection() throws {
+        let data = try JSONEncoder().encode(KakaposEngineCatalog.engines)
+        let decoded = try JSONDecoder().decode([KakaposEngineInfo].self, from: data)
+
+        XCTAssertEqual(decoded.map(\.id), ["mediaCore", "video", "camera", "timeline"])
+        XCTAssertEqual(decoded.first(where: { $0.engine == .video })?.boardNames, ["Export", "Preview"])
+        XCTAssertEqual(decoded.first(where: { $0.engine == .camera })?.boardNames, ["Preview", "Record"])
+        XCTAssertEqual(decoded.first(where: { $0.engine == .timeline })?.boardNames, ["Timeline"])
+    }
+
     func testCapabilityCatalogGroupsPublicSurfaceIntoFourBoards() {
         let boards = KakaposCapabilityCatalog.boards
         let starterBoards = KakaposCapabilityCatalog.starterBoards
