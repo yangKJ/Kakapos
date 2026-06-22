@@ -24,8 +24,10 @@ public final class CameraEngine {
     public let source: CameraSource
     public let deviceController: CameraDeviceController
     public let advancedOutput: CameraAdvancedOutput
+    public let audioSessionController: CameraAudioSessionController
     public private(set) var previewController: CameraPreviewController?
     public private(set) var recordingController: CameraRecordingController?
+    public private(set) var recentEvents: [String] = []
 
     public var previewLayer: AVCaptureVideoPreviewLayer {
         source.previewLayer
@@ -63,6 +65,18 @@ public final class CameraEngine {
         recordingController?.summaryText
     }
 
+    public var diagnosticsSnapshot: CameraDiagnosticsSnapshot {
+        CameraDiagnosticsSnapshot(
+            sessionSummaryText: summaryText,
+            deviceSummaryText: deviceSummaryText,
+            previewSummaryText: previewSummaryText,
+            recordingSummaryText: recordingSummaryText,
+            capabilitySummaryText: capabilitySummaryText,
+            advancedEventSummaryText: advancedOutput.latestEventSummaryText,
+            recentEvents: recentEvents
+        )
+    }
+
     public var recordedClip: RecordedClip? {
         recordingController?.recordedClip
     }
@@ -72,6 +86,8 @@ public final class CameraEngine {
         self.source = source
         self.deviceController = source.deviceController
         self.advancedOutput = source.advancedOutput
+        self.audioSessionController = source.audioSessionController
+        wireDiagnostics()
     }
 
     public func makePreviewController(
@@ -107,6 +123,7 @@ public final class CameraEngine {
     }
 
     public func start() {
+        audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
         source.start()
         previewController?.start()
     }
@@ -123,6 +140,7 @@ public final class CameraEngine {
             callbackQueue: callbackQueue,
             handler: handler
         )
+        audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
         source.start()
         controller.start()
         return controller
@@ -144,12 +162,14 @@ public final class CameraEngine {
         source.stop()
         previewController?.stop()
         recordingController?.stop()
+        audioSessionController.deactivate()
     }
 
     public func cancel() {
         source.cancel()
         previewController?.stop()
         recordingController?.cancel()
+        audioSessionController.deactivate()
     }
 
     @discardableResult
@@ -168,6 +188,7 @@ public final class CameraEngine {
                 fileType: fileType,
                 processors: processors
             )
+            audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
             source.start()
             previewController?.start()
             controller.start()
@@ -183,6 +204,7 @@ public final class CameraEngine {
         recordingController.stopRecording { [weak self] result in
             self?.previewController?.stop()
             self?.source.stop()
+            self?.audioSessionController.deactivate()
             completion(result)
         }
     }
@@ -191,6 +213,7 @@ public final class CameraEngine {
         recordingController?.cancel()
         previewController?.stop()
         source.cancel()
+        audioSessionController.deactivate()
     }
 
     @discardableResult
@@ -205,6 +228,16 @@ public final class CameraEngine {
     public func capturePhoto(handler: @escaping (CameraPhotoCaptureResult) -> Void) {
         source.photoCaptureHandler = handler
         source.capturePhoto()
+    }
+
+    @discardableResult
+    public func setFocusMode(_ focusMode: CameraFocusMode) throws -> CameraDeviceSnapshot {
+        try deviceController.setFocusMode(focusMode)
+    }
+
+    @discardableResult
+    public func setLensPosition(_ lensPosition: Float) throws -> CameraDeviceSnapshot {
+        try deviceController.setLensPosition(lensPosition)
     }
 
     @discardableResult
@@ -233,6 +266,36 @@ public final class CameraEngine {
     }
 
     @discardableResult
+    public func setExposureMode(_ exposureMode: CameraExposureMode) throws -> CameraDeviceSnapshot {
+        try deviceController.setExposureMode(exposureMode)
+    }
+
+    @discardableResult
+    public func setCustomExposure(duration: CMTime, iso: Float) throws -> CameraDeviceSnapshot {
+        try deviceController.setCustomExposure(duration: duration, iso: iso)
+    }
+
+    @discardableResult
+    public func setWhiteBalanceMode(_ whiteBalanceMode: CameraWhiteBalanceMode) throws -> CameraDeviceSnapshot {
+        try deviceController.setWhiteBalanceMode(whiteBalanceMode)
+    }
+
+    @discardableResult
+    public func lockWhiteBalanceGains(red: Float, green: Float, blue: Float) throws -> CameraDeviceSnapshot {
+        try deviceController.lockWhiteBalanceGains(red: red, green: green, blue: blue)
+    }
+
+    @discardableResult
+    public func setSmoothAutoFocusEnabled(_ isEnabled: Bool) throws -> CameraDeviceSnapshot {
+        try deviceController.setSmoothAutoFocusEnabled(isEnabled)
+    }
+
+    @discardableResult
+    public func resetSubjectAreaMonitoring(enabled: Bool = true) throws -> CameraDeviceSnapshot {
+        try deviceController.resetSubjectAreaMonitoring(enabled: enabled)
+    }
+
+    @discardableResult
     public func setTorchActive(_ isActive: Bool, level: Float = 1) throws -> CameraDeviceSnapshot {
         try deviceController.setTorchActive(isActive, level: level)
     }
@@ -240,6 +303,41 @@ public final class CameraEngine {
     @discardableResult
     public func setPreferredFlashMode(_ flashMode: AVCaptureDevice.FlashMode) -> CameraDeviceSnapshot {
         deviceController.setPreferredFlashMode(flashMode)
+    }
+
+    @discardableResult
+    public func selectPreferredDeviceType(_ deviceType: CameraDeviceType) -> CameraDeviceSnapshot {
+        deviceController.selectPreferredDeviceType(deviceType)
+    }
+
+    @discardableResult
+    public func selectFrameRateRange(_ range: CameraFrameRateRange) throws -> CameraDeviceSnapshot {
+        try deviceController.selectFrameRateRange(range)
+    }
+
+    private func wireDiagnostics() {
+        source.sessionEventHandler = { [weak self] event in
+            self?.appendEvent(String(describing: event))
+        }
+        source.authorizationStatusChangedHandler = { [weak self] status in
+            self?.appendEvent("auth \(status)")
+        }
+        deviceController.eventHandler = { [weak self] event in
+            self?.appendEvent(String(describing: event))
+        }
+        advancedOutput.eventHandler = { [weak self] event in
+            self?.appendEvent(event.summaryText)
+        }
+        audioSessionController.eventHandler = { [weak self] event in
+            self?.appendEvent(String(describing: event))
+        }
+    }
+
+    private func appendEvent(_ event: String) {
+        recentEvents.append(event)
+        if recentEvents.count > 20 {
+            recentEvents.removeFirst(recentEvents.count - 20)
+        }
     }
 }
 #endif

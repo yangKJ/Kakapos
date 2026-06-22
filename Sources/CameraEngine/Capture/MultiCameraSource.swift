@@ -11,10 +11,16 @@ import AVFoundation
 #if canImport(UIKit) && !os(watchOS)
 @available(iOS 13.0, *)
 public final class MultiCameraSource {
+    public struct BranchSnapshot {
+        public let branchID: String
+        public let position: CameraPosition
+        public let sourceSummaryText: String
+        public let capabilitySummaryText: String
+    }
+
     public struct Snapshot {
         public let isSupported: Bool
-        public let frontSummaryText: String
-        public let backSummaryText: String
+        public let branches: [BranchSnapshot]
         public let advancedEventCount: Int
         public let latestAdvancedEventSummaryText: String
     }
@@ -27,8 +33,10 @@ public final class MultiCameraSource {
     public var snapshot: Snapshot {
         Snapshot(
             isSupported: Self.isSupported,
-            frontSummaryText: frontSource.summaryText,
-            backSummaryText: backSource.summaryText,
+            branches: [
+                BranchSnapshot(branchID: "front", position: .front, sourceSummaryText: frontSource.summaryText, capabilitySummaryText: frontSource.capabilitySnapshot.summaryText),
+                BranchSnapshot(branchID: "back", position: .back, sourceSummaryText: backSource.summaryText, capabilitySummaryText: backSource.capabilitySnapshot.summaryText)
+            ],
             advancedEventCount: advancedOutput.eventCount,
             latestAdvancedEventSummaryText: advancedOutput.latestEventSummaryText
         )
@@ -36,7 +44,8 @@ public final class MultiCameraSource {
 
     public var summaryText: String {
         let currentSnapshot = snapshot
-        return "supported \(currentSnapshot.isSupported ? "yes" : "no") · front \(currentSnapshot.frontSummaryText) · back \(currentSnapshot.backSummaryText) · events \(currentSnapshot.advancedEventCount) · latest \(currentSnapshot.latestAdvancedEventSummaryText)"
+        let branchText = currentSnapshot.branches.map { "\($0.branchID) \($0.sourceSummaryText)" }.joined(separator: " · ")
+        return "supported \(currentSnapshot.isSupported ? "yes" : "no") · \(branchText) · events \(currentSnapshot.advancedEventCount) · latest \(currentSnapshot.latestAdvancedEventSummaryText)"
     }
 
     public static var isSupported: Bool {
@@ -59,10 +68,10 @@ public final class MultiCameraSource {
         self.frontSource = try CameraSource(session: session, configuration: frontConfiguration)
         self.backSource = try CameraSource(session: session, configuration: backConfiguration)
         frontSource.frameHandler = { [weak self] frame in
-            self?.advancedOutput.emitMultiCamFrame(.init(position: .front, frame: frame))
+            self?.advancedOutput.emitMultiCamFrame(.init(branchID: "front", position: .front, frame: frame, connectionDescription: "front-camera"))
         }
         backSource.frameHandler = { [weak self] frame in
-            self?.advancedOutput.emitMultiCamFrame(.init(position: .back, frame: frame))
+            self?.advancedOutput.emitMultiCamFrame(.init(branchID: "back", position: .back, frame: frame, connectionDescription: "back-camera"))
         }
     }
 

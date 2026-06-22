@@ -305,6 +305,8 @@ public struct CameraDeviceConfiguration: Equatable, Sendable {
     public var exposureMode: CameraExposureMode
     public var whiteBalanceMode: CameraWhiteBalanceMode
     public var initialZoomFactor: CGFloat
+    public var enablesSmoothAutoFocus: Bool
+    public var subjectAreaMonitoringEnabled: Bool
 
     public init(
         preferredPosition: CameraPosition = .back,
@@ -313,7 +315,9 @@ public struct CameraDeviceConfiguration: Equatable, Sendable {
         focusMode: CameraFocusMode = .continuousAuto,
         exposureMode: CameraExposureMode = .continuousAuto,
         whiteBalanceMode: CameraWhiteBalanceMode = .continuousAuto,
-        initialZoomFactor: CGFloat = 1
+        initialZoomFactor: CGFloat = 1,
+        enablesSmoothAutoFocus: Bool = true,
+        subjectAreaMonitoringEnabled: Bool = true
     ) {
         self.preferredPosition = preferredPosition
         self.preferredDeviceTypes = preferredDeviceTypes
@@ -322,6 +326,8 @@ public struct CameraDeviceConfiguration: Equatable, Sendable {
         self.exposureMode = exposureMode
         self.whiteBalanceMode = whiteBalanceMode
         self.initialZoomFactor = initialZoomFactor
+        self.enablesSmoothAutoFocus = enablesSmoothAutoFocus
+        self.subjectAreaMonitoringEnabled = subjectAreaMonitoringEnabled
     }
 }
 
@@ -350,40 +356,83 @@ public struct CameraAdvancedCaptureSettings: Equatable, Sendable {
     }
 }
 
+public struct CameraCapabilityDefaults: Equatable, Sendable {
+    public var enablesMetadataObjectsWhenAvailable: Bool
+    public var enablesDepthDataWhenAvailable: Bool
+    public var enablesPortraitEffectsMatteWhenAvailable: Bool
+    public var enablesARFrameSourceWhenAvailable: Bool
+    public var enablesMultiCamWhenAvailable: Bool
+
+    public init(
+        enablesMetadataObjectsWhenAvailable: Bool = false,
+        enablesDepthDataWhenAvailable: Bool = false,
+        enablesPortraitEffectsMatteWhenAvailable: Bool = false,
+        enablesARFrameSourceWhenAvailable: Bool = false,
+        enablesMultiCamWhenAvailable: Bool = false
+    ) {
+        self.enablesMetadataObjectsWhenAvailable = enablesMetadataObjectsWhenAvailable
+        self.enablesDepthDataWhenAvailable = enablesDepthDataWhenAvailable
+        self.enablesPortraitEffectsMatteWhenAvailable = enablesPortraitEffectsMatteWhenAvailable
+        self.enablesARFrameSourceWhenAvailable = enablesARFrameSourceWhenAvailable
+        self.enablesMultiCamWhenAvailable = enablesMultiCamWhenAvailable
+    }
+}
+
 public struct CameraSourceConfiguration: Equatable, Sendable {
     public var captureMode: CameraCaptureMode
     public var preferredPosition: CameraPosition
     public var preferredDeviceTypes: [CameraDeviceType]
     public var mirroringMode: CameraMirroringMode
+    public var focusMode: CameraFocusMode
+    public var exposureMode: CameraExposureMode
+    public var whiteBalanceMode: CameraWhiteBalanceMode
+    public var initialZoomFactor: CGFloat
+    public var enablesSmoothAutoFocus: Bool
+    public var subjectAreaMonitoringEnabled: Bool
     public var automaticallyRequestsAuthorization: Bool
     public var previewGravity: AVLayerVideoGravity
     public var video: CameraVideoConfiguration
     public var audio: CameraAudioConfiguration
     public var photo: CameraPhotoConfiguration
     public var advanced: CameraAdvancedCaptureSettings
+    public var capabilityDefaults: CameraCapabilityDefaults
 
     public init(
         captureMode: CameraCaptureMode = .video,
         preferredPosition: CameraPosition = .back,
         preferredDeviceTypes: [CameraDeviceType] = [.wideAngle],
         mirroringMode: CameraMirroringMode = .automatic,
+        focusMode: CameraFocusMode = .continuousAuto,
+        exposureMode: CameraExposureMode = .continuousAuto,
+        whiteBalanceMode: CameraWhiteBalanceMode = .continuousAuto,
+        initialZoomFactor: CGFloat = 1,
+        enablesSmoothAutoFocus: Bool = true,
+        subjectAreaMonitoringEnabled: Bool = true,
         automaticallyRequestsAuthorization: Bool = false,
         previewGravity: AVLayerVideoGravity = .resizeAspectFill,
         video: CameraVideoConfiguration = CameraVideoConfiguration(),
         audio: CameraAudioConfiguration = CameraAudioConfiguration(),
         photo: CameraPhotoConfiguration = CameraPhotoConfiguration(),
-        advanced: CameraAdvancedCaptureSettings = CameraAdvancedCaptureSettings()
+        advanced: CameraAdvancedCaptureSettings = CameraAdvancedCaptureSettings(),
+        capabilityDefaults: CameraCapabilityDefaults = CameraCapabilityDefaults()
     ) {
         self.captureMode = captureMode
         self.preferredPosition = preferredPosition
         self.preferredDeviceTypes = preferredDeviceTypes
         self.mirroringMode = mirroringMode
+        self.focusMode = focusMode
+        self.exposureMode = exposureMode
+        self.whiteBalanceMode = whiteBalanceMode
+        self.initialZoomFactor = initialZoomFactor
+        self.enablesSmoothAutoFocus = enablesSmoothAutoFocus
+        self.subjectAreaMonitoringEnabled = subjectAreaMonitoringEnabled
         self.automaticallyRequestsAuthorization = automaticallyRequestsAuthorization
         self.previewGravity = previewGravity
         self.video = video
         self.audio = audio
         self.photo = photo
         self.advanced = advanced
+        self.capabilityDefaults = capabilityDefaults
     }
 
     public var requestedMediaTypes: [AVMediaType] {
@@ -404,14 +453,75 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
                 preferredPosition: preferredPosition,
                 preferredDeviceTypes: preferredDeviceTypes,
                 mirroringMode: mirroringMode,
-                initialZoomFactor: 1
+                focusMode: focusMode,
+                exposureMode: exposureMode,
+                whiteBalanceMode: whiteBalanceMode,
+                initialZoomFactor: initialZoomFactor,
+                enablesSmoothAutoFocus: enablesSmoothAutoFocus,
+                subjectAreaMonitoringEnabled: subjectAreaMonitoringEnabled
             )
         }
         set {
             preferredPosition = newValue.preferredPosition
             preferredDeviceTypes = newValue.preferredDeviceTypes
             mirroringMode = newValue.mirroringMode
+            focusMode = newValue.focusMode
+            exposureMode = newValue.exposureMode
+            whiteBalanceMode = newValue.whiteBalanceMode
+            initialZoomFactor = newValue.initialZoomFactor
+            enablesSmoothAutoFocus = newValue.enablesSmoothAutoFocus
+            subjectAreaMonitoringEnabled = newValue.subjectAreaMonitoringEnabled
         }
+    }
+
+    public static func cameraDefaults(
+        captureMode: CameraCaptureMode = .video,
+        preferredPosition: CameraPosition = .back
+    ) -> CameraSourceConfiguration {
+        CameraSourceConfiguration(
+            captureMode: captureMode,
+            preferredPosition: preferredPosition,
+            preferredDeviceTypes: preferredPosition == .front ? [.trueDepth, .wideAngle] : [.triple, .dualWide, .wideAngle],
+            mirroringMode: .automatic,
+            automaticallyRequestsAuthorization: true,
+            previewGravity: .resizeAspectFill
+        )
+    }
+
+    public func withVideo(_ update: (CameraVideoConfiguration) -> CameraVideoConfiguration) -> CameraSourceConfiguration {
+        var copy = self
+        copy.video = update(video)
+        return copy
+    }
+
+    public func withAudio(_ update: (CameraAudioConfiguration) -> CameraAudioConfiguration) -> CameraSourceConfiguration {
+        var copy = self
+        copy.audio = update(audio)
+        return copy
+    }
+
+    public func withPhoto(_ update: (CameraPhotoConfiguration) -> CameraPhotoConfiguration) -> CameraSourceConfiguration {
+        var copy = self
+        copy.photo = update(photo)
+        return copy
+    }
+
+    public func withDevice(_ update: (CameraDeviceConfiguration) -> CameraDeviceConfiguration) -> CameraSourceConfiguration {
+        var copy = self
+        copy.device = update(device)
+        return copy
+    }
+
+    public func withAdvanced(_ update: (CameraAdvancedCaptureSettings) -> CameraAdvancedCaptureSettings) -> CameraSourceConfiguration {
+        var copy = self
+        copy.advanced = update(advanced)
+        return copy
+    }
+
+    public func withCapabilityDefaults(_ update: (CameraCapabilityDefaults) -> CameraCapabilityDefaults) -> CameraSourceConfiguration {
+        var copy = self
+        copy.capabilityDefaults = update(capabilityDefaults)
+        return copy
     }
 }
 
@@ -517,6 +627,17 @@ extension CameraFocusMode {
             return .locked
         }
     }
+
+    init(_ mode: AVCaptureDevice.FocusMode) {
+        switch mode {
+        case .continuousAutoFocus:
+            self = .continuousAuto
+        case .autoFocus:
+            self = .auto
+        default:
+            self = .locked
+        }
+    }
 }
 
 extension CameraExposureMode {
@@ -532,6 +653,19 @@ extension CameraExposureMode {
             return .locked
         }
     }
+
+    init(_ mode: AVCaptureDevice.ExposureMode) {
+        switch mode {
+        case .continuousAutoExposure:
+            self = .continuousAuto
+        case .autoExpose:
+            self = .auto
+        case .custom:
+            self = .custom
+        default:
+            self = .locked
+        }
+    }
 }
 
 extension CameraWhiteBalanceMode {
@@ -543,6 +677,17 @@ extension CameraWhiteBalanceMode {
             return .autoWhiteBalance
         case .locked:
             return .locked
+        }
+    }
+
+    init(_ mode: AVCaptureDevice.WhiteBalanceMode) {
+        switch mode {
+        case .continuousAutoWhiteBalance:
+            self = .continuousAuto
+        case .autoWhiteBalance:
+            self = .auto
+        default:
+            self = .locked
         }
     }
 }

@@ -23,7 +23,11 @@ public enum CameraSessionState: Equatable {
     case running
     case paused
     case interrupted
+    case interruptedWhileRecording
     case switchingPosition
+    case reconfiguring
+    case recovering
+    case runtimePressureLimited
     case unauthorized
     case error
     case stopped
@@ -36,9 +40,12 @@ public enum CameraSessionEvent: Equatable {
     case didResume
     case didStop
     case wasInterrupted
+    case wasInterruptedWhileRecording
     case interruptionEnded
     case willSwitchPosition(CameraPosition)
     case runtimeError(isRecoverable: Bool, description: String?)
+    case systemPressureChanged(String)
+    case audioRouteChanged(String)
     case positionChanged(CameraPosition)
     case authorizationChanged(CameraAuthorizationStatus)
 }
@@ -50,9 +57,12 @@ enum CameraLifecycleAction: Equatable {
     case didStartRunning
     case didStopRunning
     case wasInterrupted
+    case wasInterruptedWhileRecording
     case interruptionEnded
     case positionSwitchRequested(CameraPosition)
     case runtimeError(isRecoverable: Bool, description: String?)
+    case systemPressureChanged(String)
+    case audioRouteChanged(String)
     case positionChanged(CameraPosition)
     case authorizationChanged(CameraAuthorizationStatus)
 }
@@ -107,21 +117,30 @@ struct CameraSessionLifecycle {
             stateBeforeInterruption = state
             state = .interrupted
             return .wasInterrupted
+        case .wasInterruptedWhileRecording:
+            stateBeforeInterruption = state
+            state = .interruptedWhileRecording
+            return .wasInterruptedWhileRecording
         case .interruptionEnded:
             state = stateBeforeInterruption == .paused ? .paused : .running
             stateBeforeInterruption = nil
             return .interruptionEnded
         case .positionSwitchRequested(let position):
-            state = .switchingPosition
+            state = .reconfiguring
             self.position = position
             return .willSwitchPosition(position)
         case .runtimeError(let isRecoverable, let description):
-            state = .error
+            state = isRecoverable ? .recovering : .error
             shouldAttemptRecovery = isRecoverable
             return .runtimeError(isRecoverable: isRecoverable, description: description)
+        case .systemPressureChanged(let level):
+            state = .runtimePressureLimited
+            return .systemPressureChanged(level)
+        case .audioRouteChanged(let route):
+            return .audioRouteChanged(route)
         case .positionChanged(let position):
             self.position = position
-            if state == .switchingPosition {
+            if state == .switchingPosition || state == .reconfiguring {
                 state = .running
             }
             return .positionChanged(position)

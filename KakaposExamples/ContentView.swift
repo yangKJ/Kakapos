@@ -634,7 +634,7 @@ private struct CameraRecordView: View {
                             message = "Camera session resumed"
                         case .didStop:
                             message = "Camera session stopped"
-                        case .wasInterrupted:
+                        case .wasInterrupted, .wasInterruptedWhileRecording:
                             engine.source.pause()
                             recordingController?.pause()
                             message = "Camera session interrupted"
@@ -654,6 +654,10 @@ private struct CameraRecordView: View {
                             message = "Switched camera: \(String(describing: position))"
                         case .authorizationChanged(let status):
                             message = "Camera authorization: \(status.description)"
+                        case .systemPressureChanged(let summary):
+                            message = "Camera pressure changed: \(summary)"
+                        case .audioRouteChanged(let route):
+                            message = "Audio route changed: \(route)"
                         }
                     }
                     engine.source.photoCaptureHandler = { result in
@@ -710,6 +714,8 @@ private struct CameraRecordView: View {
                         recordingController.eventHandler = { event in
                             DispatchQueue.main.async {
                                 switch event {
+                                case .willStart:
+                                    recorderStateText = "preparing"
                                 case .didStart:
                                     recorderStateText = "recording"
                                 case .didPause:
@@ -720,10 +726,17 @@ private struct CameraRecordView: View {
                                     recorderStateText = "finished"
                                 case .didCancel:
                                     recorderStateText = "cancelled"
+                                case .didFail(let description):
+                                    recorderStateText = "failed"
+                                    message = "Recording failed: \(description)"
+                                case .clipCompleted:
+                                    break
                                 case .clipCountChanged:
                                     break
                                 case .durationChanged(let duration):
                                     recordedDurationText = String(format: "%.2fs", duration.seconds)
+                                case .droppedFrame:
+                                    break
                                 }
                                 recorderSnapshotText = snapshotText(for: recordingController.recorderSink.snapshot)
                             }

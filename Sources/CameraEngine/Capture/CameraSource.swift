@@ -110,6 +110,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     public let session: AVCaptureSession
     public let previewLayer: AVCaptureVideoPreviewLayer
     public let advancedOutput = CameraAdvancedOutput()
+    public let audioSessionController = CameraAudioSessionController()
     public private(set) var deviceController: CameraDeviceController!
     public private(set) var isPaused: Bool = false
     public private(set) var state: CameraSessionState = .idle
@@ -196,7 +197,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             portraitSupport = device == nil ? .unknown : .unsupported
         }
         let metadataSupport: CameraFeatureSupport
-        if configuration.advanced.metadataObjectTypes.isEmpty {
+        if configuration.advanced.metadataObjectTypes.isEmpty && configuration.capabilityDefaults.enablesMetadataObjectsWhenAvailable == false {
             metadataSupport = device == nil ? .unknown : .unsupported
         } else {
             metadataSupport = .supported
@@ -246,6 +247,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     private var outputSynchronizer: AVCaptureDataOutputSynchronizer?
     private let ciContext = CIContext(options: nil)
     private var notificationObservers: [NSObjectProtocol] = []
+    private var deviceObservers: [NSKeyValueObservation] = []
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
     private var isSessionConfigured = false
@@ -571,6 +573,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         try configureDepthOutputIfNeeded()
         applyCurrentConnections()
         applyInitialDeviceConfigurationIfNeeded()
+        installDeviceObservers()
         isSessionConfigured = true
     }
 
@@ -603,12 +606,14 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             try configureDepthOutputIfNeeded()
             applyCurrentConnections()
             applyInitialDeviceConfigurationIfNeeded()
+            installDeviceObservers()
         } catch {
             if let previousInput, session.canAddInput(previousInput) {
                 session.addInput(previousInput)
                 videoInput = previousInput
                 currentPosition = Self.cameraPosition(from: previousInput.device.position)
                 applyCurrentConnections()
+                installDeviceObservers()
             }
             throw error
         }
@@ -735,6 +740,10 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         if device.isWhiteBalanceModeSupported(configuration.device.whiteBalanceMode.avFoundationMode) {
             device.whiteBalanceMode = configuration.device.whiteBalanceMode.avFoundationMode
         }
+        if device.isSmoothAutoFocusSupported {
+            device.isSmoothAutoFocusEnabled = configuration.device.enablesSmoothAutoFocus
+        }
+        device.isSubjectAreaChangeMonitoringEnabled = configuration.device.subjectAreaMonitoringEnabled
         let zoomFactor = min(max(configuration.device.initialZoomFactor, 1), device.activeFormat.videoMaxZoomFactor)
         device.videoZoomFactor = zoomFactor
         if let range = configuration.video.preferredFrameRateRange {
@@ -979,6 +988,18 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
                 self?.updateCurrentOrientation()
             }
         )
+        notificationObservers.append(
+            center.addObserver(forName: .AVCaptureDeviceSubjectAreaDidChange, object: nil, queue: nil) { [weak self] _ in
+                self?.deviceController.notifySubjectAreaChanged()
+            }
+        )
+        notificationObservers.append(
+            center.addObserver(forName: .AVCaptureInputPortFormatDescriptionDidChange, object: nil, queue: nil) { [weak self] notification in
+                guard let port = notification.object as? AVCaptureInput.Port else { return }
+                guard let formatDescription = port.formatDescription else { return }
+                self?.deviceController.notifyCleanApertureChanged(CMVideoFormatDescriptionGetCleanAperture(formatDescription, originIsAtTopLeft: true))
+            }
+        )
     }
 
     private func stopObservingNotifications() {
@@ -1021,6 +1042,41 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             guard !self.session.isRunning, self.authorizationStatus == .authorized else { return }
             self.session.startRunning()
         }
+    }
+
+    private func installDeviceObservers() {
+        deviceObservers.removeAll()
+        guard let device = videoInput?.device else { return }
+        deviceObservers.append(
+            device.observe(\.isAdjustingFocus, options: [.new]) { [weak self] _, change in
+                guard let value = change.newValue else { return }
+                self?.deviceController.eventHandler?(.focusAdjustmentChanged(value))
+            }
+        )
+        deviceObservers.append(
+            device.observe(\.isAdjustingExposure, options: [.new]) { [weak self] _, change in
+                guard let value = change.newValue else { return }
+                self?.deviceController.eventHandler?(.exposureAdjustmentChanged(value))
+            }
+        )
+        deviceObservers.append(
+            device.observe(\.lensPosition, options: [.new]) { [weak self] _, change in
+                guard let value = change.newValue else { return }
+                self?.deviceController.eventHandler?(.lensPositionChanged(value))
+            }
+        )
+        deviceObservers.append(
+            device.observe(\.exposureDuration, options: [.new]) { [weak self] _, change in
+                guard let value = change.newValue else { return }
+                self?.deviceController.eventHandler?(.exposureDurationChanged(value))
+            }
+        )
+        deviceObservers.append(
+            device.observe(\.iso, options: [.new]) { [weak self] _, change in
+                guard let value = change.newValue else { return }
+                self?.deviceController.eventHandler?(.isoChanged(value))
+            }
+        )
     }
 
     private static func attachmentsDictionary(from sampleBuffer: CMSampleBuffer?) -> [String: Any] {
@@ -1076,10 +1132,22 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
             deliveredPortraitEffectsMatte = false
         }
         if deliveredDepthData, let lastPresentationTime {
-            advancedOutput.emitDepthData(.init(timestamp: lastPresentationTime))
+            let payloadDepthData: AVDepthData?
+            if #available(iOS 11.0, *) {
+                payloadDepthData = photo.depthData
+            } else {
+                payloadDepthData = nil
+            }
+            advancedOutput.emitDepthData(.init(timestamp: lastPresentationTime, depthData: payloadDepthData, isSynchronized: false))
         }
         if deliveredPortraitEffectsMatte {
-            advancedOutput.emitPortraitEffectsMatte(.init(deliveredInPhoto: true))
+            let matte: AVPortraitEffectsMatte?
+            if #available(iOS 12.0, *) {
+                matte = photo.portraitEffectsMatte
+            } else {
+                matte = nil
+            }
+            advancedOutput.emitPortraitEffectsMatte(.init(deliveredInPhoto: true, matte: matte, timestamp: lastPresentationTime))
         }
         let result = CameraPhotoCaptureResult(
             data: photo.fileDataRepresentation(),
@@ -1097,7 +1165,7 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
 extension CameraSource: AVCaptureMetadataOutputObjectsDelegate {
     public func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
         let transformed = metadataObjects.compactMap { previewLayer.transformedMetadataObject(for: $0) }
-        advancedOutput.emitMetadataObjects(.init(objects: transformed, timestamp: lastPresentationTime))
+        advancedOutput.emitMetadataObjects(.init(objects: metadataObjects, previewObjects: transformed, timestamp: lastPresentationTime))
     }
 }
 
@@ -1109,7 +1177,7 @@ extension CameraSource: AVCaptureDepthDataOutputDelegate {
         timestamp: CMTime,
         connection: AVCaptureConnection
     ) {
-        advancedOutput.emitDepthData(.init(timestamp: timestamp))
+        advancedOutput.emitDepthData(.init(timestamp: timestamp, depthData: depthData, isSynchronized: false))
     }
 }
 
@@ -1128,7 +1196,7 @@ extension CameraSource: AVCaptureDataOutputSynchronizerDelegate {
         if let depthDataOutput,
            let synchronizedDepth = synchronizedDataCollection.synchronizedData(for: depthDataOutput) as? AVCaptureSynchronizedDepthData,
            synchronizedDepth.depthDataWasDropped == false {
-            advancedOutput.emitDepthData(.init(timestamp: synchronizedDepth.timestamp))
+            advancedOutput.emitDepthData(.init(timestamp: synchronizedDepth.timestamp, depthData: synchronizedDepth.depthData, isSynchronized: true))
         }
     }
 }

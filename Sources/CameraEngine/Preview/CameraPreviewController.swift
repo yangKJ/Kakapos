@@ -15,12 +15,14 @@ public final class CameraPreviewController {
         public let sourceSummaryText: String
         public let pipelineSummaryText: String?
         public let previewState: PreviewSink.State?
+        public let controllerState: State
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
         public let lastErrorDescription: String?
+        public let sourceSnapshotSummaryText: String?
 
         public var summaryText: String {
-            var text = "mode \(mode) · source \(sourceSummaryText)"
+            var text = "mode \(mode) · state \(controllerState) · source \(sourceSummaryText)"
             if let previewState {
                 text += " · preview \(previewState)"
             }
@@ -32,6 +34,9 @@ public final class CameraPreviewController {
             }
             if let pipelineSummaryText {
                 text += " · pipeline \(pipelineSummaryText)"
+            }
+            if let sourceSnapshotSummaryText {
+                text += " · sourceSnapshot \(sourceSnapshotSummaryText)"
             }
             if let lastErrorDescription {
                 text += " · error \(lastErrorDescription)"
@@ -45,14 +50,23 @@ public final class CameraPreviewController {
         case processed
     }
 
+    public enum State: Equatable, Sendable {
+        case idle
+        case running
+        case paused
+        case stopped
+        case failed
+    }
+
     public let source: CameraSource
     public let mode: Mode
     public let previewLayer: AVCaptureVideoPreviewLayer
-    public let previewSink: PreviewSink?
+    public let previewSink: CameraPreviewSink?
     public let previewPipeline: PreviewPipeline?
+    public private(set) var controllerState: State = .idle
 
-    public var state: PreviewSink.State? {
-        previewSink?.state
+    public var state: State {
+        controllerState
     }
 
     public var summary: Summary {
@@ -61,9 +75,11 @@ public final class CameraPreviewController {
             sourceSummaryText: source.summaryText,
             pipelineSummaryText: previewPipeline?.summaryText,
             previewState: previewSink?.state,
+            controllerState: controllerState,
             lastFrameIndex: previewSink?.snapshot.lastFrameIndex,
             lastPresentationTime: previewSink?.snapshot.lastPresentationTime,
-            lastErrorDescription: previewPipeline?.lastErrorDescription
+            lastErrorDescription: previewPipeline?.lastErrorDescription,
+            sourceSnapshotSummaryText: source.sourceSnapshot.summaryText
         )
     }
 
@@ -93,24 +109,28 @@ public final class CameraPreviewController {
                 callbackQueue: callbackQueue,
                 handler: resolvedHandler
             )
-            self.previewSink = pipeline.previewSink
+            self.previewSink = CameraPreviewSink(sink: pipeline.previewSink)
             self.previewPipeline = pipeline
         }
     }
 
     public func start() {
+        controllerState = .running
         previewPipeline?.start()
     }
 
     public func pause() {
+        controllerState = .paused
         previewPipeline?.pause()
     }
 
     public func resume() {
+        controllerState = .running
         previewPipeline?.resume()
     }
 
     public func stop() {
+        controllerState = .stopped
         previewPipeline?.stop()
     }
 }
