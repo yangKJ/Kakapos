@@ -61,10 +61,13 @@ public final class RecorderSink: MediaSink {
 
     public enum State: Equatable, Sendable {
         case idle
+        case preparing
         case recording
         case paused
+        case finishing
         case finished
         case cancelled
+        case failed
     }
 
     public let outputURL: URL
@@ -133,6 +136,7 @@ public final class RecorderSink: MediaSink {
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
     private let lifecycleLock = NSLock()
     private var acceptsFrames = true
+    public var maximumDuration: CMTime?
 
     public init(outputURL: URL, fileType: AVFileType = .mp4) throws {
         self.outputURL = outputURL
@@ -195,6 +199,7 @@ public final class RecorderSink: MediaSink {
                 if self.state == .paused, let lastPresentationTime = self.lastPresentationTime {
                     self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
                 }
+                self.setState(.finishing)
                 self.setState(.finished)
                 do {
                     try self.writeSyntheticOutputFileIfNeeded()
@@ -211,6 +216,7 @@ public final class RecorderSink: MediaSink {
                 }
                 return
             }
+            self.setState(.finishing)
             self.videoInput?.markAsFinished()
             self.audioInput?.markAsFinished()
             self.writer.finishWriting {
@@ -220,6 +226,7 @@ public final class RecorderSink: MediaSink {
                 }
                 self.setState(.finished)
                 if let error = self.writer.error {
+                    self.setState(.failed)
                     self.runtimeErrorHandler?(error)
                     completion(.failure(error))
                 } else {
@@ -314,6 +321,12 @@ public final class RecorderSink: MediaSink {
         }
         updateLastPresentationTime(normalizedTime)
         durationChangedHandler?(session.snapshot().totalDuration + session.snapshot().currentClipDuration)
+        if let maximumDuration {
+            let recordedDuration = session.snapshot().totalDuration + session.snapshot().currentClipDuration
+            if recordedDuration >= maximumDuration {
+                finishRecording { _ in }
+            }
+        }
     }
 
     private func setupVideoIfNeeded(pixelBuffer: CVPixelBuffer) throws {
@@ -427,6 +440,7 @@ public final class RecorderSink: MediaSink {
     private func startIfNeeded(at time: CMTime) throws {
         guard state == .idle || state == .paused else { return }
         if state == .idle {
+            setState(.preparing)
             if !usesSyntheticBackend {
                 if writer.startWriting() {
                     writer.startSession(atSourceTime: time)

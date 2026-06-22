@@ -38,10 +38,10 @@ public final class CameraDeviceController {
     public private(set) var focusPoint: CGPoint?
     public private(set) var exposurePoint: CGPoint?
     public private(set) var preferredFlashMode: AVCaptureDevice.FlashMode = .off
+    public private(set) var preferredDeviceType: CameraDeviceType?
 
     private let deviceProvider: DeviceProvider
     private let positionProvider: PositionProvider
-    private let stateQueue = DispatchQueue(label: "com.condy.kakapos.camera-device-controller")
 
     public init(
         deviceProvider: @escaping DeviceProvider,
@@ -58,11 +58,21 @@ public final class CameraDeviceController {
                 zoomFactor: 1,
                 lensPosition: nil,
                 exposureBias: nil,
+                iso: nil,
+                exposureDuration: nil,
                 torchActive: false,
                 flashAvailable: false,
                 torchAvailable: false,
                 focusPoint: focusPoint,
                 exposurePoint: exposurePoint,
+                focusMode: nil,
+                exposureMode: nil,
+                whiteBalanceMode: nil,
+                activeDeviceType: preferredDeviceType?.description,
+                subjectAreaMonitoringEnabled: false,
+                isAdjustingFocus: false,
+                isAdjustingExposure: false,
+                whiteBalanceGains: [],
                 activeFormatDescription: nil,
                 activeFrameRateRange: nil
             )
@@ -78,11 +88,25 @@ public final class CameraDeviceController {
             zoomFactor: device.videoZoomFactor,
             lensPosition: device.isFocusModeSupported(.locked) ? device.lensPosition : nil,
             exposureBias: device.exposureTargetBias,
+            iso: device.iso,
+            exposureDuration: device.exposureDuration,
             torchActive: device.isTorchActive,
             flashAvailable: device.hasFlash,
             torchAvailable: device.hasTorch,
             focusPoint: focusPoint,
             exposurePoint: exposurePoint,
+            focusMode: CameraFocusMode(device.focusMode),
+            exposureMode: CameraExposureMode(device.exposureMode),
+            whiteBalanceMode: CameraWhiteBalanceMode(device.whiteBalanceMode),
+            activeDeviceType: preferredDeviceType?.description ?? device.deviceType.rawValue,
+            subjectAreaMonitoringEnabled: device.isSubjectAreaChangeMonitoringEnabled,
+            isAdjustingFocus: device.isAdjustingFocus,
+            isAdjustingExposure: device.isAdjustingExposure,
+            whiteBalanceGains: [
+                device.deviceWhiteBalanceGains.redGain,
+                device.deviceWhiteBalanceGains.greenGain,
+                device.deviceWhiteBalanceGains.blueGain
+            ],
             activeFormatDescription: "\(device.activeFormat.formatDescription)",
             activeFrameRateRange: frameRateRange
         )
@@ -152,6 +176,105 @@ public final class CameraDeviceController {
     }
 
     @discardableResult
+    public func setFocusMode(_ focusMode: CameraFocusMode) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "set focus mode") { device in
+            guard device.isFocusModeSupported(focusMode.avFoundationMode) else {
+                throw CameraDeviceControlError.unsupportedControl("focus mode \(focusMode)")
+            }
+            device.focusMode = focusMode.avFoundationMode
+            eventHandler?(.focusModeChanged(focusMode))
+        }
+    }
+
+    @discardableResult
+    public func setLensPosition(_ lensPosition: Float) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "set lens position") { device in
+            guard device.isLockingFocusWithCustomLensPositionSupported else {
+                throw CameraDeviceControlError.unsupportedControl("lens position")
+            }
+            let resolved = min(max(lensPosition, 0), 1)
+            device.setFocusModeLocked(lensPosition: resolved)
+            eventHandler?(.lensPositionChanged(resolved))
+            eventHandler?(.focusModeChanged(.locked))
+        }
+    }
+
+    @discardableResult
+    public func setExposureMode(_ exposureMode: CameraExposureMode) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "set exposure mode") { device in
+            guard device.isExposureModeSupported(exposureMode.avFoundationMode) else {
+                throw CameraDeviceControlError.unsupportedControl("exposure mode \(exposureMode)")
+            }
+            device.exposureMode = exposureMode.avFoundationMode
+            eventHandler?(.exposureModeChanged(exposureMode))
+        }
+    }
+
+    @discardableResult
+    public func setCustomExposure(duration: CMTime, iso: Float) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "set custom exposure") { device in
+            guard device.isExposureModeSupported(.custom) else {
+                throw CameraDeviceControlError.unsupportedControl("custom exposure")
+            }
+            let resolvedISO = min(max(iso, device.activeFormat.minISO), device.activeFormat.maxISO)
+            device.setExposureModeCustom(duration: duration, iso: resolvedISO)
+            eventHandler?(.exposureModeChanged(.custom))
+            eventHandler?(.exposureDurationChanged(duration))
+            eventHandler?(.isoChanged(resolvedISO))
+        }
+    }
+
+    @discardableResult
+    public func setWhiteBalanceMode(_ whiteBalanceMode: CameraWhiteBalanceMode) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "set white balance mode") { device in
+            guard device.isWhiteBalanceModeSupported(whiteBalanceMode.avFoundationMode) else {
+                throw CameraDeviceControlError.unsupportedControl("white balance mode \(whiteBalanceMode)")
+            }
+            device.whiteBalanceMode = whiteBalanceMode.avFoundationMode
+            eventHandler?(.whiteBalanceModeChanged(whiteBalanceMode))
+        }
+    }
+
+    @discardableResult
+    public func lockWhiteBalanceGains(red: Float, green: Float, blue: Float) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "lock white balance gains") { device in
+            guard device.isWhiteBalanceModeSupported(.locked) else {
+                throw CameraDeviceControlError.unsupportedControl("white balance gains")
+            }
+            var gains = AVCaptureDevice.WhiteBalanceGains(
+                redGain: red,
+                greenGain: green,
+                blueGain: blue
+            )
+            gains.redGain = min(max(1, gains.redGain), device.maxWhiteBalanceGain)
+            gains.greenGain = min(max(1, gains.greenGain), device.maxWhiteBalanceGain)
+            gains.blueGain = min(max(1, gains.blueGain), device.maxWhiteBalanceGain)
+            device.setWhiteBalanceModeLocked(with: gains)
+            eventHandler?(.whiteBalanceModeChanged(.locked))
+            eventHandler?(.whiteBalanceGainsChanged([gains.redGain, gains.greenGain, gains.blueGain]))
+        }
+    }
+
+    @discardableResult
+    public func setSmoothAutoFocusEnabled(_ isEnabled: Bool) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "set smooth auto focus") { device in
+            guard device.isSmoothAutoFocusSupported else {
+                throw CameraDeviceControlError.unsupportedControl("smooth auto focus")
+            }
+            device.isSmoothAutoFocusEnabled = isEnabled
+            eventHandler?(.smoothAutoFocusChanged(isEnabled))
+        }
+    }
+
+    @discardableResult
+    public func resetSubjectAreaMonitoring(enabled: Bool = true) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "reset subject area monitoring") { device in
+            device.isSubjectAreaChangeMonitoringEnabled = enabled
+            eventHandler?(.subjectAreaMonitoringChanged(enabled))
+        }
+    }
+
+    @discardableResult
     public func setTorchActive(_ isActive: Bool, level: Float = AVCaptureDevice.maxAvailableTorchLevel) throws -> CameraDeviceSnapshot {
         return try withLockedDevice(operation: "set torch") { device in
             guard device.hasTorch else {
@@ -169,6 +292,13 @@ public final class CameraDeviceController {
     @discardableResult
     public func setPreferredFlashMode(_ flashMode: AVCaptureDevice.FlashMode) -> CameraDeviceSnapshot {
         preferredFlashMode = flashMode
+        eventHandler?(.flashModeChanged(flashMode))
+        return snapshot
+    }
+
+    @discardableResult
+    public func selectPreferredDeviceType(_ deviceType: CameraDeviceType) -> CameraDeviceSnapshot {
+        preferredDeviceType = deviceType
         return snapshot
     }
 
@@ -195,6 +325,36 @@ public final class CameraDeviceController {
             device.activeFormat = format
             eventHandler?(.formatChanged("\(format.formatDescription)"))
         }
+    }
+
+    @discardableResult
+    public func selectBestFormat(_ score: (AVCaptureDevice.Format) -> Int) throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "select best device format") { device in
+            let best = device.formats.max { score($0) < score($1) }
+            guard let best else {
+                throw CameraDeviceControlError.unsupportedControl("best format")
+            }
+            device.activeFormat = best
+            eventHandler?(.formatChanged("\(best.formatDescription)"))
+        }
+    }
+
+    public func notifySubjectAreaChanged() {
+        eventHandler?(.subjectAreaChanged)
+    }
+
+    public func notifyCleanApertureChanged(_ aperture: CGRect) {
+        eventHandler?(.cleanApertureChanged(aperture))
+    }
+
+    public func notifySystemPressureChanged(_ level: String) {
+        eventHandler?(.systemPressureChanged(level))
+    }
+
+    public func refreshAdjustingState() {
+        guard let device = deviceProvider() else { return }
+        eventHandler?(.focusAdjustmentChanged(device.isAdjustingFocus))
+        eventHandler?(.exposureAdjustmentChanged(device.isAdjustingExposure))
     }
 
     private func withLockedDevice(

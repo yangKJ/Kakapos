@@ -13,6 +13,14 @@ import ARKit
 
 @available(iOS 13.0, *)
 public final class ARFrameSource: NSObject, MediaSource {
+    public struct Configuration {
+        public let runHandler: ((ARSession) -> Void)?
+
+        public init(runHandler: ((ARSession) -> Void)? = nil) {
+            self.runHandler = runHandler
+        }
+    }
+
     public struct Snapshot: Equatable {
         public let isRunning: Bool
         public let frameCount: Int64
@@ -35,6 +43,7 @@ public final class ARFrameSource: NSObject, MediaSource {
 
     public weak var delegate: MediaSourceDelegate?
     public let session: ARSession
+    public let configuration: Configuration
     public var frameHandler: ((MediaFrame) -> Void)?
     public private(set) var isRunning = false
     public private(set) var frameCount: Int64 = 0
@@ -52,14 +61,16 @@ public final class ARFrameSource: NSObject, MediaSource {
         summary.summaryText
     }
 
-    public init(session: ARSession = ARSession()) {
+    public init(session: ARSession = ARSession(), configuration: Configuration = .init()) {
         self.session = session
+        self.configuration = configuration
         super.init()
         self.session.delegate = self
     }
 
     public func start() {
         isRunning = true
+        configuration.runHandler?(session)
     }
 
     public func pause() {

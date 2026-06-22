@@ -4571,7 +4571,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lifecycle.handle(.resumeRequested), .didResume)
         XCTAssertEqual(lifecycle.state, .running)
         XCTAssertEqual(lifecycle.handle(.positionSwitchRequested(.front)), .willSwitchPosition(.front))
-        XCTAssertEqual(lifecycle.state, .switchingPosition)
+        XCTAssertEqual(lifecycle.state, .reconfiguring)
         XCTAssertEqual(lifecycle.handle(.positionChanged(.front)), .positionChanged(.front))
         XCTAssertEqual(lifecycle.state, .running)
         XCTAssertEqual(lifecycle.position, .front)
@@ -4593,7 +4593,7 @@ final class MediaEngineTests: XCTestCase {
             lifecycle.handle(.runtimeError(isRecoverable: true, description: "reset")),
             .runtimeError(isRecoverable: true, description: "reset")
         )
-        XCTAssertEqual(lifecycle.state, .error)
+        XCTAssertEqual(lifecycle.state, .recovering)
         XCTAssertTrue(lifecycle.shouldAttemptRecovery)
     }
 

@@ -75,16 +75,28 @@ final class CameraEngineTests: XCTestCase {
             zoomFactor: 2,
             lensPosition: 0.4,
             exposureBias: 1,
+            iso: 120,
+            exposureDuration: CMTime(value: 1, timescale: 120),
             torchActive: true,
             flashAvailable: true,
             torchAvailable: true,
             focusPoint: CGPoint(x: 0.2, y: 0.8),
             exposurePoint: CGPoint(x: 0.3, y: 0.7),
+            focusMode: .locked,
+            exposureMode: .custom,
+            whiteBalanceMode: .locked,
+            activeDeviceType: "wideAngle",
+            subjectAreaMonitoringEnabled: true,
+            isAdjustingFocus: false,
+            isAdjustingExposure: false,
+            whiteBalanceGains: [1.1, 1.2, 1.3],
             activeFormatDescription: "format-desc",
             activeFrameRateRange: .init(minimumFramesPerSecond: 24, maximumFramesPerSecond: 60)
         )
         XCTAssertTrue(device.summaryText.contains("zoom 2.00x"))
         XCTAssertTrue(device.summaryText.contains("torch on"))
+        XCTAssertTrue(device.summaryText.contains("iso 120.0"))
+        XCTAssertTrue(device.summaryText.contains("whiteBalance locked"))
         XCTAssertTrue(device.summaryText.contains("fps 24.0-60.0"))
         XCTAssertTrue(device.summaryText.contains("format format-desc"))
 
@@ -97,13 +109,13 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertEqual(receivedKinds, [.metadataObjects, .depthData])
         XCTAssertEqual(advancedOutput.eventCount, 2)
         XCTAssertEqual(advancedOutput.latestEventKind, .depthData)
-        XCTAssertEqual(advancedOutput.latestEventSummaryText, "depthData timestamp 5.00s")
+        XCTAssertEqual(advancedOutput.latestEventSummaryText, "depthData synchronized no · timestamp 5.00s")
         advancedOutput.reset()
         XCTAssertEqual(advancedOutput.eventCount, 0)
         XCTAssertNil(advancedOutput.latestEventKind)
         XCTAssertEqual(
             CameraAdvancedEvent.depthData(.init(timestamp: CMTime(seconds: 5, preferredTimescale: 600))).summaryText,
-            "depthData timestamp 5.00s"
+            "depthData synchronized no · timestamp 5.00s"
         )
     }
 
@@ -131,6 +143,8 @@ final class CameraEngineTests: XCTestCase {
         controller.stateChangedHandler = { states.append($0) }
         controller.eventHandler = { event in
             switch event {
+            case .willStart:
+                events.append("willStart")
             case .didStart:
                 events.append("start")
             case .didPause:
@@ -141,10 +155,16 @@ final class CameraEngineTests: XCTestCase {
                 events.append("finish")
             case .didCancel:
                 events.append("cancel")
+            case .didFail(let description):
+                events.append("fail:\(description)")
+            case .clipCompleted(let clip):
+                events.append("segment:\(clip.index)")
             case .clipCountChanged(let count):
                 events.append("clips:\(count)")
             case .durationChanged(let duration):
                 events.append(String(format: "duration:%.2f", duration.seconds))
+            case .droppedFrame(let metadata):
+                events.append("drop:\(metadata.frameIndex ?? -1)")
             }
         }
 
@@ -187,6 +207,27 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertEqual(controller.preferredFlashMode, .on)
         XCTAssertEqual(updatedSnapshot.position, .front)
     }
+
+    func testCameraSourceConfigurationWithDevicePersistsControlPreferences() {
+        let configuration = CameraSourceConfiguration.cameraDefaults()
+            .withDevice {
+                var device = $0
+                device.focusMode = .locked
+                device.exposureMode = .custom
+                device.whiteBalanceMode = .locked
+                device.initialZoomFactor = 2
+                device.enablesSmoothAutoFocus = false
+                device.subjectAreaMonitoringEnabled = false
+                return device
+            }
+
+        XCTAssertEqual(configuration.device.focusMode, .locked)
+        XCTAssertEqual(configuration.device.exposureMode, .custom)
+        XCTAssertEqual(configuration.device.whiteBalanceMode, .locked)
+        XCTAssertEqual(configuration.device.initialZoomFactor, 2)
+        XCTAssertFalse(configuration.device.enablesSmoothAutoFocus)
+        XCTAssertFalse(configuration.device.subjectAreaMonitoringEnabled)
+    }
 #endif
 
 #if canImport(UIKit) && !os(watchOS)
@@ -225,6 +266,7 @@ final class CameraEngineTests: XCTestCase {
 
         XCTAssertEqual(previewController.state, .idle)
         XCTAssertTrue(previewController.summaryText.contains("mode processed"))
+        XCTAssertTrue(previewController.summaryText.contains("state idle"))
         XCTAssertTrue(previewController.summaryText.contains("source state"))
     }
 
@@ -244,6 +286,19 @@ final class CameraEngineTests: XCTestCase {
 
         wait(for: [expectation], timeout: 1)
         XCTAssertEqual(receivedError as? CameraEngineError, .recordingControllerUnavailable)
+    }
+
+    func testCameraEngineDiagnosticsSnapshotAggregatesCurrentState() throws {
+        let engine = try CameraEngine(
+            configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
+        )
+        _ = engine.makePreviewController(mode: .processed, processors: [])
+
+        let diagnostics = engine.diagnosticsSnapshot
+        XCTAssertTrue(diagnostics.sessionSummaryText.contains("mode videoWithoutAudio"))
+        XCTAssertTrue(diagnostics.deviceSummaryText.contains("position"))
+        XCTAssertTrue(diagnostics.capabilitySummaryText.contains("position"))
+        XCTAssertTrue(diagnostics.advancedEventSummaryText.contains("No advanced camera events yet"))
     }
 
     func testRecordingPipelineCameraSourceSnapshotCarriesCapabilitySnapshot() throws {

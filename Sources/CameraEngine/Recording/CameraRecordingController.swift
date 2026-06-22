@@ -87,6 +87,7 @@ public final class CameraRecordingController {
     }
 
     public func start() {
+        eventHandler?(.willStart)
         pipeline.start()
         eventHandler?(.didStart)
     }
@@ -108,6 +109,11 @@ public final class CameraRecordingController {
     public func stopRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
         recorderSink.finishRecording { [weak self] result in
             self?.pipeline.stop()
+            if case .success(let clip) = result {
+                clip.segments.last.map { self?.eventHandler?(.clipCompleted($0)) }
+            } else if case .failure(let error) = result {
+                self?.eventHandler?(.didFail(error.localizedDescription))
+            }
             self?.finishHandler?(result)
             completion(result)
         }
@@ -133,17 +139,29 @@ public final class CameraRecordingController {
             self?.durationChangedHandler?(duration)
             self?.eventHandler?(.durationChanged(duration))
         }
+        recorderSink.droppedFrameHandler = { [weak self] metadata in
+            self?.eventHandler?(.droppedFrame(metadata))
+        }
+        recorderSink.runtimeErrorHandler = { [weak self] error in
+            self?.eventHandler?(.didFail(error.localizedDescription))
+        }
         recorderSink.stateChangedHandler = { [weak self] state in
             self?.stateChangedHandler?(state)
             switch state {
+            case .preparing:
+                self?.eventHandler?(.willStart)
             case .recording:
                 self?.eventHandler?(.didStart)
             case .paused:
                 self?.eventHandler?(.didPause)
+            case .finishing:
+                self?.eventHandler?(.didFinish)
             case .finished:
                 self?.eventHandler?(.didFinish)
             case .cancelled:
                 self?.eventHandler?(.didCancel)
+            case .failed:
+                self?.eventHandler?(.didFail("recorder failed"))
             case .idle:
                 break
             }

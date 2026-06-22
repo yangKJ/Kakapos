@@ -49,6 +49,8 @@ public final class RecordedClip: @unchecked Sendable {
     public let segments: [RecordedClipSegment]
     public var isMutedOnMerge: Bool
     public private(set) var infoDictionary: [String: Any]?
+    public let thumbnailTime: CMTime?
+    public let sessionManifest: [String: Any]?
 
     private var cachedAsset: AVAsset?
 
@@ -93,7 +95,9 @@ public final class RecordedClip: @unchecked Sendable {
         endedAt: CMTime?,
         segments: [RecordedClipSegment] = [],
         isMutedOnMerge: Bool = false,
-        infoDictionary: [String: Any]? = nil
+        infoDictionary: [String: Any]? = nil,
+        thumbnailTime: CMTime? = nil,
+        sessionManifest: [String: Any]? = nil
     ) {
         self.identifier = identifier
         self.outputURL = outputURL
@@ -103,6 +107,8 @@ public final class RecordedClip: @unchecked Sendable {
         self.segments = segments
         self.isMutedOnMerge = isMutedOnMerge
         self.infoDictionary = infoDictionary
+        self.thumbnailTime = thumbnailTime
+        self.sessionManifest = sessionManifest
     }
 
     public convenience init(directoryPath: String, representationDictionary: [String: Any]?) {
@@ -166,7 +172,8 @@ extension RecordedClip: Equatable {
         lhs.startedAt == rhs.startedAt &&
         lhs.endedAt == rhs.endedAt &&
         lhs.segments == rhs.segments &&
-        lhs.isMutedOnMerge == rhs.isMutedOnMerge
+        lhs.isMutedOnMerge == rhs.isMutedOnMerge &&
+        lhs.thumbnailTime == rhs.thumbnailTime
     }
 }
 
@@ -291,7 +298,13 @@ final class RecordingSession {
             startedAt: startedAt,
             endedAt: endedAt,
             segments: clips,
-            infoDictionary: infoDictionary
+            infoDictionary: infoDictionary,
+            thumbnailTime: startedAt,
+            sessionManifest: [
+                "clipCount": clips.count,
+                "videoSegments": clips.filter(\.containsVideo).count,
+                "audioSegments": clips.filter(\.containsAudio).count
+            ]
         )
     }
 
