@@ -22,6 +22,11 @@ public final class AssetSource: MediaSource {
         public static let mediaType = "kakapos.asset.media-type"
         public static let sourceTrackID = "kakapos.asset.track-id"
         public static let sourceURL = "kakapos.asset.url"
+        public static let recordedClipIdentifier = "kakapos.asset.recorded-clip.identifier"
+        public static let recordedClipSegmentCount = "kakapos.asset.recorded-clip.segment-count"
+        public static let recordedClipContainsVideo = "kakapos.asset.recorded-clip.contains-video"
+        public static let recordedClipContainsAudio = "kakapos.asset.recorded-clip.contains-audio"
+        public static let recordedClipMutedOnMerge = "kakapos.asset.recorded-clip.muted-on-merge"
     }
 
     public weak var delegate: MediaSourceDelegate?
@@ -30,6 +35,7 @@ public final class AssetSource: MediaSource {
     public let videoOutputSettings: [String: Any]
     public let audioOutputSettings: [String: Any]?
     public let callbackQueue: DispatchQueue
+    public let frameUserInfo: [String: Any]
 
     public private(set) var state: State = .idle
 
@@ -51,13 +57,37 @@ public final class AssetSource: MediaSource {
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ],
         audioOutputSettings: [String: Any]? = nil,
+        frameUserInfo: [String: Any] = [:],
         callbackQueue: DispatchQueue = .main
     ) {
         self.asset = asset
         self.timeRange = timeRange
         self.videoOutputSettings = videoOutputSettings
         self.audioOutputSettings = audioOutputSettings
+        self.frameUserInfo = frameUserInfo
         self.callbackQueue = callbackQueue
+    }
+
+    public convenience init?(
+        recordedClip: RecordedClip,
+        timeRange: CMTimeRange? = nil,
+        videoOutputSettings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ],
+        audioOutputSettings: [String: Any]? = nil,
+        callbackQueue: DispatchQueue = .main
+    ) {
+        guard let asset = recordedClip.asset else {
+            return nil
+        }
+        self.init(
+            asset: asset,
+            timeRange: timeRange,
+            videoOutputSettings: videoOutputSettings,
+            audioOutputSettings: audioOutputSettings,
+            frameUserInfo: Self.makeRecordedClipUserInfo(recordedClip),
+            callbackQueue: callbackQueue
+        )
     }
 
     public func start() {
@@ -213,11 +243,11 @@ public final class AssetSource: MediaSource {
             sourceTime: presentationTime,
             trackTransform: trackTransform(for: mediaType),
             frameIndex: frameIndex,
-            userInfo: [
+            userInfo: frameUserInfo.merging([
                 MetadataKey.mediaType: mediaType.rawValue,
                 MetadataKey.sourceTrackID: sourceTrackID(for: mediaType) as Any,
                 MetadataKey.sourceURL: (asset as? AVURLAsset)?.url as Any
-            ]
+            ]) { _, new in new }
         )
         let frame = MediaFrame(sampleBuffer: sampleBuffer, metadata: metadata)
         callbackQueue.async {
@@ -271,5 +301,11 @@ public final class AssetSource: MediaSource {
             pauseCondition.wait()
         }
         pauseCondition.unlock()
+    }
+
+    private static func makeRecordedClipUserInfo(_ recordedClip: RecordedClip) -> [String: Any] {
+        var userInfo: [String: Any] = recordedClip.mergeHandoff.metadataUserInfo
+        userInfo[MetadataKey.recordedClipIdentifier] = recordedClip.identifier.uuidString
+        return userInfo
     }
 }

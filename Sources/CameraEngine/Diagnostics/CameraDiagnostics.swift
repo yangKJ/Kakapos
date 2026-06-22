@@ -414,28 +414,39 @@ public final class CameraAdvancedOutput {
     }
 
     public func emitMetadataObjects(_ payload: CameraMetadataObjectPayload) {
-        record(.metadataObjects(payload))
-        metadataObjectsHandler?(payload)
+        emit(.metadataObjects(payload))
     }
 
     public func emitDepthData(_ payload: CameraDepthDataPayload) {
-        record(.depthData(payload))
-        depthDataHandler?(payload)
+        emit(.depthData(payload))
     }
 
     public func emitPortraitEffectsMatte(_ payload: CameraPortraitEffectsMattePayload) {
-        record(.portraitEffectsMatte(payload))
-        portraitEffectsMatteHandler?(payload)
+        emit(.portraitEffectsMatte(payload))
     }
 
     public func emitARFrame(_ frame: CameraARFramePayload) {
-        record(.arFrame(frame))
-        arFrameHandler?(frame)
+        emit(.arFrame(frame))
     }
 
     public func emitMultiCamFrame(_ payload: CameraMultiCamFramePayload) {
-        record(.multiCamFrame(payload))
-        multiCamFrameHandler?(payload)
+        emit(.multiCamFrame(payload))
+    }
+
+    public func emit(_ event: CameraAdvancedEvent) {
+        record(event)
+        switch event {
+        case .metadataObjects(let payload):
+            metadataObjectsHandler?(payload)
+        case .depthData(let payload):
+            depthDataHandler?(payload)
+        case .portraitEffectsMatte(let payload):
+            portraitEffectsMatteHandler?(payload)
+        case .arFrame(let payload):
+            arFrameHandler?(payload)
+        case .multiCamFrame(let payload):
+            multiCamFrameHandler?(payload)
+        }
     }
 
     public func reset() {

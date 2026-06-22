@@ -80,6 +80,29 @@ public final class TimelinePipeline {
         self.composition = composition
     }
 
+    public convenience init?(
+        recordedClip: RecordedClip,
+        renderSize: CGSize = CGSize(width: 720, height: 1280),
+        frameDuration: CMTime = CMTime(value: 1, timescale: 30),
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0
+    ) {
+        guard let layer = ClipLayer(
+            recordedClip: recordedClip,
+            startTime: startTime,
+            sourceTimeRange: sourceTimeRange,
+            layerLevel: layerLevel
+        ) else {
+            return nil
+        }
+        self.init(
+            renderSize: renderSize,
+            frameDuration: frameDuration,
+            layers: [layer]
+        )
+    }
+
     public func addLayer(_ layer: TimelineLayer) {
         composition.addLayer(layer)
     }

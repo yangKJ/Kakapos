@@ -86,6 +86,27 @@ public final class ClipLayer: TimelineLayer {
         super.init(timeRange: timeRange, layerLevel: layerLevel)
     }
 
+    public convenience init?(
+        recordedClip: RecordedClip,
+        startTime: CMTime = .zero,
+        sourceTimeRange: CMTimeRange? = nil,
+        layerLevel: Int = 0,
+        volume: Float? = nil,
+        audioRamps: [AudioVolumeRamp] = []
+    ) {
+        guard let source = AssetClipSource(recordedClip: recordedClip, sourceTimeRange: sourceTimeRange) else {
+            return nil
+        }
+        let effectiveDuration = sourceTimeRange?.duration ?? recordedClip.duration
+        self.init(
+            source: source,
+            timeRange: CMTimeRange(start: startTime, duration: effectiveDuration),
+            layerLevel: layerLevel,
+            volume: volume ?? (recordedClip.isMutedOnMerge ? 0 : 1),
+            audioRamps: audioRamps
+        )
+    }
+
     public init(
         source: AssetClipSource,
         timeRange: CMTimeRange,
