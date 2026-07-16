@@ -19,7 +19,7 @@ protocol ReaderWriterExportSession {
     func cancel()
 }
 
-public final class ReaderWriterExportJob {
+public final class ReaderWriterExportJob: @unchecked Sendable {
     public enum Status: String, Equatable, Sendable, Codable {
         case idle
         case exporting
@@ -606,7 +606,7 @@ public final class ReaderWriterExportJob {
         completion?(result)
     }
 
-    private static let defaultSessionFactory: (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession = { asset, outputURL, configuration in
+    nonisolated(unsafe) private static let defaultSessionFactory: (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession = { asset, outputURL, configuration in
         try VideoAssetExportSession(asset: asset, outputURL: outputURL, configuration: configuration)
     }
 

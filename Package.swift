@@ -1,4 +1,4 @@
-// swift-tools-version:5.0
+// swift-tools-version:6.0
 //
 //  Kakapos
 //
@@ -27,7 +27,7 @@ import PackageDescription
 let package = Package(
     name: "Kakapos",
     platforms: [
-        .iOS(.v10), .tvOS(.v12), .watchOS(.v5), .macOS(.v10_13)
+        .iOS(.v12), .tvOS(.v12), .watchOS(.v5), .macOS(.v12)
     ],
     products: [
         // Products define the executables and libraries a package produces, and make them visible to other packages.
@@ -42,6 +42,5 @@ let package = Package(
         // Targets can depend on other targets in this package, and on products in packages this package depends on.
         .target(name: "Kakapos", path: "Sources"),
         .testTarget(name: "KakaposTests", dependencies: ["Kakapos"], path: "Tests/KakaposTests"),
-    ],
-    swiftLanguageVersions: [.v5]
+    ]
 )

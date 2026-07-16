@@ -4,6 +4,10 @@
 //
 //  Created by Condy on 2026/6/21.
 //
+//  `MediaFrame` 保持最小协议，只暴露领域元数据。
+//  AVFoundation / Metal payload 不进入协议，避免抽象被具体后端污染；
+//  `PixelBufferFrame`、`SampleBufferFrame`、`TextureFrame` 各自持有 payload。
+//
 
 import Foundation
 import AVFoundation
@@ -13,7 +17,7 @@ import CoreVideo
 import Metal
 #endif
 
-public struct FrameMetadata {
+public struct FrameMetadata: @unchecked Sendable {
     public var presentationTime: CMTime
     public var duration: CMTime?
     public var sourceTime: CMTime?
@@ -38,43 +42,44 @@ public struct FrameMetadata {
     }
 }
 
-public struct MediaFrame {
-    public var pixelBuffer: CVPixelBuffer?
-    public var sampleBuffer: CMSampleBuffer?
-    #if canImport(Metal)
-    public var texture: MTLTexture?
-    #endif
-    public var metadata: FrameMetadata
+public protocol MediaFrame {
+    var metadata: FrameMetadata { get set }
+}
 
-    public init(pixelBuffer: CVPixelBuffer, metadata: FrameMetadata) {
-        self.pixelBuffer = pixelBuffer
-        self.sampleBuffer = nil
-        #if canImport(Metal)
-        self.texture = nil
-        #endif
-        self.metadata = metadata
+public extension MediaFrame {
+    /// 为仅需像素缓冲区的调用方保留兼容访问入口。
+    /// 新代码在 payload 区分有意义时应使用显式类型。
+    var pixelBuffer: CVPixelBuffer? {
+        extractPixelBuffer(self)
     }
 
-    public init(sampleBuffer: CMSampleBuffer, metadata: FrameMetadata? = nil) {
-        self.pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
-        self.sampleBuffer = sampleBuffer
-        #if canImport(Metal)
-        self.texture = nil
-        #endif
-        let timing = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        self.metadata = metadata ?? FrameMetadata(
-            presentationTime: timing,
-            duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
-            sourceTime: timing
-        )
+    /// 为 AVFoundation 原生调用方保留兼容访问入口。
+    var sampleBuffer: CMSampleBuffer? {
+        extractSampleBuffer(self)
     }
 
     #if canImport(Metal)
-    public init(texture: MTLTexture, metadata: FrameMetadata) {
-        self.pixelBuffer = nil
-        self.sampleBuffer = nil
-        self.texture = texture
-        self.metadata = metadata
+    /// 为 Metal 原生调用方保留兼容访问入口。
+    var texture: MTLTexture? {
+        extractTexture(self)
     }
     #endif
 }
+
+public func extractPixelBuffer(_ frame: MediaFrame) -> CVPixelBuffer? {
+    if let p = frame as? PixelBufferFrame { return p.pixelBuffer }
+    if let s = frame as? SampleBufferFrame {
+        return CMSampleBufferGetImageBuffer(s.sampleBuffer)
+    }
+    return nil
+}
+
+public func extractSampleBuffer(_ frame: MediaFrame) -> CMSampleBuffer? {
+    (frame as? SampleBufferFrame)?.sampleBuffer
+}
+
+#if canImport(Metal)
+public func extractTexture(_ frame: MediaFrame) -> MTLTexture? {
+    (frame as? TextureFrame)?.texture
+}
+#endif

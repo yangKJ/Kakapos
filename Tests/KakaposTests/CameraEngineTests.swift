@@ -111,7 +111,7 @@ final class CameraEngineTests: XCTestCase {
         advancedOutput.emitMetadataObjects(.init(objects: [], timestamp: CMTime(seconds: 3, preferredTimescale: 600)))
         advancedOutput.emitDepthData(.init(timestamp: CMTime(seconds: 5, preferredTimescale: 600)))
         let pixelBuffer = try makeCameraTestPixelBuffer(width: 8, height: 8)
-        let frame = MediaFrame(
+        let frame = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(
                 presentationTime: CMTime(seconds: 6, preferredTimescale: 600),
@@ -140,7 +140,7 @@ final class CameraEngineTests: XCTestCase {
     }
 
     func testCameraRecordingControllerStopsAndFinishesGenericSource() throws {
-        let frame = MediaFrame(
+        let frame = PixelBufferFrame(
             pixelBuffer: try makeCameraTestPixelBuffer(width: 16, height: 16),
             metadata: FrameMetadata(
                 presentationTime: CMTime(seconds: 0, preferredTimescale: 600),

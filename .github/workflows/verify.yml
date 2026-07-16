@@ -1,0 +1,15 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  swiftpm:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test

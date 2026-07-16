@@ -8,7 +8,11 @@
 import Foundation
 import AVFoundation
 
-public final class PreviewPipeline {
+struct PreviewSendableBox<T>: @unchecked Sendable {
+    let value: T
+}
+
+public final class PreviewPipeline: @unchecked Sendable {
     public struct ManifestSourceSnapshot: Equatable, Sendable, Codable {
         public let stateDescription: String
         public let lastFrameIndex: Int64?
@@ -263,7 +267,8 @@ public extension PreviewPipeline {
         callbackQueue: DispatchQueue = .main,
         handler: @escaping PreviewSink.Handler
     ) {
-        let playerItem = AVPlayerItem(asset: asset)
+        let assetBox = PreviewSendableBox(value: asset)
+        let playerItem = AVPlayerItem(asset: assetBox.value)
         let player = AVPlayer(playerItem: playerItem)
         self.init(
             player: player,

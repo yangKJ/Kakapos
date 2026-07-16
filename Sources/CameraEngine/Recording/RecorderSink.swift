@@ -9,7 +9,55 @@ import Foundation
 import AVFoundation
 import CoreVideo
 
-public final class RecorderSink: MediaSink {
+public final class RecorderSink: MediaSink, @unchecked Sendable {
+    public enum RecorderError: LocalizedError {
+        case writerCannotAddVideoInput
+        case writerCannotAddAudioInput
+        case writerCannotStart(underlying: Error?)
+        case noRecordedMedia
+        case outputMissing
+
+        public var errorDescription: String? {
+            switch self {
+            case .writerCannotAddVideoInput: return "The asset writer cannot add the video input."
+            case .writerCannotAddAudioInput: return "The asset writer cannot add the audio input."
+            case .writerCannotStart(let error): return error?.localizedDescription ?? "The asset writer could not start."
+            case .noRecordedMedia: return "Recording finished without any media frames."
+            case .outputMissing: return "Recording finished without an output media file."
+            }
+        }
+    }
+
+    public struct Configuration: Sendable {
+        public var dimensions: CGSize?
+        public var bitRate: Int?
+        public var codec: AVVideoCodecType
+        public var scalingMode: String
+        public var transform: CGAffineTransform
+        public var audioBitRate: Int?
+        public var audioSampleRate: Double?
+        public var audioChannelCount: Int?
+
+        public init(
+            dimensions: CGSize? = nil,
+            bitRate: Int? = nil,
+            codec: AVVideoCodecType = .h264,
+            scalingMode: String = AVVideoScalingModeResizeAspectFill,
+            transform: CGAffineTransform = .identity,
+            audioBitRate: Int? = nil,
+            audioSampleRate: Double? = nil,
+            audioChannelCount: Int? = nil
+        ) {
+            self.dimensions = dimensions
+            self.bitRate = bitRate
+            self.codec = codec
+            self.scalingMode = scalingMode
+            self.transform = transform
+            self.audioBitRate = audioBitRate
+            self.audioSampleRate = audioSampleRate
+            self.audioChannelCount = audioChannelCount
+        }
+    }
     public struct Snapshot: Equatable, Sendable {
         public let state: State
         public let outputURL: URL
@@ -92,6 +140,8 @@ public final class RecorderSink: MediaSink {
     public var stateChangedHandler: ((State) -> Void)?
     public var droppedFrameHandler: ((FrameMetadata) -> Void)?
     public var runtimeErrorHandler: ((Error) -> Void)?
+    /// 编码器跟不上实时采集时，待处理帧数必须保持有界。
+    public var maximumInFlightFrameCount = 6
     public var snapshot: Snapshot {
         queue.sync {
             let recordingSnapshot = session.snapshot()
@@ -146,11 +196,11 @@ public final class RecorderSink: MediaSink {
     }
 
     private let writer: AVAssetWriter
+    private let configuration: Configuration
     private let session = RecordingSession()
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
-    private var usesSyntheticBackend = false
     private var startTime: CMTime?
     private var lastPresentationTime: CMTime?
     private var pausedAt: CMTime?
@@ -160,20 +210,24 @@ public final class RecorderSink: MediaSink {
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
     private let lifecycleLock = NSLock()
     private var acceptsFrames = true
+    private var inFlightFrameCount = 0
     public var maximumDuration: CMTime?
 
-    public init(outputURL: URL, fileType: AVFileType = .mp4) throws {
+    public init(outputURL: URL, fileType: AVFileType = .mp4, configuration: Configuration = .init()) throws {
         self.outputURL = outputURL
+        self.configuration = configuration
         try? FileManager.default.removeItem(at: outputURL)
         self.writer = try AVAssetWriter(outputURL: outputURL, fileType: fileType)
     }
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard canAcceptFrames() else {
+        guard reserveFrameSlot() else {
+            droppedFrameHandler?(frame.metadata)
             completion(.success(()))
             return
         }
         queue.async {
+            defer { self.releaseFrameSlot() }
             do {
                 try self.consumeOnQueue(frame)
                 completion(.success(()))
@@ -207,37 +261,8 @@ public final class RecorderSink: MediaSink {
                 return
             }
             guard self.state == .recording || self.state == .paused else {
-                self.session.finalizeCurrentClipIfNeeded()
-                self.setState(.finished)
-                let clip = self.session.makeRecordedClip(
-                    outputURL: self.outputURL,
-                    fallbackStartedAt: self.startTime,
-                    fallbackEndedAt: self.lastPresentationTime
-                )
-                self.recordedClip = clip
-                completion(.success(clip))
-                return
-            }
-            if self.usesSyntheticBackend {
-                self.session.finalizeCurrentClipIfNeeded()
-                if self.state == .paused, let lastPresentationTime = self.lastPresentationTime {
-                    self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
-                }
-                self.setState(.finishing)
-                self.setState(.finished)
-                do {
-                    try self.writeSyntheticOutputFileIfNeeded()
-                    let clip = self.session.makeRecordedClip(
-                        outputURL: self.outputURL,
-                        fallbackStartedAt: self.startTime,
-                        fallbackEndedAt: self.lastPresentationTime
-                    )
-                    self.recordedClip = clip
-                    completion(.success(clip))
-                } catch {
-                    self.runtimeErrorHandler?(error)
-                    completion(.failure(error))
-                }
+                self.setState(.failed)
+                completion(.failure(RecorderError.noRecordedMedia))
                 return
             }
             self.setState(.finishing)
@@ -248,11 +273,12 @@ public final class RecorderSink: MediaSink {
                 if self.state == .paused, let lastPresentationTime = self.lastPresentationTime {
                     self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
                 }
-                if let error = self.writer.error {
+                if self.writer.status != .completed {
                     self.setState(.failed)
+                    let error = self.writer.error ?? RecorderError.outputMissing
                     self.runtimeErrorHandler?(error)
                     completion(.failure(error))
-                } else {
+                } else if FileManager.default.fileExists(atPath: self.outputURL.path) {
                     self.setState(.finished)
                     let clip = self.session.makeRecordedClip(
                         outputURL: self.outputURL,
@@ -261,6 +287,9 @@ public final class RecorderSink: MediaSink {
                     )
                     self.recordedClip = clip
                     completion(.success(clip))
+                } else {
+                    self.setState(.failed)
+                    completion(.failure(RecorderError.outputMissing))
                 }
             }
         }
@@ -313,11 +342,11 @@ public final class RecorderSink: MediaSink {
         guard canAcceptFrames() else { return }
         guard state != .paused else { return }
         guard state != .cancelled && state != .finished else { return }
-        if let sampleBuffer = frame.sampleBuffer, CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
+        if let sampleBuffer = extractSampleBuffer(frame), CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
             try appendAudio(sampleBuffer)
             return
         }
-        guard let pixelBuffer = frame.pixelBuffer else { return }
+        guard let pixelBuffer = extractPixelBuffer(frame) else { return }
         let normalizedTime = adjustedPresentationTime(
             normalizedPresentationTime(for: frame.metadata.presentationTime),
             sampleDuration: frame.metadata.duration,
@@ -325,23 +354,15 @@ public final class RecorderSink: MediaSink {
         )
         try startIfNeeded(at: normalizedTime)
         try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
-        if usesSyntheticBackend {
-            session.markVideoFrame(at: normalizedTime)
-            if !hasWrittenFirstVideoFrame {
-                hasWrittenFirstVideoFrame = true
-                try flushPendingLeadingAudioIfPossible()
-            }
-        } else {
-            guard let adaptor = pixelBufferAdaptor else { return }
-            guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
-                droppedFrameHandler?(frame.metadata)
-                return
-            }
-            session.markVideoFrame(at: normalizedTime)
-            if !hasWrittenFirstVideoFrame {
-                hasWrittenFirstVideoFrame = true
-                try flushPendingLeadingAudioIfPossible()
-            }
+        guard let adaptor = pixelBufferAdaptor else { throw RecorderError.writerCannotAddVideoInput }
+        guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
+            droppedFrameHandler?(frame.metadata)
+            return
+        }
+        session.markVideoFrame(at: normalizedTime)
+        if !hasWrittenFirstVideoFrame {
+            hasWrittenFirstVideoFrame = true
+            try flushPendingLeadingAudioIfPossible()
         }
         updateLastPresentationTime(normalizedTime)
         durationChangedHandler?(session.snapshot().totalDuration + session.snapshot().currentClipDuration)
@@ -354,21 +375,22 @@ public final class RecorderSink: MediaSink {
     }
 
     private func setupVideoIfNeeded(pixelBuffer: CVPixelBuffer) throws {
-        guard !usesSyntheticBackend else { return }
         guard videoInput == nil else { return }
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let settings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+        let width = Int(configuration.dimensions?.width ?? CGFloat(CVPixelBufferGetWidth(pixelBuffer)))
+        let height = Int(configuration.dimensions?.height ?? CGFloat(CVPixelBufferGetHeight(pixelBuffer)))
+        var settings: [String: Any] = [
+            AVVideoCodecKey: configuration.codec,
             AVVideoWidthKey: width,
-            AVVideoHeightKey: height
+            AVVideoHeightKey: height,
+            AVVideoScalingModeKey: configuration.scalingMode
         ]
+        if let bitRate = configuration.bitRate { settings[AVVideoAverageBitRateKey] = bitRate }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
         guard writer.canAdd(input) else {
-            switchToSyntheticBackend()
-            return
+            throw RecorderError.writerCannotAddVideoInput
         }
+        input.transform = configuration.transform
         writer.add(input)
         let attributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -399,12 +421,7 @@ public final class RecorderSink: MediaSink {
             applyPadding: applyPaddingAfterResume
         )
         try startIfNeeded(at: normalizedTime)
-        if usesSyntheticBackend {
-            session.markAudioFrame(at: normalizedTime)
-            updateLastPresentationTime(normalizedTime)
-            return
-        }
-        guard let input = audioInput else { return }
+        guard let input = audioInput else { throw RecorderError.writerCannotAddAudioInput }
         var timingCount: CMItemCount = 0
         CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &timingCount)
         var timingInfo = Array(
@@ -445,33 +462,29 @@ public final class RecorderSink: MediaSink {
     }
 
     private func setupAudioIfNeeded(sampleBuffer: CMSampleBuffer) throws {
-        guard !usesSyntheticBackend else { return }
         guard audioInput == nil else { return }
+        var audioSettings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC]
+        if let bitRate = configuration.audioBitRate { audioSettings[AVEncoderBitRateKey] = bitRate }
+        if let sampleRate = configuration.audioSampleRate { audioSettings[AVSampleRateKey] = sampleRate }
+        if let channelCount = configuration.audioChannelCount { audioSettings[AVNumberOfChannelsKey] = channelCount }
         let input = AVAssetWriterInput(
             mediaType: .audio,
-            outputSettings: [AVFormatIDKey: kAudioFormatMPEG4AAC],
+            outputSettings: audioSettings,
             sourceFormatHint: CMSampleBufferGetFormatDescription(sampleBuffer)
         )
         input.expectsMediaDataInRealTime = true
         if writer.canAdd(input) {
             writer.add(input)
             audioInput = input
-        } else {
-            switchToSyntheticBackend()
-        }
+        } else { throw RecorderError.writerCannotAddAudioInput }
     }
 
     private func startIfNeeded(at time: CMTime) throws {
         guard state == .idle || state == .paused else { return }
         if state == .idle {
             setState(.preparing)
-            if !usesSyntheticBackend {
-                if writer.startWriting() {
-                    writer.startSession(atSourceTime: time)
-                } else {
-                    switchToSyntheticBackend()
-                }
-            }
+            guard writer.startWriting() else { throw RecorderError.writerCannotStart(underlying: writer.error) }
+            writer.startSession(atSourceTime: time)
             startTime = time
             lastPresentationTime = time
         }
@@ -534,32 +547,24 @@ public final class RecorderSink: MediaSink {
         lifecycleLock.unlock()
     }
 
-    private func clearWriterInputsForSyntheticRecording() {
-        videoInput = nil
-        audioInput = nil
-        pixelBufferAdaptor = nil
-    }
-
-    private func switchToSyntheticBackend() {
-        guard !usesSyntheticBackend else { return }
-        usesSyntheticBackend = true
-        clearWriterInputsForSyntheticRecording()
-        writer.cancelWriting()
-        try? FileManager.default.removeItem(at: outputURL)
-    }
-
-    private func writeSyntheticOutputFileIfNeeded() throws {
-        try? FileManager.default.removeItem(at: outputURL)
-        let data = Data("Kakapos synthetic recording".utf8)
-        if !FileManager.default.createFile(atPath: outputURL.path, contents: data) {
-            throw VideoX.Error.unknown
-        }
-    }
-
     private func canAcceptFrames() -> Bool {
         lifecycleLock.lock()
         let result = acceptsFrames
         lifecycleLock.unlock()
         return result
+    }
+
+    private func reserveFrameSlot() -> Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        guard acceptsFrames, inFlightFrameCount < maximumInFlightFrameCount else { return false }
+        inFlightFrameCount += 1
+        return true
+    }
+
+    private func releaseFrameSlot() {
+        lifecycleLock.lock()
+        inFlightFrameCount = max(0, inFlightFrameCount - 1)
+        lifecycleLock.unlock()
     }
 }

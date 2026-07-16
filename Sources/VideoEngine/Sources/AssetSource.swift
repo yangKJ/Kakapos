@@ -249,7 +249,7 @@ public final class AssetSource: MediaSource {
                 MetadataKey.sourceURL: (asset as? AVURLAsset)?.url as Any
             ]) { _, new in new }
         )
-        let frame = MediaFrame(sampleBuffer: sampleBuffer, metadata: metadata)
+        let frame = SampleBufferFrame(sampleBuffer: sampleBuffer, metadata: metadata)
         callbackQueue.async {
             self.delegate?.mediaSource(self, didOutput: frame)
         }

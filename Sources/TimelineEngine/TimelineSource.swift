@@ -9,6 +9,10 @@ import Foundation
 import AVFoundation
 import CoreGraphics
 
+struct TimelineSourceSendableBox<T>: @unchecked Sendable {
+    let value: T
+}
+
 public enum TimelineSourceKind: Equatable {
     case assetClip
     case stillImage
@@ -621,8 +625,9 @@ public extension CompiledTimelineComposition {
             .compactMap { $0.source.processor }
     }
 
-    func makePlayerItem() -> AVPlayerItem {
-        let playerItem = AVPlayerItem(asset: composition)
+    nonisolated func makePlayerItem() -> AVPlayerItem {
+        let compositionBox = TimelineSourceSendableBox(value: composition)
+        let playerItem = AVPlayerItem(asset: compositionBox.value)
         playerItem.videoComposition = videoComposition
         playerItem.audioMix = audioMix
         return playerItem

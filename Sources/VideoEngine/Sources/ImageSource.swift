@@ -181,7 +181,7 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
                             MetadataKey.isLooping: isLooping
                         ]) { current, _ in current }
                     )
-                    let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: metadata)
+                    let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: metadata)
                     callbackQueue.async {
                         self.delegate?.mediaSource(self, didOutput: frame)
                         self.outputNode.transmit(frame) { _ in }

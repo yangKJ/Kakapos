@@ -13,7 +13,7 @@ internal struct TimelineRenderAudioConfiguration {
     var volume: Float
     var ramps: [AudioVolumeRamp]
 
-    static let identity = TimelineRenderAudioConfiguration(volume: 1, ramps: [])
+    nonisolated(unsafe) static let identity = TimelineRenderAudioConfiguration(volume: 1, ramps: [])
 }
 
 internal struct TimelineRenderInheritanceState {
@@ -21,7 +21,7 @@ internal struct TimelineRenderInheritanceState {
     var transform: CGAffineTransform
     var keyframes: [KeyframeAnimation]
 
-    static let identity = TimelineRenderInheritanceState(
+    nonisolated(unsafe) static let identity = TimelineRenderInheritanceState(
         opacity: 1,
         transform: .identity,
         keyframes: []

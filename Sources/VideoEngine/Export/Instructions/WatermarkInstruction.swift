@@ -89,7 +89,7 @@ public final class WatermarkInstruction: CompositionInstruction, @unchecked Send
         #if canImport(Harbeth)
         if let filter = createHarbethWatermarkFilter(buffer: buffer) {
             let processor = HarbethFrameProcessor(filters: [filter])
-            let frame = MediaFrame(
+            let frame = PixelBufferFrame(
                 pixelBuffer: buffer,
                 metadata: FrameMetadata(presentationTime: request.compositionTime, sourceTime: request.compositionTime)
             )
@@ -240,7 +240,7 @@ extension WatermarkInstruction: FrameProcessorProvidingInstruction {
                 completion(.success(frame))
                 return
             }
-            guard let pixelBuffer = frame.pixelBuffer else {
+            guard let pixelBuffer = extractPixelBuffer(frame) else {
                 completion(.success(frame))
                 return
             }

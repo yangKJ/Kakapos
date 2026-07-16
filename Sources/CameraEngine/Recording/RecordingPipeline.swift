@@ -309,10 +309,11 @@ public final class RecordingPipeline {
         source: MediaSource,
         outputURL: URL,
         fileType: AVFileType = .mp4,
-        processors: [FrameProcessor] = []
+        processors: [FrameProcessor] = [],
+        recorderConfiguration: RecorderSink.Configuration = .init()
     ) throws {
         self.source = source
-        self.recorderSink = try RecorderSink(outputURL: outputURL, fileType: fileType)
+        self.recorderSink = try RecorderSink(outputURL: outputURL, fileType: fileType, configuration: recorderConfiguration)
         self.pipeline = MediaPipeline(source: source, processors: processors, sinks: [recorderSink])
     }
 
@@ -346,7 +347,23 @@ public extension RecordingPipeline {
         processors: [FrameProcessor] = []
     ) throws {
         let source = try CameraSource(configuration: configuration)
-        try self.init(source: source, outputURL: outputURL, fileType: fileType, processors: processors)
+        let recorderConfiguration = RecorderSink.Configuration(
+            dimensions: configuration.video.dimensions,
+            bitRate: configuration.video.bitRate,
+            codec: configuration.video.codec,
+            scalingMode: configuration.video.scalingMode,
+            transform: configuration.video.transform,
+            audioBitRate: configuration.audio.bitRate,
+            audioSampleRate: configuration.audio.sampleRate,
+            audioChannelCount: configuration.audio.channelCount
+        )
+        try self.init(
+            source: source,
+            outputURL: outputURL,
+            fileType: fileType,
+            processors: processors,
+            recorderConfiguration: recorderConfiguration
+        )
     }
 
     var cameraSource: CameraSource? {

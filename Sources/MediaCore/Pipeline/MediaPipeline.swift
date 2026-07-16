@@ -65,7 +65,11 @@ public final class MediaProcessorChain: MediaSink {
     }
 }
 
-public final class MediaPipeline {
+public final class MediaPipeline: @unchecked Sendable {
+
+    fileprivate struct UnsafeSendableBox<T>: @unchecked Sendable {
+        let value: T
+    }
     public enum State: Equatable {
         case idle
         case running
@@ -432,8 +436,10 @@ public final class MediaPipeline {
             return true
         }
         guard didChange else { return false }
+        let selfBox = UnsafeSendableBox(value: self)
+        let newStateBox = UnsafeSendableBox(value: newState)
         DispatchQueue.main.async {
-            self.stateHandler?(newState)
+            selfBox.value.stateHandler?(newStateBox.value)
         }
         return true
     }

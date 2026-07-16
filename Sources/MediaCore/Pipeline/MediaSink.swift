@@ -9,6 +9,14 @@ import Foundation
 import VideoToolbox
 import CoreGraphics
 
+public enum MediaCoreError: LocalizedError {
+    case pixelBufferUnavailable
+
+    public var errorDescription: String? {
+        "A pixel buffer is required for this media operation."
+    }
+}
+
 public protocol MediaSink: AnyObject {
     func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void)
     func pause()
@@ -191,14 +199,14 @@ public final class PreviewSink: MediaSink {
         }
         lock.unlock()
 
-        guard let pixelBuffer = frame.pixelBuffer else {
-            completion(.failure(VideoX.Error.newRenderedPixelBufferForRequestFailure))
+        guard let pixelBuffer = extractPixelBuffer(frame) else {
+            completion(.failure(MediaCoreError.pixelBufferUnavailable))
             return
         }
         var previewImage: CGImage?
         let status = VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &previewImage)
         guard status == noErr, let previewImage else {
-            completion(.failure(VideoX.Error.newRenderedPixelBufferForRequestFailure))
+            completion(.failure(MediaCoreError.pixelBufferUnavailable))
             return
         }
         updateState(.active)
