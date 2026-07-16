@@ -27,10 +27,12 @@
 		87244EEA2A77802200875A27 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		87244EFD2A77846E00875A27 /* KakaposExamples.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KakaposExamples.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		87244F022A778F4500875A27 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F78BFDD62FF88E7C00E6B759 /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
 		F7E48A6A2F757904002B22D9 /* IMG_1388.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = IMG_1388.mp4; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		F7E186122FE90E9A00B7B06A /* Views */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Views; sourceTree = "<group>"; };
 		F7E48A5C2F756805002B22D9 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
@@ -51,6 +53,7 @@
 			children = (
 				87244EE22A77802000875A27 /* KakaposExamplesApp.swift */,
 				87244EE42A77802000875A27 /* ContentView.swift */,
+				F7E186122FE90E9A00B7B06A /* Views */,
 				87244F022A778F4500875A27 /* Info.plist */,
 				F7E48A6A2F757904002B22D9 /* IMG_1388.mp4 */,
 				683008242D5C44EC009C46E6 /* IMG_3156.MOV */,
@@ -80,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				87244ED92A7761E900875A27 /* Kakapos.podspec */,
+				F78BFDD62FF88E7C00E6B759 /* Package.swift */,
 				87244ED82A7761E900875A27 /* README.md */,
 				87244EFD2A77846E00875A27 /* KakaposExamples.app */,
 				F7E48A5C2F756805002B22D9 /* Sources */,
@@ -104,6 +108,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				F7E186122FE90E9A00B7B06A /* Views */,
 				F7E48A5C2F756805002B22D9 /* Sources */,
 			);
 			name = KakaposExamples;
@@ -186,9 +191,20 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"KakaposExamples/Preview Content\"";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 66T6NB6T4J;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = KakaposExamples/Info.plist;
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "允许打开相册才能保存和编辑视频";
@@ -202,10 +218,10 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 12.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Apple.KakaposExamples;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -226,9 +242,20 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"KakaposExamples/Preview Content\"";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 66T6NB6T4J;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = KakaposExamples/Info.plist;
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "允许打开相册才能保存和编辑视频";
@@ -242,10 +269,10 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 12.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Apple.KakaposExamples;
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -39,10 +39,10 @@ public final class FilterInstruction: CompositionInstruction, @unchecked Sendabl
                 presentationTime: CMTime(value: time, timescale: 1),
                 sourceTime: CMTime(value: time, timescale: 1)
             )
-            processor.process(MediaFrame(pixelBuffer: buffer, metadata: metadata)) { result in
+            processor.process(PixelBufferFrame(pixelBuffer: buffer, metadata: metadata)) { result in
                 switch result {
                 case .success(let frame):
-                    block(frame.pixelBuffer ?? buffer)
+                    block(extractPixelBuffer(frame) ?? buffer)
                 case .failure:
                     block(buffer)
                 }

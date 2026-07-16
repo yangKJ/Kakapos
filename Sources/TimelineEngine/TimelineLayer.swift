@@ -48,7 +48,7 @@ internal struct TimelineLayerInheritance {
     let transform: CGAffineTransform
     let keyframes: [KeyframeAnimation]
 
-    static let identity = TimelineLayerInheritance(
+    nonisolated(unsafe) static let identity = TimelineLayerInheritance(
         opacity: 1,
         transform: .identity,
         keyframes: []

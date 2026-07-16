@@ -142,7 +142,7 @@ extension ARFrameSource: ARSessionDelegate {
         let timestamp = CMTime(seconds: frame.timestamp, preferredTimescale: 600)
         frameCount += 1
         lastPresentationTime = timestamp
-        let mediaFrame = MediaFrame(
+        let mediaFrame = PixelBufferFrame(
             pixelBuffer: frame.capturedImage,
             metadata: FrameMetadata(
                 presentationTime: timestamp,

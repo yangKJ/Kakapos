@@ -229,6 +229,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     private let sessionQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.session")
     private let videoOutputQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.video")
     private let audioOutputQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.audio")
+    private let processingQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.processing")
     private let photoQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.photo")
     private let outputNode = MediaOutputNode()
     private var lifecycle: CameraSessionLifecycle
@@ -823,7 +824,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             lastVideoSampleBuffer = sampleBuffer
             lastVideoPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         }
-        var frame = MediaFrame(
+        var frame = SampleBufferFrame(
             sampleBuffer: sampleBuffer,
             metadata: FrameMetadata(
                 presentationTime: presentationTime,
@@ -844,6 +845,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         DispatchQueue.main.async {
             self.frameHandler?(frame)
             self.delegate?.mediaSource(self, didOutput: frame)
+        }
+        processingQueue.async {
             self.outputNode.transmit(frame) { _ in }
         }
     }

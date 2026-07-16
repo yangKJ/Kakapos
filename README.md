@@ -12,7 +12,7 @@
 
 **Kakapos** is a media orchestration engine for Apple platforms. It organizes local assets, player frames, camera frames, images, recordings, and timeline clips into a predictable media pipeline, then passes each frame through pluggable `FrameProcessor` objects.
 
-To keep adoption lightweight, the public surface is grouped into four small boards: **Export**, **Preview**, **Record**, and **Timeline**. Use `KakaposSurface` as the recommended starting point when you want the narrowest read-only entry layer.
+To keep adoption lightweight, the public surface is grouped into four small boards: **Export**, **Preview**, **Record**, and **Timeline**. `KakaposSurface` is the primary public entry layer for all four boards.
 
 Kakapos is not a filter-kernel library. It owns media lifecycle, frame sourcing, preview routing, recording, offline export, and timeline composition. When paired with [Harbeth](https://github.com/yangKJ/Harbeth), Kakapos handles the media engine layer while Harbeth handles high-quality GPU rendering for each frame.
 
@@ -39,7 +39,7 @@ Kakapos keeps a small board surface for day-to-day use, while the engine view ex
 ### Lightweight Boards
 
 Kakapos stays easier to adopt when the public surface is used in four small boards instead of one large API surface.
-`KakaposSurface` is the thinnest recommended starting point; `KakaposBoards` remains as a compatibility alias.
+`KakaposSurface` is the recommended starting point for new code. `KakaposBoards` remains only as a deprecated compatibility alias.
 For code that only needs the recommended startup path, `KakaposSurface.starterBoards` gives the four boards in order.
 
 Start with the smallest entry points:
@@ -58,7 +58,7 @@ The fuller surface stays available behind each board:
 - **Record**: `CameraEngine`, `RecordingPipeline`, `CameraSource`, `CameraDeviceController`, `CameraPreviewController`, `CameraRecordingController`, `RecorderSink`, `RecordingSession`, `CameraAdvancedOutput`
 - **Timeline**: `TimelineComposition`, `ClipLayer`, `ImageLayer`, `AudioLayer`, `EffectLayer`, `GroupLayer`, `Transition`, `KeyframeAnimation`
 
-You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface and its starter types. For a thinner starting layer, use `KakaposBoards` to build the four boards without touching the wider public surface.
+You can inspect the board catalog directly in code through `KakaposCapabilityCatalog.boards` when you want a compact view of the surface and its starter types.
 `KakaposCapabilityCatalog.starterBoards` and `KakaposSurface.starterBoards` expose the same ordered starter path when you want the narrowest read-only entry list.
 
 The board entry points above are the recommended path for new code.
@@ -101,7 +101,7 @@ let previewChain = MediaProcessorChain(
 )
 ```
 
-For offline export users, the instruction-based API is part of the Export board:
+For offline export users, the recommended public path still starts at `KakaposSurface`:
 
 ---
 
@@ -110,11 +110,11 @@ For offline export users, the instruction-based API is part of the Export board:
 - Create the video exporter provider.
 
 ```
-let exporter = VideoX.init(provider: .init(with: ``URL Link``))
+let exporter = KakaposSurface.export(provider: .init(with: inputURL))
 
 Or
 
-let exporter = VideoX.init(provider: .init(with: ``AVAsset``))
+let exporter = KakaposSurface.export(provider: .init(with: ``AVAsset``))
 ```
 
 - Create filter instruction and add Harbeth filters.
@@ -158,6 +158,12 @@ cameraEngine.stopRecording { result in
 }
 ```
 
+The example app mirrors the same flow in the `Record` tab. After a capture finishes, the recorded clip can be sent back into:
+
+- `KakaposSurface.preview(recordedClip:)`
+- `KakaposSurface.timeline(recordedClip:)`
+- `KakaposSurface.timelineExportTask(recordedClip:outputURL:)`
+
 Or bridge the new processor API into the old instruction API:
 
 ```swift
@@ -185,7 +191,7 @@ let rotateInstruction = RotateInstruction(rotationAngle: selectedRotation)
 - Convert video and then convert buffer.
 
 ```
-let exporter = VideoX.init(provider: provider)
+let exporter = KakaposSurface.export(provider: provider)
 
 /// Export the video.
 /// - Parameters:
@@ -287,7 +293,7 @@ To integrate Kakapos into your Xcode project using Swift Package Manager, add it
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/yangKJ/Kakapos.git", branch: "master"),
+    .package(url: "https://github.com/yangKJ/Kakapos.git", from: "1.1.0"),
 ]
 ```
 

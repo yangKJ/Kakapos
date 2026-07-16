@@ -303,7 +303,7 @@ final class MediaEngineTests: XCTestCase {
             trackTransform: .identity,
             frameIndex: 7
         )
-        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: metadata)
+        let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: metadata)
         let expectation = self.expectation(description: "processor returns frame")
 
         PassthroughFrameProcessor().process(frame) { result in
@@ -325,7 +325,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testMediaPipelineProcessesSourceFramesIntoSink() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
-        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let input = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
         let source = TestSource(frames: [input])
         let sink = TestSink()
         let processor = ClosureFrameProcessor { frame, completion in
@@ -371,7 +371,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testMediaPipelineSummaryTracksLastFrameMetadataAfterStart() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
-        let input = MediaFrame(
+        let input = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(
                 presentationTime: CMTime(value: 12, timescale: 30),
@@ -419,7 +419,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testMediaPipelineManifestIsCodableForExternalInspection() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
-        let input = MediaFrame(
+        let input = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(
                 presentationTime: CMTime(value: 18, timescale: 30),
@@ -508,7 +508,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testMediaProcessorNodeForwardsProcessedFrameToAttachedConsumer() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
-        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 5))
+        let input = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 5))
         let outputConsumer = TestConsumerNode()
         let processorNode = MediaProcessorNode(processors: [
             ClosureFrameProcessor { frame, completion in
@@ -536,7 +536,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testMediaGraphRoutesFramesToMultipleBranches() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
-        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let input = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
         let source = TestSource(frames: [input])
         let firstSink = TestSink()
         let secondSink = TestSink()
@@ -570,7 +570,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testMediaGraphNestedBranchPropagatesFrameToChildSink() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
-        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let input = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
         let source = TestSource(frames: [input])
         let parentSink = TestSink()
         let childSink = TestSink()
@@ -2042,7 +2042,7 @@ final class MediaEngineTests: XCTestCase {
             metadata: [],
             sessionFactory: { _, outputURL, configuration in
                 let syntheticBuffer = try makePixelBuffer(width: 16, height: 16)
-                let frame = MediaFrame(
+                let frame = PixelBufferFrame(
                     pixelBuffer: syntheticBuffer,
                     metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
                 )
@@ -2147,7 +2147,7 @@ final class MediaEngineTests: XCTestCase {
         let exportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("mov")
-        let syntheticFrame = MediaFrame(
+        let syntheticFrame = PixelBufferFrame(
             pixelBuffer: try makePixelBuffer(width: 16, height: 16),
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
@@ -2203,7 +2203,7 @@ final class MediaEngineTests: XCTestCase {
             sourceTime: CMTime(value: 4, timescale: 30),
             frameIndex: 9
         )
-        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: metadata)
+        let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: metadata)
         let expectation = self.expectation(description: "preview sink callback")
         var receivedImage: CGImage?
         var receivedMetadata: FrameMetadata?
@@ -2230,8 +2230,8 @@ final class MediaEngineTests: XCTestCase {
     func testPreviewSinkSummaryReflectsPauseResumeAndBufferedFrameState() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
-        let first = MediaFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
-        let second = MediaFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
+        let first = PixelBufferFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let second = PixelBufferFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
         let sink = PreviewSink { _, _ in }
 
         sink.consume(first) { result in
@@ -2270,8 +2270,8 @@ final class MediaEngineTests: XCTestCase {
     func testPreviewSinkSnapshotMirrorsSummaryStateAndPendingFrame() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
-        let first = MediaFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
-        let pending = MediaFrame(
+        let first = PixelBufferFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let pending = PixelBufferFrame(
             pixelBuffer: secondBuffer,
             metadata: FrameMetadata(
                 presentationTime: CMTime(value: 1, timescale: 30),
@@ -2319,7 +2319,7 @@ final class MediaEngineTests: XCTestCase {
         )
         let sink = PreviewSink { _, _ in }
 
-        sink.consume(MediaFrame(pixelBuffer: pixelBuffer, metadata: metadata)) { result in
+        sink.consume(PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: metadata)) { result in
             if case .failure(let error) = result {
                 XCTFail("Unexpected preview sink failure: \(error)")
             }
@@ -2335,7 +2335,7 @@ final class MediaEngineTests: XCTestCase {
     func testPreviewSinkSummaryIncludesPendingFrameReasonWhilePaused() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
-        let first = MediaFrame(
+        let first = PixelBufferFrame(
             pixelBuffer: firstBuffer,
             metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
         )
@@ -2354,7 +2354,7 @@ final class MediaEngineTests: XCTestCase {
         }
 
         sink.pause()
-        sink.consume(MediaFrame(pixelBuffer: secondBuffer, metadata: pendingMetadata)) { result in
+        sink.consume(PixelBufferFrame(pixelBuffer: secondBuffer, metadata: pendingMetadata)) { result in
             if case .failure(let error) = result {
                 XCTFail("Unexpected paused preview sink failure: \(error)")
             }
@@ -2373,7 +2373,7 @@ final class MediaEngineTests: XCTestCase {
     func testPreviewPipelineSummarySurfacesPendingFrameReasonWhilePaused() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
-        let first = MediaFrame(
+        let first = PixelBufferFrame(
             pixelBuffer: firstBuffer,
             metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
         )
@@ -2389,7 +2389,7 @@ final class MediaEngineTests: XCTestCase {
         pipeline.start()
         source.emit(first)
         pipeline.pause()
-        pipeline.previewSink.consume(MediaFrame(pixelBuffer: secondBuffer, metadata: pendingMetadata)) { result in
+        pipeline.previewSink.consume(PixelBufferFrame(pixelBuffer: secondBuffer, metadata: pendingMetadata)) { result in
             if case .failure(let error) = result {
                 XCTFail("Unexpected paused preview sink failure: \(error)")
             }
@@ -2408,7 +2408,7 @@ final class MediaEngineTests: XCTestCase {
     func testPreviewPipelinePreviewSnapshotExposesUnderlyingPreviewSinkSnapshot() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
-        let first = MediaFrame(
+        let first = PixelBufferFrame(
             pixelBuffer: firstBuffer,
             metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
         )
@@ -2424,7 +2424,7 @@ final class MediaEngineTests: XCTestCase {
         pipeline.start()
         source.emit(first)
         pipeline.pause()
-        pipeline.previewSink.consume(MediaFrame(pixelBuffer: secondBuffer, metadata: pendingMetadata)) { result in
+        pipeline.previewSink.consume(PixelBufferFrame(pixelBuffer: secondBuffer, metadata: pendingMetadata)) { result in
             if case .failure(let error) = result {
                 XCTFail("Unexpected paused preview sink failure: \(error)")
             }
@@ -2442,8 +2442,8 @@ final class MediaEngineTests: XCTestCase {
     func testPreviewSinkCachesLatestFrameWhilePausedAndFlushesOnResume() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
-        let first = MediaFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
-        let second = MediaFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
+        let first = PixelBufferFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let second = PixelBufferFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
         let expectation = expectation(description: "flush cached preview frame")
         expectation.expectedFulfillmentCount = 2
         var receivedFrameIndices: [Int64] = []
@@ -2483,8 +2483,8 @@ final class MediaEngineTests: XCTestCase {
     func testPreviewSinkIgnoresLateFramesAfterCancelAndFinish() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
-        let first = MediaFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
-        let second = MediaFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
+        let first = PixelBufferFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let second = PixelBufferFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
         let sink = PreviewSink { _, _ in }
         var completionResults: [Bool] = []
 
@@ -2528,7 +2528,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testPreviewPipelineRoutesFramesThroughPreviewSinkAndSummarizesBoardState() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
-        let frame = MediaFrame(
+        let frame = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
@@ -2574,7 +2574,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testPreviewPipelineManifestIsCodableForExternalInspection() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
-        let frame = MediaFrame(
+        let frame = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
@@ -2834,7 +2834,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testMediaGraphAppendReconnectsNewBranchToSourceAdapter() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
-        let input = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let input = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
         let source = TestSource(frames: [input])
         let firstSink = TestSink()
         let secondSink = TestSink()
@@ -2902,7 +2902,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testMediaProcessorChainCanBeNestedAsSink() throws {
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
-        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
+        let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
         let expectation = expectation(description: "nested chain consumes processed frame")
         let sink = TestSink()
 
@@ -2992,11 +2992,11 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testMediaPipelineRestartClearsStaleFailureAndFrameMetadata() throws {
-        let firstFrame = MediaFrame(
+        let firstFrame = PixelBufferFrame(
             pixelBuffer: try makePixelBuffer(width: 12, height: 10),
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
-        let secondFrame = MediaFrame(
+        let secondFrame = PixelBufferFrame(
             pixelBuffer: try makePixelBuffer(width: 16, height: 12),
             metadata: FrameMetadata(
                 presentationTime: CMTime(value: 1, timescale: 30),
@@ -3069,11 +3069,11 @@ final class MediaEngineTests: XCTestCase {
         let source = ManualSource()
         let sink = TestSink()
         let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
-        let initialFrame = MediaFrame(
+        let initialFrame = PixelBufferFrame(
             pixelBuffer: try makePixelBuffer(width: 8, height: 8),
             metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
         )
-        let lateFrame = MediaFrame(
+        let lateFrame = PixelBufferFrame(
             pixelBuffer: try makePixelBuffer(width: 8, height: 8),
             metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2)
         )
@@ -3097,11 +3097,11 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testMediaPipelineCancelsUpstreamSourceWhenSinkFailsDuringStreaming() throws {
-        let firstFrame = MediaFrame(
+        let firstFrame = PixelBufferFrame(
             pixelBuffer: try makePixelBuffer(width: 8, height: 8),
             metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
         )
-        let secondFrame = MediaFrame(
+        let secondFrame = PixelBufferFrame(
             pixelBuffer: try makePixelBuffer(width: 8, height: 8),
             metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2)
         )
@@ -3677,11 +3677,11 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let first = MediaFrame(
+        let first = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: .zero)
         )
-        let second = MediaFrame(
+        let second = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30))
         )
@@ -3733,14 +3733,38 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    func testRecorderSinkRejectsFinishWithoutMediaFrames() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let sink = try RecorderSink(outputURL: outputURL)
+        let expectation = expectation(description: "finish without frames")
+
+        sink.finishRecording { result in
+            switch result {
+            case .success:
+                XCTFail("Recorder must not report success without media frames")
+            case .failure(let error as RecorderSink.RecorderError):
+                XCTAssertEqual(error.localizedDescription, RecorderSink.RecorderError.noRecordedMedia.localizedDescription)
+            case .failure(let error):
+                XCTFail("Unexpected recorder error: \(error)")
+            }
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 2)
+        XCTAssertEqual(sink.state, .failed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
     func testRecorderSinkPauseResumeRemovesPausedGapFromClipDuration() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
-        let second = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 90, timescale: 30)))
+        let first = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 90, timescale: 30)))
         let appendExpectation = expectation(description: "append frames around pause")
         appendExpectation.expectedFulfillmentCount = 2
         let finishExpectation = expectation(description: "finish paused recording")
@@ -3790,8 +3814,8 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
-        let second = MediaFrame(
+        let first = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: CMTime(value: 30, timescale: 30))
         )
@@ -3842,16 +3866,16 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
-        let second = MediaFrame(
+        let first = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: CMTime(value: 30, timescale: 30))
         )
-        let pausedFrame = MediaFrame(
+        let pausedFrame = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: CMTime(value: 60, timescale: 30))
         )
-        let resumedFrame = MediaFrame(
+        let resumedFrame = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: CMTime(value: 90, timescale: 30))
         )
@@ -4094,7 +4118,7 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
         let appendExpectation = expectation(description: "append first frame")
         let finishExpectation = expectation(description: "finish cancelled recording")
         var receivedError: Error?
@@ -4137,7 +4161,7 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
         let appendExpectation = expectation(description: "append frame before cancel")
         let cancelExpectation = expectation(description: "cancel state callback")
 
@@ -4170,7 +4194,7 @@ final class MediaEngineTests: XCTestCase {
         let sink = try RecorderSink(outputURL: outputURL)
         sink.maximumDuration = CMTime(seconds: 2, preferredTimescale: 600)
         let pixelBuffer = try makePixelBuffer(width: 16, height: 16)
-        let frame = MediaFrame(
+        let frame = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: CMTime(seconds: 0.5, preferredTimescale: 600))
         )
@@ -4195,8 +4219,8 @@ final class MediaEngineTests: XCTestCase {
 
     func testRecorderSinkIgnoresLateFramesAfterCancelAndFinish() throws {
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
-        let second = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30)))
+        let first = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30)))
 
         let cancelledOutputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -4269,7 +4293,7 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let firstFrame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let firstFrame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
         let appendExpectation = expectation(description: "append frame for snapshot")
 
         sink.consume(firstFrame) { result in
@@ -4307,7 +4331,7 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let frame = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
         let expectedClipDuration = CMTime(value: 1, timescale: 600)
         let expectation = self.expectation(description: "append frame for summary")
 
@@ -4341,7 +4365,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testRecordingPipelineRoutesFramesToRecorderAndSummarizesBoardState() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
-        let frame = MediaFrame(
+        let frame = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
@@ -4394,7 +4418,7 @@ final class MediaEngineTests: XCTestCase {
 
     func testRecordingPipelineManifestIsCodableForExternalInspection() throws {
         let pixelBuffer = try makePixelBuffer(width: 12, height: 10)
-        let frame = MediaFrame(
+        let frame = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
         )
@@ -5085,8 +5109,8 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathExtension("mp4")
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
-        let first = MediaFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
-        let second = MediaFrame(
+        let first = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
+        let second = PixelBufferFrame(
             pixelBuffer: pixelBuffer,
             metadata: FrameMetadata(presentationTime: CMTime(value: 90, timescale: 30))
         )

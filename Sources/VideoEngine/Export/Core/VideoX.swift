@@ -11,6 +11,10 @@ import CoreVideo
 
 public typealias ExportComplete = (Result<URL, VideoX.Error>) -> Void
 
+struct VideoXSendableBox<T>: @unchecked Sendable {
+    let value: T
+}
+
 @available(*, deprecated, message: "Typo. Use `VideoX` instead", renamed: "VideoX")
 public typealias Exporter = VideoX
 
@@ -334,8 +338,10 @@ extension VideoX {
             exportSession.videoComposition = components.videoComposition
             return exportSession as? R
         } else if type == AVPlayerItem.self {
-            let playerItem = AVPlayerItem(asset: components.composition)
-            playerItem.videoComposition = components.videoComposition
+            let compositionBox = VideoXSendableBox(value: components.composition)
+            let videoCompositionBox = VideoXSendableBox(value: components.videoComposition)
+            let playerItem = AVPlayerItem(asset: compositionBox.value)
+            playerItem.videoComposition = videoCompositionBox.value
             if let audioMix = components.audioMix {
                 playerItem.audioMix = audioMix
             }
@@ -450,7 +456,7 @@ extension VideoX {
 
 }
 
-final class ExportSessionProgressObserver<Session: NSObject> {
+final class ExportSessionProgressObserver<Session: NSObject>: @unchecked Sendable {
     private weak var session: Session?
     private let handler: (Float) -> Void
     private let keyPath: KeyPath<Session, Float>
@@ -467,8 +473,10 @@ final class ExportSessionProgressObserver<Session: NSObject> {
         observation = session?.observe(keyPath, options: [.new]) { [weak self] session, _ in
             guard let self else { return }
             let progress = min(max(session[keyPath: self.keyPath], 0), 1)
+            let box = VideoXSendableBox(value: self)
+            let progressBox = VideoXSendableBox(value: progress)
             DispatchQueue.main.async {
-                self.handler(progress)
+                box.value.handler(progressBox.value)
             }
         }
     }

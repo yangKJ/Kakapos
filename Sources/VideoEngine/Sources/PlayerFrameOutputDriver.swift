@@ -103,13 +103,13 @@ private final class DispatchTicker: PlayerFrameTicking {
 }
 #endif
 
-final class PlayerFrameOutputDriver: NSObject {
+final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
 
     struct Configuration {
         var sourcePixelBufferAttributes: [String: Any]?
         var preferredFramesPerSecond: Int = 30
 
-        static let `default` = Configuration()
+        nonisolated(unsafe) static let `default` = Configuration()
     }
 
     struct VideoFrame {

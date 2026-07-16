@@ -8,7 +8,11 @@
 import Foundation
 import AVFoundation
 
-final class VideoAssetExportSession {
+final class VideoAssetExportSession: @unchecked Sendable {
+
+    private struct UnsafeSendableBox<T>: @unchecked Sendable {
+        let value: T
+    }
 
     struct Configuration {
         enum VideoEncodingStrategy {
@@ -44,6 +48,8 @@ final class VideoAssetExportSession {
         case cannotAddVideoInput
         case cannotAddAudioOutput
         case cannotAddAudioInput
+        case missingVideoFormatDescription
+        case missingAudioFormatDescription
         case cannotStartWriting
         case cannotStartReading
         case invalidStatus
@@ -126,10 +132,12 @@ final class VideoAssetExportSession {
         }
 
         let videoTracks = self.asset.tracks(withMediaType: .video)
-        if videoTracks.count > 0 {
+        if let primaryVideoTrack = videoTracks.first {
             let output: AVAssetReaderOutput
             let inputTransform: CGAffineTransform?
-            let sourceFormatHint: CMFormatDescription = videoTracks.first!.formatDescriptions.first as! CMFormatDescription
+            guard let sourceFormatHint = Self.makeFormatDescription(from: primaryVideoTrack.formatDescriptions) else {
+                throw SessionError.missingVideoFormatDescription
+            }
             let readerVideoComposition = configuration.videoComposition ?? Self.makeReaderVideoComposition(
                 from: self.asset,
                 videoTracks: videoTracks,
@@ -146,12 +154,12 @@ final class VideoAssetExportSession {
                 inputTransform = nil
             } else {
                 let trackOutput = AVAssetReaderTrackOutput(
-                    track: videoTracks.first!,
+                    track: primaryVideoTrack,
                     outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: [kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]]
                 )
                 trackOutput.alwaysCopiesSampleData = false
                 output = trackOutput
-                inputTransform = videoTracks.first!.preferredTransform
+                inputTransform = primaryVideoTrack.preferredTransform
             }
             guard reader.canAdd(output) else {
                 throw SessionError.cannotAddVideoOutput
@@ -226,7 +234,9 @@ final class VideoAssetExportSession {
             audioOutput = output
 
             let audioTrack = audioTracks[0]
-            let audioFormatDescription = audioTrack.formatDescriptions.first as! CMFormatDescription
+            guard let audioFormatDescription = Self.makeFormatDescription(from: audioTrack.formatDescriptions) else {
+                throw SessionError.missingAudioFormatDescription
+            }
 
             let input = AVAssetWriterInput(
                 mediaType: .audio,
@@ -266,8 +276,9 @@ final class VideoAssetExportSession {
         completion: @escaping (Error?) -> Void
     ) {
         guard self.status == .idle, cancelled == false else {
+            let box = UnsafeSendableBox(value: completion)
             DispatchQueue.main.async {
-                completion(SessionError.invalidStatus)
+                box.value(SessionError.invalidStatus)
             }
             return
         }
@@ -288,8 +299,9 @@ final class VideoAssetExportSession {
                 throw reader.error ?? SessionError.cannotStartReading
             }
         } catch {
+            let box = UnsafeSendableBox(value: completion)
             DispatchQueue.main.async {
-                completion(error)
+                box.value(error)
             }
             return
         }
@@ -477,7 +489,7 @@ final class VideoAssetExportSession {
             duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
             sourceTime: CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
         )
-        let frame = MediaFrame(sampleBuffer: sampleBuffer, metadata: metadata)
+        let frame = SampleBufferFrame(sampleBuffer: sampleBuffer, metadata: metadata)
         let processedResult = processVideoFrame(frame)
 
         switch processedResult {
@@ -485,9 +497,12 @@ final class VideoAssetExportSession {
             return .failure(error)
         case .success(let processedFrame):
             guard let adaptor = videoPixelBufferAdaptor else {
-                return .success(input.append(processedFrame.sampleBuffer ?? sampleBuffer))
+                let sampleBufferBox = UnsafeSendableBox(value: processedFrame)
+                return .success(input.append(extractSampleBuffer(sampleBufferBox.value) ?? sampleBuffer))
             }
-            guard let processedPixelBuffer = processedFrame.pixelBuffer ?? CMSampleBufferGetImageBuffer(processedFrame.sampleBuffer ?? sampleBuffer) else {
+            let processedBox = UnsafeSendableBox(value: processedFrame)
+            let sampleBufferBox2 = UnsafeSendableBox(value: sampleBuffer)
+            guard let processedPixelBuffer = extractPixelBuffer(processedBox.value) ?? CMSampleBufferGetImageBuffer(extractSampleBuffer(processedBox.value) ?? sampleBufferBox2.value) else {
                 return .success(false)
             }
             let presentationTime = processedFrame.metadata.presentationTime
@@ -522,25 +537,28 @@ final class VideoAssetExportSession {
     }
 
     private func dispatchProgressCallback(with updater: @escaping (ExportProgress) -> Void) {
+        let box = UnsafeSendableBox(value: updater)
+        let progressBox = UnsafeSendableBox(value: self.progress)
         DispatchQueue.main.async {
-            guard let progress = self.progress else { return }
-            updater(progress)
+            guard let progress = progressBox.value else { return }
+            box.value(progress)
             self.progressHandler?(progress)
         }
     }
 
     private func dispatchStatus(_ status: Status) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [self] in
             self.statusHandler?(status)
         }
     }
 
     private func dispatchCallback(with error: Error?, _ completionHandler: @escaping (Error?) -> Void) {
-        DispatchQueue.main.async {
+        let box = UnsafeSendableBox(value: completionHandler)
+        DispatchQueue.main.async { [self] in
             self.progressHandler = nil
             self.status = error == nil ? .completed : (self.cancelled ? .cancelled : .failed)
             self.dispatchStatus(self.status)
-            completionHandler(error)
+            box.value(error)
         }
     }
 
@@ -581,6 +599,17 @@ final class VideoAssetExportSession {
             return nil
         }
         return AVMutableVideoComposition(propertiesOf: asset)
+    }
+
+    private static func makeFormatDescription(from descriptions: [Any]) -> CMFormatDescription? {
+        guard let first = descriptions.first else {
+            return nil
+        }
+        let object = first as AnyObject
+        guard CFGetTypeID(object) == CMFormatDescriptionGetTypeID() else {
+            return nil
+        }
+        return unsafeBitCast(object, to: CMFormatDescription.self)
     }
 
     private static func prepareOutputURL(_ outputURL: URL) throws {

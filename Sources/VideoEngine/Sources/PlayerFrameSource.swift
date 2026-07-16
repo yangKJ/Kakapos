@@ -341,7 +341,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             frameIndex: frameIndex,
             userInfo: userInfo
         )
-        let mediaFrame = MediaFrame(pixelBuffer: frame.pixelBuffer, metadata: metadata)
+        let mediaFrame = PixelBufferFrame(pixelBuffer: frame.pixelBuffer, metadata: metadata)
         lastFrame = mediaFrame
         frameHandler?(mediaFrame)
         delegate?.mediaSource(self, didOutput: mediaFrame)
