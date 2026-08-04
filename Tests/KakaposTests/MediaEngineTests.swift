@@ -1873,7 +1873,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedStatuses, [.exporting, .cancelled])
     }
 
-    func testReaderWriterExportJobCancelWhileExportingRemovesPartialOutputImmediately() throws {
+    func testReaderWriterExportJobCancelWhileExportingWaitsForSessionToQuiesceBeforeCleanup() throws {
         let session = FakeReaderWriterExportSession()
         let asset = AVAsset(url: try makeSampleAssetURL())
         let outputURL = FileManager.default.temporaryDirectory
@@ -1911,12 +1911,14 @@ final class MediaEngineTests: XCTestCase {
 
         job.cancel()
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertEqual(session.cancelCallCount, 1)
-        wait(for: [cancelExpectation, completionExpectation], timeout: 1)
+        wait(for: [cancelExpectation], timeout: 1)
 
-        session.finish(with: nil)
-        session.emitStatus(.failed)
+        session.finish(with: VideoAssetExportSession.SessionError.cancelled)
+
+        wait(for: [completionExpectation], timeout: 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
 
         XCTAssertEqual(job.status, .cancelled)
         XCTAssertEqual(receivedStatuses, [.exporting, .cancelled])
@@ -2066,6 +2068,66 @@ final class MediaEngineTests: XCTestCase {
 
         wait(for: [callbackExpectation, exportExpectation], timeout: 15)
         XCTAssertGreaterThan(invocationCount, 0)
+    }
+
+    func testReaderWriterExportJobForcesEncodedStrategyWhenProcessorsArePresent() throws {
+        let session = FakeReaderWriterExportSession()
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        var capturedStrategy: VideoAssetExportSession.Configuration.VideoEncodingStrategy?
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4"),
+            videoProcessors: [PassthroughFrameProcessor()],
+            sessionFactory: { _, _, configuration in
+                capturedStrategy = configuration.videoEncodingStrategy
+                return session
+            }
+        )
+
+        job.export { _ in }
+
+        guard case .encoded? = capturedStrategy else {
+            return XCTFail("Processed exports must never silently fall back to passthrough.")
+        }
+        job.cancel()
+    }
+
+    func testFrameProcessingPlanRejectsEmptyProcessorChains() {
+        let plan = FrameProcessingPlan(identity: .init(identifier: "look", revision: "1")) { [] }
+
+        XCTAssertThrowsError(try plan.makeProcessors()) { error in
+            XCTAssertEqual(error as? FrameProcessingPlanError, .emptyProcessorChain)
+        }
+    }
+
+    func testVideoArtifactValidatorRejectsMissingFiles() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let expectation = VideoArtifactValidationExpectation(
+            sourceDuration: CMTime(seconds: 1, preferredTimescale: 600),
+            expectsAudio: false
+        )
+
+        XCTAssertThrowsError(try VideoArtifactValidator.validate(url: url, expectation: expectation)) { error in
+            XCTAssertEqual(error as? VideoArtifactValidationError, .fileMissing)
+        }
+    }
+
+    func testVideoArtifactValidatorAcceptsPlayableSampleAsset() throws {
+        let url = try makeSampleAssetURL()
+        let asset = AVAsset(url: url)
+        let expectation = VideoArtifactValidationExpectation(
+            sourceDuration: asset.duration,
+            expectsAudio: asset.tracks(withMediaType: .audio).isEmpty == false
+        )
+
+        let report = try VideoArtifactValidator.validate(url: url, expectation: expectation)
+
+        XCTAssertEqual(report.videoTrackCount, 1)
+        XCTAssertGreaterThan(report.duration.seconds, 0)
     }
 
     func testVideoXMakeExportTaskReturnsAssetSessionTaskByDefault() throws {
