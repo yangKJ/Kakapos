@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import KakaposMediaCore
+import KakaposVideo
 import AVFoundation
 
 #if canImport(UIKit) && !os(watchOS)

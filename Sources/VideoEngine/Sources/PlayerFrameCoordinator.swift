@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import KakaposMediaCore
 
 enum PlayerFramePlaybackState: Equatable {
     case idle

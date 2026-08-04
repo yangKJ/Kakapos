@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import KakaposMediaCore
 import AVFoundation
 
 struct PreviewSendableBox<T>: @unchecked Sendable {

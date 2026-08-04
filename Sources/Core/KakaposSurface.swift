@@ -7,6 +7,10 @@
 
 import Foundation
 import AVFoundation
+@_exported import KakaposMediaCore
+@_exported import KakaposVideo
+@_exported import KakaposTimeline
+@_exported import KakaposCamera
 
 /// Lightweight public entry points for the four Kakapos boards.
 ///

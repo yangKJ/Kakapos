@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import KakaposMediaCore
+import KakaposVideo
 import AVFoundation
 import QuartzCore
 

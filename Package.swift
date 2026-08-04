@@ -30,7 +30,10 @@ let package = Package(
         .iOS(.v13), .tvOS(.v12), .watchOS(.v5), .macOS(.v12)
     ],
     products: [
-        // Products define the executables and libraries a package produces, and make them visible to other packages.
+        .library(name: "KakaposMediaCore", targets: ["KakaposMediaCore"]),
+        .library(name: "KakaposVideo", targets: ["KakaposVideo"]),
+        .library(name: "KakaposTimeline", targets: ["KakaposTimeline"]),
+        .library(name: "KakaposCamera", targets: ["KakaposCamera"]),
         .library(name: "Kakapos", targets: ["Kakapos"]),
     ],
     dependencies: [
@@ -38,10 +41,32 @@ let package = Package(
         // .package(url: /* package url */, from: "1.0.0"),
     ],
     targets: [
-        // Targets are the basic building blocks of a package. A target can define a module or a test suite.
-        // Targets can depend on other targets in this package, and on products in packages this package depends on.
-        .target(name: "Kakapos", path: "Sources"),
-        .testTarget(name: "KakaposTests", dependencies: ["Kakapos"], path: "Tests/KakaposTests"),
+        .target(name: "KakaposMediaCore", path: "Sources/MediaCore"),
+        .target(
+            name: "KakaposVideo",
+            dependencies: ["KakaposMediaCore"],
+            path: "Sources/VideoEngine"
+        ),
+        .target(
+            name: "KakaposTimeline",
+            dependencies: ["KakaposMediaCore", "KakaposVideo"],
+            path: "Sources/TimelineEngine"
+        ),
+        .target(
+            name: "KakaposCamera",
+            dependencies: ["KakaposMediaCore", "KakaposVideo"],
+            path: "Sources/CameraEngine"
+        ),
+        .target(
+            name: "Kakapos",
+            dependencies: ["KakaposMediaCore", "KakaposVideo", "KakaposTimeline", "KakaposCamera"],
+            path: "Sources/Core"
+        ),
+        .testTarget(
+            name: "KakaposTests",
+            dependencies: ["Kakapos", "KakaposMediaCore", "KakaposVideo", "KakaposTimeline", "KakaposCamera"],
+            path: "Tests/KakaposTests"
+        ),
     ],
     swiftLanguageModes: [.v5]
 )

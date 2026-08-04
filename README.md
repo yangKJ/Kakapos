@@ -39,7 +39,7 @@ Kakapos keeps a small board surface for day-to-day use, while the engine view ex
 ### Lightweight Boards
 
 Kakapos stays easier to adopt when the public surface is used in four small boards instead of one large API surface.
-`KakaposSurface` is the recommended starting point for new code. `KakaposBoards` remains only as a deprecated compatibility alias.
+`KakaposSurface` is the recommended starting point for new code.
 For code that only needs the recommended startup path, `KakaposSurface.starterBoards` gives the four boards in order.
 
 Start with the smallest entry points:
@@ -284,6 +284,16 @@ dependencies: [
     .package(url: "https://github.com/yangKJ/Kakapos.git", from: "1.1.0"),
 ]
 ```
+
+Link only the products your app owns:
+
+- `KakaposMediaCore`: frame, processor, source, sink, and pipeline contracts.
+- `KakaposVideo`: processed preview, asset sources, transcode, export, and artifact validation.
+- `KakaposTimeline`: composition, keyframes, transitions, and timeline export.
+- `KakaposCamera`: capture, processed camera preview, and recording. Camera produces `RecordedClip`; downstream Video or Timeline modules consume it.
+- `Kakapos`: umbrella product for demos or apps that intentionally need every engine.
+
+For example, an app that only rescues existing videos should link and import `KakaposMediaCore` plus `KakaposVideo`; it should not pull in Camera or Timeline.
 
 ### Migration Note
 

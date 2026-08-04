@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Foundation
+import KakaposMediaCore
 
 public struct VideoArtifactValidationExpectation: @unchecked Sendable {
     public let sourceDuration: CMTime

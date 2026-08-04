@@ -34,7 +34,7 @@ final class DirectoryBoundaryTests: XCTestCase {
         let sourceRoot = repositoryRoot().appendingPathComponent("Sources", isDirectory: true)
         let expectedFiles = [
             "Core/KakaposSurface.swift",
-            "Core/Setup/Kakapos.swift",
+            "VideoEngine/Setup/Kakapos.swift",
             "MediaCore/Frame/MediaFrame.swift",
             "MediaCore/Frame/SampleBufferUtilities.swift",
             "MediaCore/Processing/FrameProcessor.swift",
@@ -124,6 +124,25 @@ final class DirectoryBoundaryTests: XCTestCase {
         XCTAssertEqual(swiftVersion, "5.0")
         XCTAssertFalse(packageManifest.contains(".iOS(.v12)"))
         XCTAssertFalse(podspec.contains("s.ios.deployment_target = '12.0'"))
+    }
+
+    func testPackageExposesEngineProductsAndAThinUmbrella() throws {
+        let packageManifest = try String(
+            contentsOf: repositoryRoot().appendingPathComponent("Package.swift"),
+            encoding: .utf8
+        )
+
+        for product in ["KakaposMediaCore", "KakaposVideo", "KakaposTimeline", "KakaposCamera", "Kakapos"] {
+            XCTAssertTrue(packageManifest.contains(".library(name: \"\(product)\""))
+        }
+        XCTAssertTrue(packageManifest.contains("name: \"KakaposVideo\",\n            dependencies: [\"KakaposMediaCore\"]"))
+        XCTAssertTrue(packageManifest.contains("name: \"KakaposTimeline\",\n            dependencies: [\"KakaposMediaCore\", \"KakaposVideo\"]"))
+        XCTAssertTrue(packageManifest.contains("name: \"KakaposCamera\",\n            dependencies: [\"KakaposMediaCore\", \"KakaposVideo\"]"))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: repositoryRoot().appendingPathComponent("Sources/Core/KakaposBoards.swift").path
+            )
+        )
     }
 
     func testCameraEngineUsesOwnedSubdirectories() throws {

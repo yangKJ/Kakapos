@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import KakaposMediaCore
+import KakaposVideo
 import AVFoundation
 
 public final class RecordingPipeline {
@@ -353,6 +355,7 @@ public extension RecordingPipeline {
             codec: configuration.video.codec,
             scalingMode: configuration.video.scalingMode,
             transform: configuration.video.transform,
+            includesAudio: configuration.captureMode.includesAudio,
             audioBitRate: configuration.audio.bitRate,
             audioSampleRate: configuration.audio.sampleRate,
             audioChannelCount: configuration.audio.channelCount

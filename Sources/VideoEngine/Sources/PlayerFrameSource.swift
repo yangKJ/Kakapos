@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import KakaposMediaCore
 import AVFoundation
 
 #if canImport(UIKit) || os(macOS)

@@ -8,6 +8,7 @@
 import AVFoundation
 import CoreVideo
 import Foundation
+import KakaposMediaCore
 
 #if canImport(UIKit) || os(macOS)
 public struct ProcessedPreviewConfiguration: Sendable {

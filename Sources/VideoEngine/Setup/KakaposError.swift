@@ -99,7 +99,7 @@ extension VideoX.Error: CustomStringConvertible, CustomNSError {
         return userInfo
     }
     
-    static func toError(_ error: Error?) -> VideoX.Error {
+    public static func toError(_ error: Error?) -> VideoX.Error {
         guard let error = error else {
             return .unknown
         }
