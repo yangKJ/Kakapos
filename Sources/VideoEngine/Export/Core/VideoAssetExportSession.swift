@@ -52,6 +52,9 @@ final class VideoAssetExportSession: @unchecked Sendable {
         case missingAudioFormatDescription
         case cannotStartWriting
         case cannotStartReading
+        case processedVideoAdaptorUnavailable
+        case processedVideoFrameUnavailable
+        case noProcessedVideoFrames
         case invalidStatus
         case cancelled
     }
@@ -113,6 +116,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
     private var progressHandler: ((ExportProgress) -> Void)?
     private var statusHandler: ((Status) -> Void)?
     private var processorError: Error?
+    private var processedVideoFrameCount = 0
 
     init(asset: AVAsset, outputURL: URL, configuration: Configuration) throws {
         self.asset = asset.copy() as! AVAsset
@@ -445,6 +449,13 @@ final class VideoAssetExportSession: @unchecked Sendable {
             return
         }
 
+        if configuration.videoProcessors.isEmpty == false, processedVideoFrameCount == 0 {
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: outputURL)
+            dispatchCallback(with: SessionError.noProcessedVideoFrames, completionHandler)
+            return
+        }
+
         if reader.status == .cancelled || writer.status == .cancelled {
             if writer.status != .cancelled {
                 writer.cancelWriting()
@@ -481,7 +492,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         to input: AVAssetWriterInput
     ) -> Result<Bool, Error> {
         guard CMSampleBufferGetImageBuffer(sampleBuffer) != nil else {
-            return .success(input.append(sampleBuffer))
+            return .failure(SessionError.processedVideoFrameUnavailable)
         }
 
         let metadata = FrameMetadata(
@@ -497,16 +508,19 @@ final class VideoAssetExportSession: @unchecked Sendable {
             return .failure(error)
         case .success(let processedFrame):
             guard let adaptor = videoPixelBufferAdaptor else {
-                let sampleBufferBox = UnsafeSendableBox(value: processedFrame)
-                return .success(input.append(extractSampleBuffer(sampleBufferBox.value) ?? sampleBuffer))
+                return .failure(SessionError.processedVideoAdaptorUnavailable)
             }
             let processedBox = UnsafeSendableBox(value: processedFrame)
             let sampleBufferBox2 = UnsafeSendableBox(value: sampleBuffer)
             guard let processedPixelBuffer = extractPixelBuffer(processedBox.value) ?? CMSampleBufferGetImageBuffer(extractSampleBuffer(processedBox.value) ?? sampleBufferBox2.value) else {
-                return .success(false)
+                return .failure(SessionError.processedVideoFrameUnavailable)
             }
             let presentationTime = processedFrame.metadata.presentationTime
-            return .success(adaptor.append(processedPixelBuffer, withPresentationTime: presentationTime))
+            let appended = adaptor.append(processedPixelBuffer, withPresentationTime: presentationTime)
+            if appended {
+                processedVideoFrameCount += 1
+            }
+            return .success(appended)
         }
     }
 

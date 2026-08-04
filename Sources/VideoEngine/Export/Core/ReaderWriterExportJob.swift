@@ -35,6 +35,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             case videoEncoding
             case audioEncoding
             case finishing
+            case validating
         }
 
         public var videoProgress: Double
@@ -286,6 +287,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
     private let videoProcessors: [FrameProcessor]
     private let shouldOptimizeForNetworkUse: Bool
     private let metadata: [AVMetadataItem]
+    private let artifactValidationExpectation: VideoArtifactValidationExpectation?
     private let sessionFactory: (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.reader-writer-export.state")
     private var _status: Status = .idle
@@ -304,7 +306,8 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         audioMix: AVAudioMix? = nil,
         videoProcessors: [FrameProcessor] = [],
         shouldOptimizeForNetworkUse: Bool = true,
-        metadata: [AVMetadataItem] = []
+        metadata: [AVMetadataItem] = [],
+        artifactValidationExpectation: VideoArtifactValidationExpectation? = nil
     ) {
         self.init(
             asset: asset,
@@ -316,6 +319,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             videoProcessors: videoProcessors,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
+            artifactValidationExpectation: artifactValidationExpectation,
             sessionFactory: Self.defaultSessionFactory
         )
     }
@@ -330,6 +334,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         videoProcessors: [FrameProcessor] = [],
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
+        artifactValidationExpectation: VideoArtifactValidationExpectation? = nil,
         sessionFactory: @escaping (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession
     ) {
         self.asset = asset
@@ -341,6 +346,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         self.videoProcessors = videoProcessors
         self.shouldOptimizeForNetworkUse = shouldOptimizeForNetworkUse
         self.metadata = metadata
+        self.artifactValidationExpectation = artifactValidationExpectation
         self.sessionFactory = sessionFactory
     }
 
@@ -383,8 +389,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
                         self.removePartialOutputIfNeeded()
                         self.deliverCompletion(.failure(mappedError))
                     } else {
-                        self.setStatus(.completed)
-                        self.deliverCompletion(.success(self.outputURL))
+                        self.finishSuccessfulExport()
                     }
                 }
             )
@@ -419,8 +424,6 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         }
         if let exportSession {
             setStatus(.cancelled)
-            removePartialOutputIfNeeded()
-            deliverCompletion(.failure(VideoX.Error.exportCancelled))
             exportSession.cancel()
             return
         }
@@ -460,7 +463,8 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             metadata: metadata,
             videoComposition: videoComposition,
             audioMix: audioMix,
-            videoProcessors: videoProcessors
+            videoProcessors: videoProcessors,
+            videoEncodingStrategy: videoProcessors.isEmpty ? .automatic : .encoded
         )
     }
 
@@ -510,6 +514,29 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
 
     private func removePartialOutputIfNeeded() {
         try? FileManager.default.removeItem(at: outputURL)
+    }
+
+    private func finishSuccessfulExport() {
+        do {
+            if let expectation = artifactValidationExpectation {
+                storeProgress(ProgressInfo(
+                    videoProgress: 1,
+                    audioProgress: 1,
+                    hasVideo: true,
+                    hasAudio: expectation.expectsAudio,
+                    finishWritingProgress: 1,
+                    phase: .validating
+                ))
+                _ = try VideoArtifactValidator.validate(url: outputURL, expectation: expectation)
+            }
+            setStatus(.completed)
+            deliverCompletion(.success(outputURL))
+        } catch {
+            storeError(error)
+            setStatus(.failed)
+            removePartialOutputIfNeeded()
+            deliverCompletion(.failure(error))
+        }
     }
 
     private func storeProgress(_ info: ProgressInfo) {
