@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Foundation
+import KakaposMediaCore
 
 public struct VideoTranscodeConfiguration: @unchecked Sendable {
     public let outputURL: URL

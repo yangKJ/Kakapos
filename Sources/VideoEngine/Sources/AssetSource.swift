@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import KakaposMediaCore
 import AVFoundation
 
 public final class AssetSource: MediaSource {
@@ -22,11 +23,11 @@ public final class AssetSource: MediaSource {
         public static let mediaType = "kakapos.asset.media-type"
         public static let sourceTrackID = "kakapos.asset.track-id"
         public static let sourceURL = "kakapos.asset.url"
-        public static let recordedClipIdentifier = "kakapos.asset.recorded-clip.identifier"
-        public static let recordedClipSegmentCount = "kakapos.asset.recorded-clip.segment-count"
-        public static let recordedClipContainsVideo = "kakapos.asset.recorded-clip.contains-video"
-        public static let recordedClipContainsAudio = "kakapos.asset.recorded-clip.contains-audio"
-        public static let recordedClipMutedOnMerge = "kakapos.asset.recorded-clip.muted-on-merge"
+        public static let recordedClipIdentifier = RecordedClipMetadataKey.identifier
+        public static let recordedClipSegmentCount = RecordedClipMetadataKey.segmentCount
+        public static let recordedClipContainsVideo = RecordedClipMetadataKey.containsVideo
+        public static let recordedClipContainsAudio = RecordedClipMetadataKey.containsAudio
+        public static let recordedClipMutedOnMerge = RecordedClipMetadataKey.mutedOnMerge
     }
 
     public weak var delegate: MediaSourceDelegate?

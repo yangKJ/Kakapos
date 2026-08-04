@@ -7,6 +7,10 @@
 
 import Foundation
 import AVFoundation
+import KakaposMediaCore
+import KakaposVideo
+import KakaposTimeline
+import KakaposCamera
 
 enum KakaposEntryPointFactory {
     static func export(provider: VideoX.Provider) -> VideoX {

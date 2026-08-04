@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import KakaposMediaCore
+import KakaposVideo
 import AVFoundation
 import CoreVideo
 
@@ -34,9 +36,10 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         public var codec: AVVideoCodecType
         public var scalingMode: String
         public var transform: CGAffineTransform
-        public var audioBitRate: Int?
-        public var audioSampleRate: Double?
-        public var audioChannelCount: Int?
+        public var includesAudio: Bool
+        public var audioBitRate: Int
+        public var audioSampleRate: Double
+        public var audioChannelCount: Int
 
         public init(
             dimensions: CGSize? = nil,
@@ -44,15 +47,17 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             codec: AVVideoCodecType = .h264,
             scalingMode: String = AVVideoScalingModeResizeAspectFill,
             transform: CGAffineTransform = .identity,
-            audioBitRate: Int? = nil,
-            audioSampleRate: Double? = nil,
-            audioChannelCount: Int? = nil
+            includesAudio: Bool = false,
+            audioBitRate: Int = 128_000,
+            audioSampleRate: Double = 44_100,
+            audioChannelCount: Int = 1
         ) {
             self.dimensions = dimensions
             self.bitRate = bitRate
             self.codec = codec
             self.scalingMode = scalingMode
             self.transform = transform
+            self.includesAudio = includesAudio
             self.audioBitRate = audioBitRate
             self.audioSampleRate = audioSampleRate
             self.audioChannelCount = audioChannelCount
@@ -207,9 +212,12 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     private var applyPaddingAfterResume = false
     private var hasWrittenFirstVideoFrame = false
     private var pendingLeadingAudioBuffers: [CMSampleBuffer] = []
+    private var finishCompletions: [(Result<RecordedClip, Error>) -> Void] = []
+    private var terminalError: Error?
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
     private let lifecycleLock = NSLock()
     private var acceptsFrames = true
+    private var cancellationRequested = false
     private var inFlightFrameCount = 0
     public var maximumDuration: CMTime?
 
@@ -252,56 +260,76 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     public func finishRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
         rejectFurtherFrames()
         queue.async {
-            if self.state == .cancelled {
+            switch self.state {
+            case .cancelled:
                 completion(.failure(VideoX.Error.exportCancelled))
                 return
-            }
-            if self.state == .finished, let recordedClip = self.recordedClip {
+            case .finished where self.recordedClip != nil:
+                let recordedClip = self.recordedClip!
                 completion(.success(recordedClip))
                 return
-            }
-            guard self.state == .recording || self.state == .paused else {
+            case .failed:
+                completion(.failure(self.terminalError ?? RecorderError.noRecordedMedia))
+                return
+            case .finishing:
+                self.finishCompletions.append(completion)
+                return
+            case .recording, .paused:
+                break
+            default:
+                let error = RecorderError.noRecordedMedia
+                self.terminalError = error
                 self.setState(.failed)
-                completion(.failure(RecorderError.noRecordedMedia))
+                completion(.failure(error))
                 return
             }
+            self.finishCompletions.append(completion)
+            let wasPaused = self.state == .paused
             self.setState(.finishing)
             self.videoInput?.markAsFinished()
             self.audioInput?.markAsFinished()
             self.writer.finishWriting {
-                self.session.finalizeCurrentClipIfNeeded()
-                if self.state == .paused, let lastPresentationTime = self.lastPresentationTime {
-                    self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
-                }
-                if self.writer.status != .completed {
-                    self.setState(.failed)
-                    let error = self.writer.error ?? RecorderError.outputMissing
-                    self.runtimeErrorHandler?(error)
-                    completion(.failure(error))
-                } else if FileManager.default.fileExists(atPath: self.outputURL.path) {
-                    self.setState(.finished)
-                    let clip = self.session.makeRecordedClip(
-                        outputURL: self.outputURL,
-                        fallbackStartedAt: self.startTime,
-                        fallbackEndedAt: self.lastPresentationTime
-                    )
-                    self.recordedClip = clip
-                    completion(.success(clip))
-                } else {
-                    self.setState(.failed)
-                    completion(.failure(RecorderError.outputMissing))
+                self.queue.async {
+                    guard self.state == .finishing else { return }
+                    if self.isCancellationRequested() {
+                        self.completeCancellation()
+                        return
+                    }
+                    self.session.finalizeCurrentClipIfNeeded()
+                    if wasPaused, let lastPresentationTime = self.lastPresentationTime {
+                        self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
+                    }
+                    if self.writer.status != .completed {
+                        let error = self.writer.error ?? RecorderError.outputMissing
+                        self.terminalError = error
+                        self.setState(.failed)
+                        self.runtimeErrorHandler?(error)
+                        self.resolveFinishCompletions(with: .failure(error))
+                    } else if FileManager.default.fileExists(atPath: self.outputURL.path) {
+                        let clip = self.session.makeRecordedClip(
+                            outputURL: self.outputURL,
+                            fallbackStartedAt: self.startTime,
+                            fallbackEndedAt: self.lastPresentationTime
+                        )
+                        self.recordedClip = clip
+                        self.setState(.finished)
+                        self.resolveFinishCompletions(with: .success(clip))
+                    } else {
+                        let error = RecorderError.outputMissing
+                        self.terminalError = error
+                        self.setState(.failed)
+                        self.resolveFinishCompletions(with: .failure(error))
+                    }
                 }
             }
         }
     }
 
     public func cancel() {
+        requestCancellation()
         rejectFurtherFrames()
         queue.async {
-            self.writer.cancelWriting()
-            try? FileManager.default.removeItem(at: self.outputURL)
-            self.setState(.cancelled)
-            self.recordedClip = nil
+            self.completeCancellation()
         }
     }
 
@@ -352,8 +380,9 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             sampleDuration: frame.metadata.duration,
             applyPadding: applyPaddingAfterResume
         )
-        try startIfNeeded(at: normalizedTime)
+        try setupAudioIfNeeded()
         try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
+        try startIfNeeded(at: normalizedTime)
         guard let adaptor = pixelBufferAdaptor else { throw RecorderError.writerCannotAddVideoInput }
         guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
             droppedFrameHandler?(frame.metadata)
@@ -402,6 +431,9 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     private func appendAudio(_ sampleBuffer: CMSampleBuffer) throws {
+        guard configuration.includesAudio else {
+            throw RecorderError.writerCannotAddAudioInput
+        }
         try setupAudioIfNeeded(sampleBuffer: sampleBuffer)
         guard hasWrittenFirstVideoFrame else {
             pendingLeadingAudioBuffers.append(sampleBuffer)
@@ -461,16 +493,19 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         }
     }
 
-    private func setupAudioIfNeeded(sampleBuffer: CMSampleBuffer) throws {
+    private func setupAudioIfNeeded(sampleBuffer: CMSampleBuffer? = nil) throws {
+        guard configuration.includesAudio else { return }
         guard audioInput == nil else { return }
-        var audioSettings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC]
-        if let bitRate = configuration.audioBitRate { audioSettings[AVEncoderBitRateKey] = bitRate }
-        if let sampleRate = configuration.audioSampleRate { audioSettings[AVSampleRateKey] = sampleRate }
-        if let channelCount = configuration.audioChannelCount { audioSettings[AVNumberOfChannelsKey] = channelCount }
+        let audioSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVEncoderBitRateKey: configuration.audioBitRate,
+            AVSampleRateKey: configuration.audioSampleRate,
+            AVNumberOfChannelsKey: configuration.audioChannelCount
+        ]
         let input = AVAssetWriterInput(
             mediaType: .audio,
             outputSettings: audioSettings,
-            sourceFormatHint: CMSampleBufferGetFormatDescription(sampleBuffer)
+            sourceFormatHint: sampleBuffer.flatMap(CMSampleBufferGetFormatDescription)
         )
         input.expectsMediaDataInRealTime = true
         if writer.canAdd(input) {
@@ -539,6 +574,34 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         DispatchQueue.main.async {
             self.stateChangedHandler?(newState)
         }
+    }
+
+    private func resolveFinishCompletions(with result: Result<RecordedClip, Error>) {
+        let completions = finishCompletions
+        finishCompletions.removeAll()
+        completions.forEach { $0(result) }
+    }
+
+    private func completeCancellation() {
+        guard state != .finished, state != .cancelled else { return }
+        writer.cancelWriting()
+        try? FileManager.default.removeItem(at: outputURL)
+        setState(.cancelled)
+        recordedClip = nil
+        resolveFinishCompletions(with: .failure(VideoX.Error.exportCancelled))
+    }
+
+    private func requestCancellation() {
+        lifecycleLock.lock()
+        cancellationRequested = true
+        lifecycleLock.unlock()
+    }
+
+    private func isCancellationRequested() -> Bool {
+        lifecycleLock.lock()
+        let result = cancellationRequested
+        lifecycleLock.unlock()
+        return result
     }
 
     private func rejectFurtherFrames() {

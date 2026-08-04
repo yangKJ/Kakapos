@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import KakaposMediaCore
 
 public struct FrameProcessingPlan: @unchecked Sendable {
     public struct Identity: Hashable, Sendable, Codable {

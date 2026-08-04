@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import KakaposMediaCore
 import AVFoundation
 
 final class VideoAssetExportSession: @unchecked Sendable {

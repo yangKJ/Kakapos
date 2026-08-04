@@ -7,6 +7,10 @@ import UIKit
 import AppKit
 #endif
 @testable import Kakapos
+@testable import KakaposMediaCore
+@testable import KakaposVideo
+@testable import KakaposTimeline
+@testable import KakaposCamera
 
 final class MediaEngineTests: XCTestCase {
 
@@ -175,7 +179,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposSurface.section(named: "timeline")?.primaryTypes, ["TimelinePipeline", "TimelineExportTask", "TimelineComposition", "ClipLayer", "ImageLayer", "AudioLayer", "EffectLayer", "GroupLayer", "Transition", "KeyframeAnimation"])
     }
 
-    func testKakaposBoardsBuildLightweightEntryPoints() throws {
+    func testKakaposSurfaceBuildsLightweightEntryPoints() throws {
         let source = TestSource(frames: [])
         let preview = KakaposSurface.preview(source: source) { _, _ in }
         let outputURL = FileManager.default.temporaryDirectory
@@ -192,13 +196,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(timeline.summary.transitionCount, 0)
     }
 
-    @available(*, deprecated, message: "Covers the deprecated KakaposBoards alias intentionally.")
-    func testKakaposBoardsStarterBoardsMirrorTheSurfaceBoardOrder() {
-        XCTAssertEqual(KakaposBoards.starterBoards.map(\.board), KakaposSurface.starterBoards.map(\.board))
-        XCTAssertEqual(KakaposBoards.starterBoards.map(\.board), [.export, .preview, .record, .timeline])
-    }
-
-    func testKakaposSurfaceExposesTheSameBoardCatalogAsTheLegacyAlias() {
+    func testKakaposSurfaceExposesTheBoardCatalog() {
         XCTAssertEqual(KakaposSurface.boards.map(\.board), KakaposCapabilityCatalog.boards.map(\.board))
         XCTAssertEqual(KakaposSurface.guide.boardNamesText, KakaposCapabilityCatalog.guide.boardNamesText)
         XCTAssertEqual(KakaposSurface.board(named: "export")?.starterTypes, ["VideoX", "ReaderWriterExportJob"])
@@ -208,7 +206,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(KakaposSurface.starterEntries.map(\.id), ["export", "preview", "record", "timeline"])
     }
 
-    func testKakaposSurfaceAndBoardsProduceTheSameTimelineExportTaskSummary() throws {
+    func testKakaposSurfaceProducesTimelineExportTaskSummary() throws {
         let asset = AVAsset(url: try makeSampleAssetURL())
         let clip = ClipLayer(
             asset: asset,
@@ -4190,7 +4188,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recordedClip?.segments.last?.containsVideo, true)
     }
 
-    func testRecordedClipRepresentationCanRoundTripAndRemoveBackingFile() throws {
+    func testRecordedClipRepresentationCanRoundTripWithoutOwningFileDeletion() throws {
         let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         let outputURL = directoryURL.appendingPathComponent("segment").appendingPathExtension("mp4")
@@ -4227,8 +4225,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertTrue(restored.fileExists)
         XCTAssertEqual((restored.infoDictionary as? [String: String])?["origin"], "unit-test")
 
-        restored.removeFile()
-        XCTAssertNil(restored.outputURL)
+        try FileManager.default.removeItem(at: outputURL)
+        XCTAssertEqual(restored.outputURL, outputURL)
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 

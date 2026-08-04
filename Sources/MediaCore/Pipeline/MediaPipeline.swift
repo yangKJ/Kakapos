@@ -263,12 +263,6 @@ public final class MediaPipeline: @unchecked Sendable {
         self.init(source: source, processors: branch.processors, sinks: branch.sinks)
     }
 
-    #if canImport(UIKit) || os(macOS)
-    public convenience init(player: AVPlayer, processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
-        self.init(source: PlayerFrameSource(player: player), processors: processors, sinks: sinks)
-    }
-    #endif
-
     public func start() {
         guard canStart() else { return }
         resetLifecycleState()
