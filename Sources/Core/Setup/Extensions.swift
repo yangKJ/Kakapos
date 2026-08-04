@@ -7,9 +7,6 @@
 
 import Foundation
 import VideoToolbox
-#if canImport(Harbeth)
-import Harbeth
-#endif
 
 extension FileManager: KakaposCompatible { }
 extension CVPixelBuffer: KakaposCompatible { }
@@ -31,16 +28,4 @@ extension KakaposWrapper where Base: FileManager {
         }
         return outputURL
     }
-}
-
-extension KakaposWrapper where Base: CVPixelBuffer {
-    
-    #if canImport(Harbeth)
-    public func filtering(with filters: [C7FilterProtocol], callback: @escaping BufferBlock) {
-        let harbethIO = HarbethIO(element: base, filters: filters)
-        harbethIO.transmitOutput(success: callback, failed: { _ in
-            callback(base)
-        })
-    }
-    #endif
 }

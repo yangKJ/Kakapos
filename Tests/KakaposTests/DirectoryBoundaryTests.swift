@@ -38,7 +38,6 @@ final class DirectoryBoundaryTests: XCTestCase {
             "MediaCore/Frame/MediaFrame.swift",
             "MediaCore/Frame/SampleBufferUtilities.swift",
             "MediaCore/Processing/FrameProcessor.swift",
-            "MediaCore/Processing/HarbethFrameProcessor.swift",
             "MediaCore/Pipeline/MediaSource.swift",
             "MediaCore/Pipeline/MediaSink.swift",
             "MediaCore/Pipeline/MediaPipeline.swift",
@@ -73,6 +72,58 @@ final class DirectoryBoundaryTests: XCTestCase {
                 "\(path) should remain in its engine-owned directory."
             )
         }
+    }
+
+    func testCoreSourcesDoNotDependOnHarbeth() throws {
+        let sourceRoot = repositoryRoot().appendingPathComponent("Sources", isDirectory: true)
+        let enumerator = FileManager.default.enumerator(
+            at: sourceRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+        let forbiddenFragments = [
+            "import Harbeth",
+            "C7FilterProtocol",
+            "HarbethIO",
+            "C7Blend",
+            "TextureLoader"
+        ]
+
+        while let url = enumerator?.nextObject() as? URL {
+            guard url.pathExtension == "swift" else { continue }
+            let source = try String(contentsOf: url, encoding: .utf8)
+            for fragment in forbiddenFragments {
+                XCTAssertFalse(
+                    source.contains(fragment),
+                    "\(url.path) must keep Harbeth integration outside Kakapos Core."
+                )
+            }
+        }
+    }
+
+    func testDistributionManifestsAgreeOnIOS13Minimum() throws {
+        let root = repositoryRoot()
+        let packageManifest = try String(
+            contentsOf: root.appendingPathComponent("Package.swift"),
+            encoding: .utf8
+        )
+        let podspec = try String(
+            contentsOf: root.appendingPathComponent("Kakapos.podspec"),
+            encoding: .utf8
+        )
+        let swiftVersion = try String(
+            contentsOf: root.appendingPathComponent(".swift-version"),
+            encoding: .utf8
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        XCTAssertTrue(packageManifest.contains(".iOS(.v13)"))
+        XCTAssertTrue(packageManifest.contains("swiftLanguageModes: [.v5]"))
+        XCTAssertTrue(podspec.contains("s.ios.deployment_target = '13.0'"))
+        XCTAssertTrue(podspec.contains("s.swift_version    = '5.0'"))
+        XCTAssertTrue(podspec.contains("'SWIFT_VERSION' => '5.0'"))
+        XCTAssertEqual(swiftVersion, "5.0")
+        XCTAssertFalse(packageManifest.contains(".iOS(.v12)"))
+        XCTAssertFalse(podspec.contains("s.ios.deployment_target = '12.0'"))
     }
 
     func testCameraEngineUsesOwnedSubdirectories() throws {

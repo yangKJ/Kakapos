@@ -21,7 +21,7 @@ At the top level, Kakapos can also be understood as three public engines over on
 ### ✨ Key Features
 
 - **Processor-neutral frame pipeline**: Connect any processor that can transform `CVPixelBuffer`, `CMSampleBuffer`, or `MTLTexture` through `FrameProcessor`.
-- **Harbeth integration**: Use `HarbethFrameProcessor` when you want the official Kakapos + Harbeth render path.
+- **Pluggable render integration**: Keep rendering frameworks in the app layer and inject them through `FrameProcessor`; the example app demonstrates a Harbeth adapter.
 - **Media sources**: Build pipelines from assets, player frames, camera frames, and image-backed timeline layers.
 - **Media sinks**: Route processed frames to preview callbacks, recorders, offline exporters, or custom pixel-buffer consumers.
 - **Export instruction layer**: `VideoX`, `Provider`, `Instruction`, `FilterInstruction`, `RotateInstruction`, and `WatermarkInstruction` are part of the Export board.
@@ -78,7 +78,7 @@ Kakapos uses a `source -> processor chain -> sink` model:
 
 ```swift
 let source = PlayerFrameSource(player: player)
-let processor = HarbethFrameProcessor(filters: filters)
+let processor = MyFrameProcessor()
 let sink = PixelBufferSink { frame in
     // Preview, inspect, record, or forward the processed frame.
 }
@@ -91,7 +91,7 @@ For reusable real-time routing, build a chain once and attach it anywhere a `Med
 
 ```swift
 let previewChain = MediaProcessorChain(
-    processors: [HarbethFrameProcessor(filters: filters)],
+    processors: [MyFrameProcessor()],
     sinks: [
         PreviewSink { image, metadata in
             // update UI
@@ -117,30 +117,14 @@ Or
 let exporter = KakaposSurface.export(provider: .init(with: ``AVAsset``))
 ```
 
-- Create filter instruction and add Harbeth filters.
+- Create a filter instruction and inject an app-owned renderer.
 
 ```
-let filters1: [C7FilterProtocol] = [
-    C7LookupTable(name: "lut_abao"),
-    C7SplitScreen(type: .two),
-    C7Mirror(),
-    C7Contrast(contrast: 0.9),
-    C7SoulOut(soul: 0.3),
-]
-let filters2: [C7FilterProtocol] = [
-    C7Flip(horizontal: true, vertical: true),
-    C7SoulOut(soul: 0.3),
-]
-
-let filtering = FilterInstruction { buffer, time, callback in
-    if time >= 0, time < 3 {
-        buffer.kaka.filtering(with: filters1, callback: callback)
-    } else {
-        let dest = HarbethIO(element: buffer, filters: filters2)
-        dest.transmitOutput(success: callback)
-    }
-}
+let processor = MyFrameProcessor()
+let filtering = FilterInstruction(processor: processor)
 ```
+
+`MyFrameProcessor` is owned by the consuming app and can wrap Harbeth, Metal, Core Image, or another renderer. The example app includes `HarbethExampleFrameProcessor` as a reference integration; Kakapos Core does not import Harbeth.
 
 Recorded output can be promoted into downstream boards directly:
 
@@ -167,7 +151,7 @@ The example app mirrors the same flow in the `Record` tab. After a capture finis
 Or bridge the new processor API into the old instruction API:
 
 ```swift
-let processor = HarbethFrameProcessor(filters: [C7LookupTable(name: "lut_abao")])
+let processor = MyFrameProcessor()
 let filtering = FilterInstruction(processor: processor)
 ```
 
@@ -181,6 +165,8 @@ let textWatermark = WatermarkInstruction(
     opacity: 0.8,
 )
 ```
+
+The native watermark processor has an explicit SDR contract: it rejects HLG/PQ input, renders to BGRA sRGB, and publishes matching Rec.709 primaries with an sRGB transfer function. Reader/writer export returns rendering failures. The legacy video-composition callback falls back to the source frame because its API has no error channel; configure `renderingFailureHandler` before export to observe that compatibility fallback on the rendering queue.
 
 - Create a rotate instruction.
 
@@ -265,7 +251,7 @@ item.audioMix = compiled.audioMix
 
 ### Commercial Boundary
 
-The open-source Kakapos package provides the media engine foundation: processor-neutral frame routing, offline export compatibility, Harbeth wiring, player frame sourcing, recording primitives, and timeline models.
+The open-source Kakapos package provides the media engine foundation: processor-neutral frame routing, offline export compatibility, processor integration contracts, player frame sourcing, recording primitives, and timeline models.
 
 Private Kakapos Pro / Visual Engine work can extend this base with production camera UX, template systems, advanced timeline effects, performance tuning, private processor adapters, and complete starter kits.
 
@@ -283,11 +269,13 @@ pod 'Kakapos'
 pod 'Harbeth'
 ```
 
+Harbeth is optional. The consuming app owns the adapter that conforms Harbeth or another renderer to Kakapos `FrameProcessor`.
+
 ### Swift Package Manager
 
 [Swift Package Manager](https://swift.org/package-manager/) is a tool for managing the distribution of Swift code. It’s integrated with the Swift build system to automate the process of downloading, compiling, and linking dependencies.
 
-> Xcode 11+ is required to build [Kakapos](https://github.com/yangKJ/Kakapos) using Swift Package Manager.
+> Kakapos requires the Xcode 16+ / Swift 6 toolchain and currently compiles in Swift 5 language mode while its concurrency contracts are migrated. The library supports iOS 13+, while the example app currently targets iOS 16.6.
 
 To integrate Kakapos into your Xcode project using Swift Package Manager, add it to the dependencies value of your `Package.swift`:
 
@@ -296,6 +284,10 @@ dependencies: [
     .package(url: "https://github.com/yangKJ/Kakapos.git", from: "1.1.0"),
 ]
 ```
+
+### Migration Note
+
+The next distribution baseline raises the library minimum from iOS 12 to iOS 13 and removes the conditional Core-owned `HarbethFrameProcessor` and `.kaka.filtering` APIs. Move that bridge into the consuming app (the example app provides `HarbethExampleFrameProcessor`) and inject it through `FrameProcessor`. Treat this as a breaking distribution change when choosing the next release version.
 
 ### Remarks
 

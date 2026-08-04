@@ -277,7 +277,7 @@ struct CameraShowcaseView: View {
                     )
                     let engine = try KakaposSurface.camera(configuration: configuration)
                     let processors: [FrameProcessor] = captureMode == .processed
-                        ? [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.06), C7Exposure(exposure: 0.05)])]
+                        ? [HarbethExampleFrameProcessor(filters: [C7Contrast(contrast: 1.06), C7Exposure(exposure: 0.05)])]
                         : []
                     let previewController = engine.startPreview(
                         mode: captureMode == .processed ? .processed : .raw,

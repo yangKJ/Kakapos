@@ -51,7 +51,7 @@ struct PreviewShowcaseView: View {
             ShowcaseRouteCard(
                 icon: "play.rectangle",
                 title: "Open Preview Demo",
-                subtitle: "Inspect player-frame pulls, recorded clip preview, seek behavior, and processed output through HarbethFrameProcessor.",
+                subtitle: "Inspect player-frame pulls, recorded clip preview, seek behavior, and processed output through the example-owned Harbeth adapter.",
                 accent: .orange
             )
         }

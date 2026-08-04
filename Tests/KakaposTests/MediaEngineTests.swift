@@ -1,6 +1,11 @@
 import XCTest
 import AVFoundation
 import CoreGraphics
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 @testable import Kakapos
 
 final class MediaEngineTests: XCTestCase {
@@ -1998,6 +2003,188 @@ final class MediaEngineTests: XCTestCase {
 
         XCTAssertEqual(exportJob._videoProcessorCountForTesting, 1)
     }
+
+    #if canImport(UIKit) || canImport(AppKit)
+    func testWatermarkInstructionProcessesFramesWithoutHarbeth() throws {
+        let sourceBuffer = try makePixelBuffer(width: 32, height: 32)
+        fillPixelBuffer(sourceBuffer, red: 0, green: 0, blue: 0, alpha: 255)
+        let watermarkCGImage = try makeImage(width: 8, height: 8)
+        #if canImport(UIKit)
+        let watermarkImage = UIImage(cgImage: watermarkCGImage)
+        #else
+        let watermarkImage = NSImage(cgImage: watermarkCGImage, size: NSSize(width: 8, height: 8))
+        #endif
+        let instruction = WatermarkInstruction(
+            type: .image(watermarkImage),
+            position: .center,
+            margin: 0,
+            opacity: 1
+        )
+        let processor = try XCTUnwrap(instruction.kakaposFrameProcessor)
+        let completion = expectation(description: "watermark frame")
+        var outputBuffer: CVPixelBuffer?
+
+        processor.process(PixelBufferFrame(
+            pixelBuffer: sourceBuffer,
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 7)
+        )) { result in
+            switch result {
+            case let .success(frame):
+                outputBuffer = extractPixelBuffer(frame)
+            case let .failure(error):
+                XCTFail("Unexpected watermark failure: \(error)")
+            }
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 2)
+        let renderedBuffer = try XCTUnwrap(outputBuffer)
+        XCTAssertFalse(renderedBuffer === sourceBuffer)
+        XCTAssertEqual(CVPixelBufferGetWidth(renderedBuffer), 32)
+        XCTAssertEqual(CVPixelBufferGetHeight(renderedBuffer), 32)
+        XCTAssertNotEqual(pixelBufferChecksum(renderedBuffer), pixelBufferChecksum(sourceBuffer))
+    }
+
+    func testWatermarkInstructionRejectsFramesWithoutPixelBuffers() throws {
+        #if canImport(UIKit)
+        let watermarkImage = UIImage(cgImage: try makeImage(width: 8, height: 8))
+        #else
+        let cgImage = try makeImage(width: 8, height: 8)
+        let watermarkImage = NSImage(cgImage: cgImage, size: NSSize(width: 8, height: 8))
+        #endif
+        let instruction = WatermarkInstruction(type: .image(watermarkImage), position: .center)
+        let processor = try XCTUnwrap(instruction.kakaposFrameProcessor)
+        let completion = expectation(description: "watermark failure")
+
+        processor.process(MetadataOnlyFrame(metadata: FrameMetadata(presentationTime: .zero))) { result in
+            guard case let .failure(error) = result else {
+                XCTFail("Expected a missing pixel-buffer failure")
+                completion.fulfill()
+                return
+            }
+            XCTAssertEqual(
+                error as? WatermarkInstruction.RenderingError,
+                .pixelBufferUnavailable
+            )
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 1)
+    }
+
+    func testWatermarkInstructionRejectsHDRFrames() throws {
+        let sourceBuffer = try makePixelBuffer(width: 16, height: 16)
+        CVBufferSetAttachment(
+            sourceBuffer,
+            kCVImageBufferTransferFunctionKey,
+            kCVImageBufferTransferFunction_ITU_R_2100_HLG,
+            .shouldPropagate
+        )
+        #if canImport(UIKit)
+        let watermarkImage = UIImage(cgImage: try makeImage(width: 4, height: 4))
+        #else
+        let cgImage = try makeImage(width: 4, height: 4)
+        let watermarkImage = NSImage(cgImage: cgImage, size: NSSize(width: 4, height: 4))
+        #endif
+        let instruction = WatermarkInstruction(type: .image(watermarkImage), position: .center)
+        let processor = try XCTUnwrap(instruction.kakaposFrameProcessor)
+        let completion = expectation(description: "HDR watermark rejection")
+
+        processor.process(PixelBufferFrame(
+            pixelBuffer: sourceBuffer,
+            metadata: FrameMetadata(presentationTime: .zero)
+        )) { result in
+            guard case let .failure(error) = result else {
+                XCTFail("Expected HDR input rejection")
+                completion.fulfill()
+                return
+            }
+            XCTAssertEqual(error as? WatermarkInstruction.RenderingError, .unsupportedDynamicRange)
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 1)
+    }
+
+    func testWatermarkInstructionPublishesConsistentSDRAttachments() throws {
+        let sourceBuffer = try makePixelBuffer(width: 16, height: 16)
+        CVBufferSetAttachment(
+            sourceBuffer,
+            kCVImageBufferColorPrimariesKey,
+            kCVImageBufferColorPrimaries_P3_D65,
+            .shouldPropagate
+        )
+        CVBufferSetAttachment(
+            sourceBuffer,
+            kCVImageBufferYCbCrMatrixKey,
+            kCVImageBufferYCbCrMatrix_ITU_R_2020,
+            .shouldPropagate
+        )
+        #if canImport(UIKit)
+        let watermarkImage = UIImage(cgImage: try makeImage(width: 4, height: 4))
+        #else
+        let cgImage = try makeImage(width: 4, height: 4)
+        let watermarkImage = NSImage(cgImage: cgImage, size: NSSize(width: 4, height: 4))
+        #endif
+        let instruction = WatermarkInstruction(type: .image(watermarkImage), position: .topLeft)
+        let processor = try XCTUnwrap(instruction.kakaposFrameProcessor)
+        let completion = expectation(description: "SDR watermark attachments")
+
+        processor.process(PixelBufferFrame(
+            pixelBuffer: sourceBuffer,
+            metadata: FrameMetadata(presentationTime: .zero)
+        )) { result in
+            guard case let .success(frame) = result,
+                  let output = extractPixelBuffer(frame) else {
+                XCTFail("Expected watermarked SDR output")
+                completion.fulfill()
+                return
+            }
+            XCTAssertEqual(
+                CVBufferCopyAttachment(output, kCVImageBufferColorPrimariesKey, nil) as? String,
+                kCVImageBufferColorPrimaries_ITU_R_709_2 as String
+            )
+            XCTAssertEqual(
+                CVBufferCopyAttachment(output, kCVImageBufferTransferFunctionKey, nil) as? String,
+                kCVImageBufferTransferFunction_sRGB as String
+            )
+            XCTAssertNil(CVBufferCopyAttachment(output, kCVImageBufferYCbCrMatrixKey, nil))
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 1)
+    }
+
+    func testProcessedPreviewConsumerDropsQueuedOutputAfterCancellation() throws {
+        let callbackQueue = DispatchQueue(label: "KakaposTests.ProcessedPreviewCallback")
+        callbackQueue.suspend()
+        let unexpectedOutput = expectation(description: "cancelled preview output")
+        unexpectedOutput.isInverted = true
+        let consumer = LatestFrameProcessingConsumer(
+            processors: [PassthroughFrameProcessor()],
+            planIdentity: .init(identifier: "test", revision: "1"),
+            callbackQueue: callbackQueue
+        ) { _, _, _ in
+            unexpectedOutput.fulfill()
+        }
+        let frame = PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero)
+        )
+
+        consumer.start()
+        consumer.consume(frame, from: MediaOutputNode()) { result in
+            if case let .failure(error) = result {
+                XCTFail("Unexpected preview failure: \(error)")
+            }
+        }
+        consumer.cancel()
+        callbackQueue.resume()
+
+        wait(for: [unexpectedOutput], timeout: 0.2)
+    }
+
+    #endif
 
     func testVideoXAssetExportSessionUsesNestedRotateInstructionsForRenderSize() throws {
         let exporter = try makeSampleExporter()
@@ -5630,6 +5817,46 @@ private func makePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
     )
     XCTAssertEqual(status, kCVReturnSuccess)
     return pixelBuffer!
+}
+
+private func fillPixelBuffer(
+    _ pixelBuffer: CVPixelBuffer,
+    red: UInt8,
+    green: UInt8,
+    blue: UInt8,
+    alpha: UInt8
+) {
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+    guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+    let width = CVPixelBufferGetWidth(pixelBuffer)
+    let height = CVPixelBufferGetHeight(pixelBuffer)
+    for row in 0..<height {
+        let bytes = baseAddress.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+        for column in 0..<width {
+            let offset = column * 4
+            bytes[offset] = blue
+            bytes[offset + 1] = green
+            bytes[offset + 2] = red
+            bytes[offset + 3] = alpha
+        }
+    }
+}
+
+private func pixelBufferChecksum(_ pixelBuffer: CVPixelBuffer) -> UInt64 {
+    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+    guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 0 }
+    let byteCount = CVPixelBufferGetBytesPerRow(pixelBuffer) * CVPixelBufferGetHeight(pixelBuffer)
+    let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+    return (0..<byteCount).reduce(into: UInt64(0)) { checksum, index in
+        checksum &+= UInt64(bytes[index])
+    }
+}
+
+private struct MetadataOnlyFrame: MediaFrame {
+    var metadata: FrameMetadata
 }
 
 private func makeImage(width: Int, height: Int) throws -> CGImage {

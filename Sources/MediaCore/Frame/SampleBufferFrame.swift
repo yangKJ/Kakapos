@@ -15,11 +15,15 @@ import CoreVideo
 /// 以及需要完整 timing、format、attachment 信息的消费者。
 /// `pixelBuffer` 是派生访问入口，便于只读取像素的兼容调用方使用。
 public struct SampleBufferFrame: MediaFrame {
-    public let sampleBuffer: CMSampleBuffer
+    let sampleBufferPayload: CMSampleBuffer
     public var metadata: FrameMetadata
 
+    public var sampleBuffer: CMSampleBuffer {
+        sampleBufferPayload
+    }
+
     public init(sampleBuffer: CMSampleBuffer, metadata: FrameMetadata? = nil) {
-        self.sampleBuffer = sampleBuffer
+        self.sampleBufferPayload = sampleBuffer
         if let metadata = metadata {
             self.metadata = metadata
         } else {
