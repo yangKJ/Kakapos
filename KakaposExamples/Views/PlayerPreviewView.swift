@@ -111,7 +111,7 @@ struct PlayerPreviewView: View {
         #if canImport(UIKit) || os(macOS)
         let pipeline = KakaposSurface.preview(
             player: player,
-            processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.15)])]
+            processors: [HarbethExampleFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.15)])]
         ) { image, metadata in
             let generation = metadata.userInfo[PlayerFrameSource.MetadataKey.generation] as? Int64 ?? 0
             guard generation >= previewGeneration else { return }
@@ -144,7 +144,7 @@ struct PlayerPreviewView: View {
         previewGeneration = 0
         let pipeline = KakaposSurface.preview(
             recordedClip: recordedClip,
-            processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.08), C7Exposure(exposure: 0.1)])]
+            processors: [HarbethExampleFrameProcessor(filters: [C7Contrast(contrast: 1.08), C7Exposure(exposure: 0.1)])]
         ) { image, metadata in
             previewImage = image
             frameCount += 1

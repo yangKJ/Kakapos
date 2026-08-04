@@ -7,16 +7,14 @@
 
 import Foundation
 import AVFoundation
+import CoreImage
+import CoreText
 import CoreVideo
 
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
 import AppKit
-#endif
-
-#if canImport(Harbeth)
-import Harbeth
 #endif
 
 public enum WatermarkPosition {
@@ -58,22 +56,36 @@ public enum WatermarkType {
 #endif
 
 public final class WatermarkInstruction: CompositionInstruction, @unchecked Sendable {
+
+    public enum RenderingError: Error, Equatable {
+        case instructionReleased
+        case pixelBufferUnavailable
+        case watermarkImageUnavailable
+        case unsupportedDynamicRange
+        case outputPixelBufferCreationFailed(CVReturn)
+    }
+
+    /// 传统 video-composition 回调无法返回错误，因此失败时会回退原帧并通过该闭包报告。
+    public var renderingFailureHandler: (@Sendable (RenderingError) -> Void)?
     
     private let watermarkType: WatermarkType
     private let position: WatermarkPosition
     private let margin: CGFloat
     private let opacity: Float
     private let scale: CGFloat
-    
-    private var cachedWatermarkTexture: MTLTexture?
-    private var canvasSize: CGSize?
+
+    private let renderContext = CIContext(options: [.cacheIntermediates: false])
+    private let cacheLock = NSLock()
+    private var cachedWatermarkContent: WatermarkContent?
+    private var cachedOutputPool: CVPixelBufferPool?
+    private var cachedOutputSize: CGSize?
     
     public init(type: WatermarkType, position: WatermarkPosition, margin: CGFloat = 10, opacity: Float = 1.0, scale: CGFloat = 1.0) {
         self.watermarkType = type
         self.position = position
         self.margin = margin
-        self.opacity = opacity
-        self.scale = scale
+        self.opacity = min(max(opacity, 0), 1)
+        self.scale = scale.isFinite && scale > 0 ? scale : 1
         super.init()
     }
     
@@ -86,174 +98,287 @@ public final class WatermarkInstruction: CompositionInstruction, @unchecked Send
     }
     
     public func operationPixelBuffer(_ buffer: CVPixelBuffer, block: @escaping BufferBlock, for request: AVAsynchronousVideoCompositionRequest) {
-        #if canImport(Harbeth)
-        if let filter = createHarbethWatermarkFilter(buffer: buffer) {
-            let processor = HarbethFrameProcessor(filters: [filter])
-            let frame = PixelBufferFrame(
-                pixelBuffer: buffer,
-                metadata: FrameMetadata(presentationTime: request.compositionTime, sourceTime: request.compositionTime)
-            )
-            processor.process(frame) { result in
-                switch result {
-                case .success(let output):
-                    block(output.pixelBuffer ?? buffer)
-                case .failure:
-                    block(buffer)
-                }
-            }
-            return
+        do {
+            block(try renderWatermark(on: buffer))
+        } catch let error as RenderingError {
+            renderingFailureHandler?(error)
+            block(buffer)
+        } catch {
+            renderingFailureHandler?(.watermarkImageUnavailable)
+            block(buffer)
         }
-        #endif
-        block(buffer)
     }
-    
-    #if canImport(Harbeth)
-    private func createHarbethWatermarkFilter(buffer: CVPixelBuffer) -> C7FilterProtocol? {
-        let width  = CVPixelBufferGetWidth(buffer)
+
+    private func renderWatermark(on buffer: CVPixelBuffer) throws -> CVPixelBuffer {
+        guard Self.isHighDynamicRange(buffer) == false else {
+            throw RenderingError.unsupportedDynamicRange
+        }
+        let width = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
         let currentCanvasSize = CGSize(width: width, height: height)
-        if cachedWatermarkTexture == nil || canvasSize != currentCanvasSize {
-            guard let cgImage = createPositionedWatermark(canvasSize: currentCanvasSize) else {
-                return nil
-            }
-            canvasSize = currentCanvasSize
-            cachedWatermarkTexture = try? TextureLoader(with: cgImage).texture
+        guard let content = watermarkContent() else {
+            throw RenderingError.watermarkImageUnavailable
         }
-        guard let watermarkTexture = cachedWatermarkTexture else {
-            return nil
-        }
-        return C7Blend(with: .normal, blendTexture: watermarkTexture, intensity: Float(opacity))
+        let outputBuffer = try makeOutputBuffer(size: currentCanvasSize)
+
+        let sourceImage = CIImage(cvPixelBuffer: buffer)
+        let topLeftOrigin = position.origin(
+            watermarkSize: content.size,
+            canvasSize: currentCanvasSize,
+            margin: margin
+        )
+        let overlayImage = content.image.transformed(by: CGAffineTransform(
+            translationX: topLeftOrigin.x,
+            y: currentCanvasSize.height - topLeftOrigin.y - content.size.height
+        ))
+        let outputImage = overlayImage.composited(over: sourceImage)
+        renderContext.render(
+            outputImage,
+            to: outputBuffer,
+            bounds: sourceImage.extent,
+            colorSpace: CGColorSpace(name: CGColorSpace.sRGB)
+        )
+        Self.copySDRAttachments(from: buffer, to: outputBuffer)
+        return outputBuffer
     }
-    #endif
-    
-    private func createPositionedWatermark(canvasSize: CGSize) -> CGImage? {
+
+    private func watermarkContent() -> WatermarkContent? {
+        cacheLock.lock()
+        if let cachedWatermarkContent {
+            cacheLock.unlock()
+            return cachedWatermarkContent
+        }
+        let content = createWatermarkContent()
+        cachedWatermarkContent = content
+        cacheLock.unlock()
+        return content
+    }
+
+    private func createWatermarkContent() -> WatermarkContent? {
         #if canImport(UIKit)
         switch watermarkType {
         case .image(let image):
-            return createImageWatermark(image: image, canvasSize: canvasSize)
+            guard let source = CIImage(image: image) else { return nil }
+            return scaledContent(image: source, targetSize: image.size)
         case .text(let text, let font, let color):
-            return createTextWatermark(text: text, font: font, color: color, canvasSize: canvasSize)
+            return createTextContent(
+                text: text,
+                fontName: font.fontName,
+                fontSize: font.pointSize,
+                color: color.cgColor
+            )
         }
         #elseif canImport(AppKit)
         switch watermarkType {
         case .image(let image):
-            return createImageWatermark(image: image, canvasSize: canvasSize)
+            guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                return nil
+            }
+            return scaledContent(image: CIImage(cgImage: cgImage), targetSize: image.size)
         case .text(let text, let font, let color):
-            return createTextWatermark(text: text, font: font, color: color, canvasSize: canvasSize)
+            return createTextContent(
+                text: text,
+                fontName: font.fontName,
+                fontSize: font.pointSize,
+                color: color.cgColor
+            )
         }
         #else
         return nil
         #endif
     }
-    
-    #if canImport(UIKit)
-    private func createImageWatermark(image: UIImage, canvasSize: CGSize) -> CGImage? {
-        let scaledImage = scale == 1.0 ? image : scaleImage(image: image)
-        let watermarkSize = scaledImage.size
-        let origin = position.origin(watermarkSize: watermarkSize, canvasSize: canvasSize, margin: margin)
-        UIGraphicsBeginImageContextWithOptions(canvasSize, false, 1.0)
-        defer { UIGraphicsEndImageContext() }
-        guard let context = UIGraphicsGetCurrentContext() else {
+
+    private func scaledContent(image: CIImage, targetSize: CGSize) -> WatermarkContent? {
+        let extent = image.extent.integral
+        let size = CGSize(width: targetSize.width * scale, height: targetSize.height * scale)
+        guard extent.isInfinite == false, extent.isEmpty == false,
+              size.width.isFinite, size.height.isFinite,
+              size.width > 0, size.height > 0 else { return nil }
+        let normalized = image.transformed(by: CGAffineTransform(
+            translationX: -extent.minX,
+            y: -extent.minY
+        ))
+        let resized = normalized.transformed(by: CGAffineTransform(
+            scaleX: size.width / extent.width,
+            y: size.height / extent.height
+        ))
+        return WatermarkContent(image: applyingOpacity(to: resized), size: size)
+    }
+
+    private func createTextContent(
+        text: String,
+        fontName: String,
+        fontSize: CGFloat,
+        color: CGColor
+    ) -> WatermarkContent? {
+        let font = CTFontCreateWithName(fontName as CFString, fontSize * scale, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color
+        ]
+        let line = CTLineCreateWithAttributedString(NSAttributedString(
+            string: text,
+            attributes: attributes
+        ))
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        var leading: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let watermarkSize = CGSize(
+            width: ceil(width),
+            height: ceil(ascent + descent + leading)
+        )
+        guard let image = createWatermarkImage(size: watermarkSize, draw: { context in
+            context.textPosition = CGPoint(x: 0, y: descent + leading)
+            CTLineDraw(line, context)
+        }) else { return nil }
+        return WatermarkContent(image: applyingOpacity(to: CIImage(cgImage: image)), size: watermarkSize)
+    }
+
+    private func createWatermarkImage(
+        size: CGSize,
+        draw: (CGContext) -> Void
+    ) -> CGImage? {
+        let width = Int(size.width.rounded(.up))
+        let height = Int(size.height.rounded(.up))
+        guard width > 0, height > 0 else { return nil }
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
             return nil
         }
-        context.clear(CGRect(origin: .zero, size: canvasSize))
-        scaledImage.draw(at: origin)
+        context.clear(CGRect(origin: .zero, size: size))
+        draw(context)
         return context.makeImage()
     }
-    
-    private func scaleImage(image: UIImage) -> UIImage {
-        let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
-        defer { UIGraphicsEndImageContext() }
-        image.draw(in: CGRect(origin: .zero, size: newSize))
-        return UIGraphicsGetImageFromCurrentImageContext() ?? image
+
+    private func applyingOpacity(to image: CIImage) -> CIImage {
+        guard opacity < 1 else { return image }
+        return image.applyingFilter("CIColorMatrix", parameters: [
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))
+        ])
     }
-    
-    private func createTextWatermark(text: String, font: UIFont, color: UIColor, canvasSize: CGSize) -> CGImage? {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: color
-        ]
-        let textSize = (text as NSString).size(withAttributes: attributes)
-        let scaledSize = CGSize(width: textSize.width * scale, height: textSize.height * scale)
-        let origin = position.origin(watermarkSize: scaledSize, canvasSize: canvasSize, margin: margin)
-        UIGraphicsBeginImageContextWithOptions(canvasSize, false, 1.0)
-        defer { UIGraphicsEndImageContext() }
-        guard let context = UIGraphicsGetCurrentContext() else {
-            return nil
+
+    private func makeOutputBuffer(size: CGSize) throws -> CVPixelBuffer {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if cachedOutputSize != size || cachedOutputPool == nil {
+            let attributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: Int(size.width),
+                kCVPixelBufferHeightKey as String: Int(size.height),
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ]
+            var pool: CVPixelBufferPool?
+            let status = CVPixelBufferPoolCreate(
+                kCFAllocatorDefault,
+                [kCVPixelBufferPoolMinimumBufferCountKey as String: 3] as CFDictionary,
+                attributes as CFDictionary,
+                &pool
+            )
+            guard status == kCVReturnSuccess, let pool else {
+                throw RenderingError.outputPixelBufferCreationFailed(status)
+            }
+            cachedOutputPool = pool
+            cachedOutputSize = size
         }
-        context.clear(CGRect(origin: .zero, size: canvasSize))
-        (text as NSString).draw(at: origin, withAttributes: attributes)
-        return context.makeImage()
-    }
-    #elseif canImport(AppKit)
-    private func createImageWatermark(image: NSImage, canvasSize: CGSize) -> CGImage? {
-        let scaledImage = scale == 1.0 ? image : createScaledImage(image: image)
-        let watermarkSize = scaledImage.size
-        let origin = position.origin(watermarkSize: watermarkSize, canvasSize: canvasSize, margin: margin)
-        let canvasImage = NSImage(size: canvasSize)
-        canvasImage.lockFocus()
-        defer { canvasImage.unlockFocus() }
-        guard let context = NSGraphicsContext.current?.cgContext else {
-            return nil
+        guard let outputPool = cachedOutputPool else {
+            throw RenderingError.outputPixelBufferCreationFailed(kCVReturnInvalidPoolAttributes)
         }
-        context.clear(CGRect(origin: .zero, size: canvasSize))
-        let rect = CGRect(origin: origin, size: watermarkSize)
-        scaledImage.draw(in: rect)
-        return canvasImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
-    }
-    
-    private func createTextWatermark(text: String, font: NSFont, color: NSColor, canvasSize: CGSize) -> CGImage? {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: color
-        ]
-        let textSize = (text as NSString).size(withAttributes: attributes)
-        let scaledSize = NSSize(width: textSize.width * scale, height: textSize.height * scale)
-        let origin = position.origin(watermarkSize: scaledSize, canvasSize: canvasSize, margin: margin)
-        let canvasImage = NSImage(size: canvasSize)
-        canvasImage.lockFocus()
-        defer { canvasImage.unlockFocus() }
-        guard let context = NSGraphicsContext.current?.cgContext else {
-            return nil
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferPoolCreatePixelBuffer(
+            kCFAllocatorDefault,
+            outputPool,
+            &buffer
+        )
+        guard status == kCVReturnSuccess, let buffer else {
+            throw RenderingError.outputPixelBufferCreationFailed(status)
         }
-        context.clear(CGRect(origin: .zero, size: canvasSize))
-        (text as NSString).draw(at: origin, withAttributes: attributes)
-        return canvasImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        return buffer
     }
-    
-    private func createScaledImage(image: NSImage) -> NSImage {
-        let newSize = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-        let scaledImage = NSImage(size: newSize)
-        scaledImage.lockFocus()
-        defer { scaledImage.unlockFocus() }
-        image.draw(in: NSRect(origin: .zero, size: newSize), from: NSRect(origin: .zero, size: image.size), operation: .sourceOver, fraction: 1.0)
-        return scaledImage
+
+    private static func isHighDynamicRange(_ buffer: CVPixelBuffer) -> Bool {
+        let attachment: CFTypeRef?
+        if #available(iOS 15.0, tvOS 15.0, watchOS 8.0, macOS 12.0, *) {
+            attachment = CVBufferCopyAttachment(
+                buffer,
+                kCVImageBufferTransferFunctionKey,
+                nil
+            )
+        } else {
+            attachment = CVBufferGetAttachment(
+                buffer,
+                kCVImageBufferTransferFunctionKey,
+                nil
+            )?.takeUnretainedValue()
+        }
+        guard let attachment else { return false }
+        let transfer = attachment as? String
+        return transfer == kCVImageBufferTransferFunction_ITU_R_2100_HLG as String
+            || transfer == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String
     }
-    #endif
+
+    private static func copySDRAttachments(from source: CVPixelBuffer, to destination: CVPixelBuffer) {
+        CVBufferPropagateAttachments(source, destination)
+        CVBufferSetAttachment(
+            destination,
+            kCVImageBufferColorPrimariesKey,
+            kCVImageBufferColorPrimaries_ITU_R_709_2,
+            .shouldPropagate
+        )
+        CVBufferSetAttachment(
+            destination,
+            kCVImageBufferTransferFunctionKey,
+            kCVImageBufferTransferFunction_sRGB,
+            .shouldPropagate
+        )
+        CVBufferRemoveAttachment(destination, kCVImageBufferYCbCrMatrixKey)
+        if let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) {
+            CVBufferSetAttachment(
+                destination,
+                kCVImageBufferCGColorSpaceKey,
+                colorSpace,
+                .shouldPropagate
+            )
+        }
+    }
+}
+
+private struct WatermarkContent {
+    let image: CIImage
+    let size: CGSize
 }
 
 extension WatermarkInstruction: FrameProcessorProvidingInstruction {
     var kakaposFrameProcessor: FrameProcessor? {
         ClosureFrameProcessor { [weak self] frame, completion in
             guard let self else {
-                completion(.success(frame))
+                completion(.failure(RenderingError.instructionReleased))
                 return
             }
             guard let pixelBuffer = extractPixelBuffer(frame) else {
-                completion(.success(frame))
+                completion(.failure(RenderingError.pixelBufferUnavailable))
                 return
             }
-            #if canImport(Harbeth)
-            if let filter = self.createHarbethWatermarkFilter(buffer: pixelBuffer) {
-                let processor = HarbethFrameProcessor(filters: [filter])
-                processor.process(frame) { result in
-                    completion(result)
-                }
-                return
+            do {
+                let outputBuffer = try self.renderWatermark(on: pixelBuffer)
+                completion(.success(PixelBufferFrame(
+                    pixelBuffer: outputBuffer,
+                    metadata: frame.metadata
+                )))
+            } catch {
+                completion(.failure(error))
             }
-            #endif
-            completion(.success(frame))
         }
     }
 }

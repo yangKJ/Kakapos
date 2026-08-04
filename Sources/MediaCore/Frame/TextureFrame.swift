@@ -17,11 +17,15 @@ import Metal
 /// 仅在具备 Metal 的平台上可用。
 #if canImport(Metal)
 public struct TextureFrame: MediaFrame {
-    public let texture: MTLTexture
+    let texturePayload: MTLTexture
     public var metadata: FrameMetadata
 
+    public var texture: MTLTexture {
+        texturePayload
+    }
+
     public init(texture: MTLTexture, metadata: FrameMetadata) {
-        self.texture = texture
+        self.texturePayload = texture
         self.metadata = metadata
     }
 }

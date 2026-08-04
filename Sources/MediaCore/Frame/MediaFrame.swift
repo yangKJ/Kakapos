@@ -67,19 +67,19 @@ public extension MediaFrame {
 }
 
 public func extractPixelBuffer(_ frame: MediaFrame) -> CVPixelBuffer? {
-    if let p = frame as? PixelBufferFrame { return p.pixelBuffer }
+    if let p = frame as? PixelBufferFrame { return p.pixelBufferPayload }
     if let s = frame as? SampleBufferFrame {
-        return CMSampleBufferGetImageBuffer(s.sampleBuffer)
+        return CMSampleBufferGetImageBuffer(s.sampleBufferPayload)
     }
     return nil
 }
 
 public func extractSampleBuffer(_ frame: MediaFrame) -> CMSampleBuffer? {
-    (frame as? SampleBufferFrame)?.sampleBuffer
+    (frame as? SampleBufferFrame)?.sampleBufferPayload
 }
 
 #if canImport(Metal)
 public func extractTexture(_ frame: MediaFrame) -> MTLTexture? {
-    (frame as? TextureFrame)?.texture
+    (frame as? TextureFrame)?.texturePayload
 }
 #endif

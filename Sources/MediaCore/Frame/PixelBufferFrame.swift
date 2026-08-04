@@ -12,11 +12,15 @@ import CoreVideo
 ///
 /// 适用于原始像素缓冲区来源，或只需读取像素的消费者。
 public struct PixelBufferFrame: MediaFrame {
-    public let pixelBuffer: CVPixelBuffer
+    let pixelBufferPayload: CVPixelBuffer
     public var metadata: FrameMetadata
 
+    public var pixelBuffer: CVPixelBuffer {
+        pixelBufferPayload
+    }
+
     public init(pixelBuffer: CVPixelBuffer, metadata: FrameMetadata) {
-        self.pixelBuffer = pixelBuffer
+        self.pixelBufferPayload = pixelBuffer
         self.metadata = metadata
     }
 }

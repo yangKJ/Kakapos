@@ -157,7 +157,7 @@ struct CameraRecordView: View {
     private var panelBody: some View {
         switch selectedPanel {
         case .preview:
-            Text(clipPreviewImage == nil ? "Processed preview runs through HarbethFrameProcessor and PreviewSink." : "Showing latest processed recorded-clip frame")
+            Text(clipPreviewImage == nil ? "Processed preview runs through the example-owned Harbeth adapter and PreviewSink." : "Showing latest processed recorded-clip frame")
                 .font(.footnote)
                 .foregroundColor(.secondary)
         case .record:
@@ -219,7 +219,7 @@ struct CameraRecordView: View {
                     let engine = try KakaposSurface.camera(configuration: configuration)
                     let previewController = engine.startPreview(
                         mode: .processed,
-                        processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05), C7Exposure(exposure: 0.05)])],
+                        processors: [HarbethExampleFrameProcessor(filters: [C7Contrast(contrast: 1.05), C7Exposure(exposure: 0.05)])],
                         callbackQueue: .main
                     ) { image, metadata in
                         frameCount += 1
@@ -322,7 +322,7 @@ struct CameraRecordView: View {
                         let outputURL = try FileManager.default.kaka.createURL(prefix: "camera", pathExtension: "mp4")
                         let recordingController = try engine.startRecording(
                             outputURL: outputURL,
-                            processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.05), C7Exposure(exposure: 0.05)])]
+                            processors: [HarbethExampleFrameProcessor(filters: [C7Contrast(contrast: 1.05), C7Exposure(exposure: 0.05)])]
                         )
                         recordingController.eventHandler = { event in
                             DispatchQueue.main.async {
@@ -448,7 +448,7 @@ struct CameraRecordView: View {
         player = nil
         let pipeline = KakaposSurface.preview(
             recordedClip: recordedClip,
-            processors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.08), C7Exposure(exposure: 0.08)])],
+            processors: [HarbethExampleFrameProcessor(filters: [C7Contrast(contrast: 1.08), C7Exposure(exposure: 0.08)])],
             callbackQueue: .main
         ) { image, metadata in
             clipPreviewImage = image
@@ -500,7 +500,7 @@ struct CameraRecordView: View {
             guard let task = KakaposSurface.timelineExportTask(
                 recordedClip: recordedClip,
                 outputURL: outputURL,
-                videoProcessors: [HarbethFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.12)])]
+                videoProcessors: [HarbethExampleFrameProcessor(filters: [C7Contrast(contrast: 1.1), C7Exposure(exposure: 0.12)])]
             ) else {
                 clipExportStateText = "failed"
                 message = "Recorded clip export unavailable"

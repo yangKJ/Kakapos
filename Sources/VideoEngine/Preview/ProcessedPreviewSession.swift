@@ -91,20 +91,21 @@ public final class ProcessedPreviewSession: @unchecked Sendable {
         source.requestFrameUpdate()
     }
 
+    /// 非阻塞取消。尚未通过 delivery gate 的回调会被丢弃；已经进入用户闭包或当前处理器的工作可自然结束。
     public func cancel() {
-        source.cancel()
         consumer.cancel()
+        source.cancel()
     }
 }
 
-private final class LatestFrameProcessingConsumer: MediaFrameConsumerNode {
+final class LatestFrameProcessingConsumer: MediaFrameConsumerNode, @unchecked Sendable {
     typealias OutputHandler = ProcessedPreviewSession.OutputHandler
 
     var errorHandler: ((Error) -> Void)?
 
     private let processors: [FrameProcessor]
     private let planIdentity: FrameProcessingPlan.Identity
-    private let callbackQueue: DispatchQueue
+    private let deliveryQueue: DispatchQueue
     private let output: OutputHandler
     private let lock = NSLock()
     private var isActive = false
@@ -120,7 +121,10 @@ private final class LatestFrameProcessingConsumer: MediaFrameConsumerNode {
     ) {
         self.processors = processors
         self.planIdentity = planIdentity
-        self.callbackQueue = callbackQueue
+        deliveryQueue = DispatchQueue(
+            label: "com.condy.kakapos.processed-preview.delivery",
+            target: callbackQueue
+        )
         self.output = output
     }
 
@@ -170,6 +174,10 @@ private final class LatestFrameProcessingConsumer: MediaFrameConsumerNode {
         }
         processors[index].process(frame) { [weak self] result in
             guard let self else { return }
+            guard self.isCurrent(generation) else {
+                self.processPendingFrame(after: generation)
+                return
+            }
             switch result {
             case let .success(processedFrame):
                 self.process(processedFrame, at: index + 1, generation: generation)
@@ -184,18 +192,23 @@ private final class LatestFrameProcessingConsumer: MediaFrameConsumerNode {
             fail(ProcessedPreviewError.pixelBufferUnavailable, generation: generation)
             return
         }
-        let shouldOutput = isCurrent(generation)
-        if shouldOutput {
-            callbackQueue.async { [output, planIdentity] in
-                output(pixelBuffer, frame.metadata, planIdentity)
-            }
+        let delivery = PreviewFrameDelivery(
+            pixelBuffer: pixelBuffer,
+            metadata: frame.metadata,
+            planIdentity: planIdentity,
+            output: output
+        )
+        deliveryQueue.async { [weak self, delivery] in
+            guard self?.isCurrent(generation) == true else { return }
+            delivery.deliver()
         }
         processPendingFrame(after: generation)
     }
 
     private func fail(_ error: Error, generation: UInt64) {
-        if isCurrent(generation) {
-            callbackQueue.async { [weak self] in self?.errorHandler?(error) }
+        deliveryQueue.async { [weak self] in
+            guard self?.isCurrent(generation) == true else { return }
+            self?.errorHandler?(error)
         }
         processPendingFrame(after: generation)
     }
@@ -222,6 +235,17 @@ private final class LatestFrameProcessingConsumer: MediaFrameConsumerNode {
         if let next {
             process(next, at: 0, generation: completedGeneration)
         }
+    }
+}
+
+private struct PreviewFrameDelivery: @unchecked Sendable {
+    let pixelBuffer: CVPixelBuffer
+    let metadata: FrameMetadata
+    let planIdentity: FrameProcessingPlan.Identity
+    let output: LatestFrameProcessingConsumer.OutputHandler
+
+    func deliver() {
+        output(pixelBuffer, metadata, planIdentity)
     }
 }
 #endif
