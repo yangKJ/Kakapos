@@ -73,6 +73,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     public weak var delegate: MediaSourceDelegate?
     public let player: AVPlayer
+    public let suppressesPlayerRendering: Bool
     public private(set) var state: State = .idle
     public private(set) var lastFrame: MediaFrame?
     public private(set) var lastSeekTargetTime: CMTime?
@@ -158,9 +159,14 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     private let lifecycleLock = NSLock()
     private var acceptsFrames = true
 
-    public init(player: AVPlayer, preferredFramesPerSecond: Int = 30) {
+    public init(
+        player: AVPlayer,
+        preferredFramesPerSecond: Int = 30,
+        suppressesPlayerRendering: Bool = false
+    ) {
         self.player = player
         self.preferredFramesPerSecond = preferredFramesPerSecond
+        self.suppressesPlayerRendering = suppressesPlayerRendering
         self.driverFactory = { player, configuration, handler in
             PlayerFrameOutputDriver(player: player, configuration: configuration, handler: handler)
         }
@@ -170,10 +176,12 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     init(
         player: AVPlayer,
         preferredFramesPerSecond: Int = 30,
+        suppressesPlayerRendering: Bool = false,
         driverFactory: @escaping (AVPlayer, PlayerFrameOutputDriver.Configuration, @escaping (PlayerFrameOutputDriver.VideoFrame) -> Void) -> PlayerFrameDriving
     ) {
         self.player = player
         self.preferredFramesPerSecond = preferredFramesPerSecond
+        self.suppressesPlayerRendering = suppressesPlayerRendering
         self.driverFactory = driverFactory
         super.init()
     }
@@ -187,7 +195,8 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         }
         self.init(
             player: AVPlayer(playerItem: playerItem),
-            preferredFramesPerSecond: preferredFramesPerSecond
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            suppressesPlayerRendering: false
         )
     }
 
@@ -282,7 +291,8 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
         let configuration = PlayerFrameOutputDriver.Configuration(
             sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA],
-            preferredFramesPerSecond: preferredFramesPerSecond
+            preferredFramesPerSecond: preferredFramesPerSecond,
+            suppressesPlayerRendering: suppressesPlayerRendering
         )
         let driver = driverFactory(player, configuration) { [weak self] frame in
             self?.handleVideoFrame(frame)
