@@ -109,8 +109,9 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
     struct Configuration {
         var sourcePixelBufferAttributes: [String: Any]?
         var preferredFramesPerSecond: Int = 30
+        var suppressesPlayerRendering = false
 
-        nonisolated(unsafe) static let `default` = Configuration()
+        static let `default` = Configuration()
     }
 
     struct VideoFrame {
@@ -222,6 +223,7 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
         preferredVideoTransform = videoTrack.preferredTransform
 
         let output = AVPlayerItemVideoOutput(pixelBufferAttributes: configuration.sourcePixelBufferAttributes)
+        output.suppressesPlayerRendering = configuration.suppressesPlayerRendering
         output.setDelegate(self, queue: .main)
         playerItem.add(output)
         playerItemOutput = output

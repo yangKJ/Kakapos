@@ -2153,16 +2153,19 @@ final class MediaEngineTests: XCTestCase {
         wait(for: [completion], timeout: 1)
     }
 
-    func testProcessedPreviewConsumerDropsQueuedOutputAfterCancellation() throws {
-        let callbackQueue = DispatchQueue(label: "KakaposTests.ProcessedPreviewCallback")
-        callbackQueue.suspend()
+    func testVideoPreviewLaneDropsSlowOutputAfterCancellation() throws {
         let unexpectedOutput = expectation(description: "cancelled preview output")
         unexpectedOutput.isInverted = true
-        let consumer = LatestFrameProcessingConsumer(
-            processors: [PassthroughFrameProcessor()],
-            planIdentity: .init(identifier: "test", revision: "1"),
-            callbackQueue: callbackQueue
-        ) { _, _, _ in
+        var finishFrame: ((Result<MediaFrame, Error>) -> Void)?
+        let plan = FrameProcessingPlan(
+            identity: .init(identifier: "slow", revision: "1")
+        ) {
+            [ClosureFrameProcessor { _, completion in finishFrame = completion }]
+        }
+        let lane = try VideoPreviewProcessingLane(
+            generation: .init(rawValue: 1),
+            mode: .processed(plan)
+        ) { _, _, _, _ in
             unexpectedOutput.fulfill()
         }
         let frame = PixelBufferFrame(
@@ -2170,14 +2173,9 @@ final class MediaEngineTests: XCTestCase {
             metadata: FrameMetadata(presentationTime: .zero)
         )
 
-        consumer.start()
-        consumer.consume(frame, from: MediaOutputNode()) { result in
-            if case let .failure(error) = result {
-                XCTFail("Unexpected preview failure: \(error)")
-            }
-        }
-        consumer.cancel()
-        callbackQueue.resume()
+        lane.consume(frame)
+        lane.cancel()
+        finishFrame?(.success(frame))
 
         wait(for: [unexpectedOutput], timeout: 0.2)
     }
