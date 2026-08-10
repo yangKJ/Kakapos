@@ -31,7 +31,9 @@ final class VideoAssetExportSession: @unchecked Sendable {
         var videoComposition: AVVideoComposition?
         var audioMix: AVAudioMix?
         var videoProcessors: [FrameProcessor] = []
+        var videoFrameProcessingTimeout: TimeInterval? = nil
         var videoEncodingStrategy: VideoEncodingStrategy = .automatic
+        var performanceAccumulator = ReaderWriterExportPerformanceAccumulator()
     }
 
     enum Status: Equatable {
@@ -50,12 +52,12 @@ final class VideoAssetExportSession: @unchecked Sendable {
         case cannotAddAudioOutput
         case cannotAddAudioInput
         case missingVideoFormatDescription
-        case missingAudioFormatDescription
         case cannotStartWriting
         case cannotStartReading
         case processedVideoAdaptorUnavailable
         case processedVideoFrameUnavailable
         case noProcessedVideoFrames
+        case videoFrameProcessingTimedOut(seconds: TimeInterval)
         case invalidStatus
         case cancelled
     }
@@ -95,6 +97,18 @@ final class VideoAssetExportSession: @unchecked Sendable {
             phase = .finishing
             finishWritingProgress.completedUnitCount = Int64(Double(childProgressTotalUnitCount) * fractionCompleted)
         }
+
+        func makeSnapshot() -> ExportProgress {
+            let snapshot = ExportProgress(
+                tracksAudioEncoding: audioProgress != nil,
+                tracksVideoEncoding: videoProgress != nil
+            )
+            snapshot.videoProgress?.completedUnitCount = videoProgress?.completedUnitCount ?? 0
+            snapshot.audioProgress?.completedUnitCount = audioProgress?.completedUnitCount ?? 0
+            snapshot.finishWritingProgress.completedUnitCount = finishWritingProgress.completedUnitCount
+            snapshot.phase = phase
+            return snapshot
+        }
     }
 
     private let asset: AVAsset
@@ -108,19 +122,49 @@ final class VideoAssetExportSession: @unchecked Sendable {
     private let audioInput: AVAssetWriterInput?
     private let videoPixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private let queue = DispatchQueue(label: "com.condy.kakapos.video-asset-export")
+    private let processorQueue = DispatchQueue(
+        label: "com.condy.kakapos.video-asset-export.processing",
+        qos: .userInitiated
+    )
     private let duration: CMTime
 
-    private let pauseDispatchGroup = DispatchGroup()
+    private struct PendingProcessedVideoFrame {
+        let pixelBuffer: CVPixelBuffer
+        let presentationTime: CMTime
+    }
+
+    private struct VideoProcessingTiming: Sendable {
+        let submittedAt: UInt64
+        let queueDelayNanoseconds: UInt64
+        let executionDurationNanoseconds: UInt64
+        let callbackCompletedAt: UInt64
+    }
+
     private var cancelled = false
     private(set) var status: Status = .idle
     private var progress: ExportProgress?
     private var progressHandler: ((ExportProgress) -> Void)?
+    private var pendingProgressSnapshot: ExportProgress?
+    private var progressDeliveryTimer: DispatchSourceTimer?
     private var statusHandler: ((Status) -> Void)?
+    private var completionHandler: ((Error?) -> Void)?
     private var processorError: Error?
     private var processedVideoFrameCount = 0
+    private var videoCompleted = false
+    private var audioCompleted = false
+    private var videoProcessingInFlight = false
+    private var videoProcessingGeneration: UInt64 = 0
+    private var videoProcessingTimeoutTimer: DispatchSourceTimer?
+    private var pendingProcessedVideoFrame: PendingProcessedVideoFrame?
+    private var didBeginFinishing = false
+    private var didDeliverCallback = false
+    private var lifecycleRetain: VideoAssetExportSession?
+
+    private static let maximumSamplesPerPump = 32
+    private static let progressDeliveryInterval: TimeInterval = 0.1
 
     init(asset: AVAsset, outputURL: URL, configuration: Configuration) throws {
-        self.asset = asset.copy() as! AVAsset
+        self.asset = (asset.copy() as? AVAsset) ?? asset
         self.configuration = configuration
         self.outputURL = outputURL
         try Self.prepareOutputURL(outputURL)
@@ -143,11 +187,10 @@ final class VideoAssetExportSession: @unchecked Sendable {
             guard let sourceFormatHint = Self.makeFormatDescription(from: primaryVideoTrack.formatDescriptions) else {
                 throw SessionError.missingVideoFormatDescription
             }
-            let readerVideoComposition = configuration.videoComposition ?? Self.makeReaderVideoComposition(
-                from: self.asset,
-                videoTracks: videoTracks,
-                shouldUseVideoProcessorPath: !configuration.videoProcessors.isEmpty
-            )
+            // 整体逐帧滤镜不应为了拿到 BGRA 帧而隐式创建视频合成。
+            // 部分来自屏幕录制或照片图库的合法 H.264 素材会被这条隐式合成路径
+            // 判为 invalidSourceMedia；直接读取轨道并把 preferredTransform 写回输出即可。
+            let readerVideoComposition = configuration.videoComposition
             if let videoComposition = readerVideoComposition {
                 let compositionOutput = AVAssetReaderVideoCompositionOutput(
                     videoTracks: videoTracks,
@@ -158,9 +201,23 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 output = compositionOutput
                 inputTransform = nil
             } else {
+                let outputSettings: [String: Any]
+                if configuration.videoProcessors.isEmpty {
+                    outputSettings = [
+                        kCVPixelBufferPixelFormatTypeKey as String: [
+                            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                            kCVPixelFormatType_32BGRA,
+                            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+                        ]
+                    ]
+                } else {
+                    outputSettings = [
+                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                    ]
+                }
                 let trackOutput = AVAssetReaderTrackOutput(
                     track: primaryVideoTrack,
-                    outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: [kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]]
+                    outputSettings: outputSettings
                 )
                 trackOutput.alwaysCopiesSampleData = false
                 output = trackOutput
@@ -173,6 +230,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             videoOutput = output
 
             let input: AVAssetWriterInput
+            let processedPixelBufferSize: CGSize?
             let pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
             let usePassthrough = configuration.videoEncodingStrategy == .passthrough
                 || (configuration.videoEncodingStrategy == .automatic
@@ -190,8 +248,16 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 settings[AVVideoHeightKey] = abs(transformedSize.height)
                 input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
                 input.transform = transform
+                processedPixelBufferSize = CGSize(
+                    width: abs(transformedSize.width),
+                    height: abs(transformedSize.height)
+                )
             } else if !usePassthrough {
                 input = AVAssetWriterInput(mediaType: .video, outputSettings: configuration.videoSettings)
+                processedPixelBufferSize = CGSize(
+                    width: configuration.videoSettings[AVVideoWidthKey] as? CGFloat ?? 0,
+                    height: configuration.videoSettings[AVVideoHeightKey] as? CGFloat ?? 0
+                )
             } else {
                 input = AVAssetWriterInput(
                     mediaType: .video,
@@ -201,17 +267,21 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 if let transform = inputTransform {
                     input.transform = transform
                 }
+                processedPixelBufferSize = nil
             }
             input.expectsMediaDataInRealTime = false
             if configuration.videoProcessors.isEmpty || usePassthrough {
                 pixelBufferAdaptor = nil
             } else {
+                guard let processedPixelBufferSize else {
+                    throw SessionError.processedVideoAdaptorUnavailable
+                }
                 pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
                     assetWriterInput: input,
                     sourcePixelBufferAttributes: [
                         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                        kCVPixelBufferWidthKey as String: configuration.videoSettings[AVVideoWidthKey] as? CGFloat ?? 0,
-                        kCVPixelBufferHeightKey as String: configuration.videoSettings[AVVideoHeightKey] as? CGFloat ?? 0
+                        kCVPixelBufferWidthKey as String: processedPixelBufferSize.width,
+                        kCVPixelBufferHeightKey as String: processedPixelBufferSize.height
                     ]
                 )
             }
@@ -238,33 +308,19 @@ final class VideoAssetExportSession: @unchecked Sendable {
             reader.add(output)
             audioOutput = output
 
-            let audioTrack = audioTracks[0]
-            guard let audioFormatDescription = Self.makeFormatDescription(from: audioTrack.formatDescriptions) else {
-                throw SessionError.missingAudioFormatDescription
-            }
-
             let input = AVAssetWriterInput(
                 mediaType: .audio,
-                outputSettings: configuration.audioSettings,
-                sourceFormatHint: audioFormatDescription
+                outputSettings: configuration.audioSettings
             )
             input.expectsMediaDataInRealTime = false
-            if writer.canAdd(input) {
-                writer.add(input)
-                audioInput = input
-            } else {
-                let passthroughInput = AVAssetWriterInput(
-                    mediaType: .audio,
-                    outputSettings: nil,
-                    sourceFormatHint: audioFormatDescription
-                )
-                passthroughInput.expectsMediaDataInRealTime = false
-                guard writer.canAdd(passthroughInput) else {
-                    throw SessionError.cannotAddAudioInput
-                }
-                writer.add(passthroughInput)
-                audioInput = passthroughInput
+            // AVAssetReaderAudioMixOutput(nil) 输出的是方便编码的未压缩 PCM，
+            // 不能把原始 AAC 轨道的 format description 当成这些样本的 source hint。
+            // 否则 Writer 会在首批音频样本处把合法素材判为 invalidSourceMedia。
+            guard writer.canAdd(input) else {
+                throw SessionError.cannotAddAudioInput
             }
+            writer.add(input)
+            audioInput = input
         } else {
             audioOutput = nil
             audioInput = nil
@@ -304,6 +360,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 throw reader.error ?? SessionError.cannotStartReading
             }
         } catch {
+            configuration.performanceAccumulator.markFinal()
             let box = UnsafeSendableBox(value: completion)
             DispatchQueue.main.async {
                 box.value(error)
@@ -312,132 +369,260 @@ final class VideoAssetExportSession: @unchecked Sendable {
         }
 
         self.status = .exporting
+        configuration.performanceAccumulator.markStarted()
         self.statusHandler = status
         self.progressHandler = progress
+        self.completionHandler = completion
+        lifecycleRetain = self
         self.progress = ExportProgress(
             tracksAudioEncoding: audioInput != nil,
             tracksVideoEncoding: videoInput != nil
         )
+        videoCompleted = videoInput == nil
+        audioCompleted = audioInput == nil
         dispatchStatus(.exporting)
         writer.startSession(atSourceTime: configuration.timeRange.start)
 
-        var videoCompleted = false
-        var audioCompleted = false
-
         if let videoInput, let videoOutput {
-            var strongSession: VideoAssetExportSession? = self
-            videoInput.requestMediaDataWhenReady(on: queue) { [unowned videoInput] in
-                guard let session = strongSession else { return }
-                if !session.encode(from: videoOutput, to: videoInput) {
-                    videoCompleted = true
-                    strongSession = nil
-                    if audioCompleted {
-                        session.finish(completionHandler: completion)
-                    }
-                }
+            videoInput.requestMediaDataWhenReady(on: queue) { [weak self, unowned videoInput] in
+                self?.pumpVideo(from: videoOutput, to: videoInput)
             }
-        } else {
-            videoCompleted = true
         }
 
         if let audioInput, let audioOutput {
-            var strongSession: VideoAssetExportSession? = self
-            audioInput.requestMediaDataWhenReady(on: queue) { [unowned audioInput] in
-                guard let session = strongSession else { return }
-                if !session.encode(from: audioOutput, to: audioInput) {
-                    audioCompleted = true
-                    strongSession = nil
-                    if videoCompleted {
-                        session.finish(completionHandler: completion)
-                    }
-                }
+            audioInput.requestMediaDataWhenReady(on: queue) { [weak self, unowned audioInput] in
+                self?.pumpAudio(from: audioOutput, to: audioInput)
             }
-        } else {
-            audioCompleted = true
+        }
+
+        queue.async { [weak self] in
+            self?.finishIfPossible()
         }
     }
 
     func pause() {
-        guard status == .exporting, cancelled == false else { return }
-        status = .paused
-        pauseDispatchGroup.enter()
-        dispatchStatus(.paused)
+        queue.async { [weak self] in
+            guard let self, self.status == .exporting, self.cancelled == false, self.didBeginFinishing == false else { return }
+            self.status = .paused
+            self.dispatchStatus(.paused)
+        }
     }
 
     func resume() {
-        guard status == .paused, cancelled == false else { return }
-        status = .exporting
-        pauseDispatchGroup.leave()
-        dispatchStatus(.exporting)
+        queue.async { [weak self] in
+            guard let self, self.status == .paused, self.cancelled == false, self.didBeginFinishing == false else { return }
+            self.status = .exporting
+            self.dispatchStatus(.exporting)
+            if let videoOutput = self.videoOutput, let videoInput = self.videoInput {
+                self.pumpVideo(from: videoOutput, to: videoInput)
+            }
+            if let audioOutput = self.audioOutput, let audioInput = self.audioInput {
+                self.pumpAudio(from: audioOutput, to: audioInput)
+            }
+        }
     }
 
     func cancel() {
-        if status == .paused {
-            resume()
-        }
-        guard status == .exporting, cancelled == false else { return }
-        cancelled = true
-        status = .cancelled
-        dispatchStatus(.cancelled)
-        queue.async {
+        queue.async { [weak self] in
+            guard let self,
+                  (self.status == .exporting || self.status == .paused),
+                  self.cancelled == false else { return }
+            self.cancelled = true
+            self.status = .cancelled
+            self.videoProcessingInFlight = false
+            self.cancelVideoProcessingTimeout()
+            self.dispatchStatus(.cancelled)
             if self.reader.status == .reading {
                 self.reader.cancelReading()
+            }
+            self.completeAllInputs()
+            if self.didBeginFinishing {
+                self.writer.cancelWriting()
+                try? FileManager.default.removeItem(at: self.outputURL)
+                if let completionHandler = self.completionHandler {
+                    self.dispatchCallback(with: SessionError.cancelled, completionHandler)
+                }
+            } else {
+                self.finishIfPossible()
             }
         }
     }
 
-    private func encode(from output: AVAssetReaderOutput, to input: AVAssetWriterInput) -> Bool {
-        while input.isReadyForMoreMediaData {
-            if let processorError {
-                self.processorError = processorError
-                input.markAsFinished()
-                reader.cancelReading()
-                return false
-            }
-            if reader.status != .reading || writer.status != .writing {
-                input.markAsFinished()
-                return false
-            }
-            pauseDispatchGroup.wait()
+    private func pumpVideo(from output: AVAssetReaderOutput, to input: AVAssetWriterInput) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard status == .exporting,
+              cancelled == false,
+              didBeginFinishing == false,
+              videoCompleted == false,
+              videoProcessingInFlight == false else { return }
 
-            if let buffer = output.copyNextSampleBuffer() {
-                let progress = (CMSampleBufferGetPresentationTimeStamp(buffer) - configuration.timeRange.start).seconds / max(duration.seconds, 0.001)
-                if videoOutput === output {
-                    dispatchProgressCallback { $0.updateVideoEncodingProgress(fractionCompleted: progress) }
+        if let pendingProcessedVideoFrame {
+            guard input.isReadyForMoreMediaData else {
+                configuration.performanceAccumulator.recordProcessedFrameWriterBackpressure()
+                return
+            }
+            guard let adaptor = videoPixelBufferAdaptor,
+                  adaptor.append(
+                    pendingProcessedVideoFrame.pixelBuffer,
+                    withPresentationTime: pendingProcessedVideoFrame.presentationTime
+                  ) else {
+                failExport(writer.error ?? SessionError.invalidStatus)
+                return
+            }
+            self.pendingProcessedVideoFrame = nil
+            processedVideoFrameCount += 1
+            configuration.performanceAccumulator.recordPendingProcessedFrameWritten()
+            configuration.performanceAccumulator.recordVideoSampleWritten()
+        }
+
+        var sampleCount = 0
+        while input.isReadyForMoreMediaData && sampleCount < Self.maximumSamplesPerPump {
+            guard status == .exporting, cancelled == false, didBeginFinishing == false else { return }
+            guard reader.status == .reading, writer.status == .writing else {
+                handleInactiveReaderWriter()
+                return
+            }
+            guard let sampleBuffer = output.copyNextSampleBuffer() else {
+                dispatchProgressCallback { $0.updateVideoEncodingProgress(fractionCompleted: 1) }
+                finishTrack(.video, input: input)
+                return
+            }
+
+            configuration.performanceAccumulator.recordVideoSampleRead()
+            dispatchProgress(for: sampleBuffer, mediaType: .video)
+            sampleCount += 1
+            if configuration.videoProcessors.isEmpty || videoPixelBufferAdaptor == nil {
+                guard input.append(sampleBuffer) else {
+                    failExport(writer.error ?? SessionError.invalidStatus)
+                    return
                 }
-                if audioOutput === output {
-                    dispatchProgressCallback { $0.updateAudioEncodingProgress(fractionCompleted: progress) }
+                configuration.performanceAccumulator.recordVideoSampleWritten()
+                continue
+            }
+
+            guard let frame = makeVideoFrame(from: sampleBuffer) else {
+                failExport(SessionError.processedVideoFrameUnavailable)
+                return
+            }
+            videoProcessingInFlight = true
+            videoProcessingGeneration &+= 1
+            let processingGeneration = videoProcessingGeneration
+            let submittedAt = configuration.performanceAccumulator.now()
+            configuration.performanceAccumulator.recordProcessorSubmitted()
+            scheduleVideoProcessingTimeout(for: processingGeneration)
+            processVideoFrame(frame, submittedAt: submittedAt) { [weak self] result, timing in
+                self?.queue.async { [weak self] in
+                    self?.handleProcessedVideoFrame(
+                        result,
+                        timing: timing,
+                        generation: processingGeneration,
+                        sourceSampleBuffer: sampleBuffer,
+                        input: input
+                    )
                 }
-                if videoOutput === output, !configuration.videoProcessors.isEmpty {
-                    switch appendProcessedVideoSampleBuffer(buffer, to: input) {
-                    case .success(let appended):
-                        if !appended {
-                            input.markAsFinished()
-                            reader.cancelReading()
-                            return false
-                        }
-                    case .failure(let error):
-                        processorError = error
-                        input.markAsFinished()
-                        reader.cancelReading()
-                        return false
-                    }
-                } else if !input.append(buffer) {
-                    input.markAsFinished()
-                    return false
-                }
-            } else {
-                if videoOutput === output {
-                    dispatchProgressCallback { $0.updateVideoEncodingProgress(fractionCompleted: 1) }
-                }
-                if audioOutput === output {
-                    dispatchProgressCallback { $0.updateAudioEncodingProgress(fractionCompleted: 1) }
-                }
-                input.markAsFinished()
-                return false
+            }
+            return
+        }
+        if sampleCount == Self.maximumSamplesPerPump {
+            queue.async { [weak self, weak input] in
+                guard let self, let input, let output = self.videoOutput else { return }
+                self.pumpVideo(from: output, to: input)
             }
         }
-        return true
+    }
+
+    private func pumpAudio(from output: AVAssetReaderOutput, to input: AVAssetWriterInput) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard status == .exporting,
+              cancelled == false,
+              didBeginFinishing == false,
+              audioCompleted == false else { return }
+
+        var sampleCount = 0
+        while input.isReadyForMoreMediaData && sampleCount < Self.maximumSamplesPerPump {
+            guard status == .exporting, cancelled == false, didBeginFinishing == false else { return }
+            guard reader.status == .reading, writer.status == .writing else {
+                handleInactiveReaderWriter()
+                return
+            }
+            guard let sampleBuffer = output.copyNextSampleBuffer() else {
+                dispatchProgressCallback { $0.updateAudioEncodingProgress(fractionCompleted: 1) }
+                finishTrack(.audio, input: input)
+                return
+            }
+
+            configuration.performanceAccumulator.recordAudioSampleRead()
+            dispatchProgress(for: sampleBuffer, mediaType: .audio)
+            sampleCount += 1
+            guard input.append(sampleBuffer) else {
+                failExport(writer.error ?? SessionError.invalidStatus)
+                return
+            }
+            configuration.performanceAccumulator.recordAudioSampleWritten()
+        }
+        if sampleCount == Self.maximumSamplesPerPump {
+            queue.async { [weak self, weak input] in
+                guard let self, let input, let output = self.audioOutput else { return }
+                self.pumpAudio(from: output, to: input)
+            }
+        }
+    }
+
+    private enum TrackKind {
+        case video
+        case audio
+    }
+
+    private func finishTrack(_ track: TrackKind, input: AVAssetWriterInput) {
+        input.markAsFinished()
+        switch track {
+        case .video:
+            videoCompleted = true
+        case .audio:
+            audioCompleted = true
+        }
+        finishIfPossible()
+    }
+
+    private func completeAllInputs() {
+        if videoCompleted == false {
+            videoInput?.markAsFinished()
+            videoCompleted = true
+        }
+        if audioCompleted == false {
+            audioInput?.markAsFinished()
+            audioCompleted = true
+        }
+    }
+
+    private func failExport(_ error: Error) {
+        guard didBeginFinishing == false else { return }
+        videoProcessingInFlight = false
+        cancelVideoProcessingTimeout()
+        processorError = error
+        if reader.status == .reading {
+            reader.cancelReading()
+        }
+        completeAllInputs()
+        finishIfPossible()
+    }
+
+    private func handleInactiveReaderWriter() {
+        if cancelled || reader.status == .cancelled || writer.status == .cancelled {
+            completeAllInputs()
+            finishIfPossible()
+            return
+        }
+        failExport(reader.error ?? writer.error ?? SessionError.invalidStatus)
+    }
+
+    private func finishIfPossible() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard videoCompleted, audioCompleted, didBeginFinishing == false, let completionHandler else { return }
+        didBeginFinishing = true
+        cancelVideoProcessingTimeout()
+        configuration.performanceAccumulator.markFinishing()
+        finish(completionHandler: completionHandler)
     }
 
     private func finish(completionHandler: @escaping (Error?) -> Void) {
@@ -450,19 +635,19 @@ final class VideoAssetExportSession: @unchecked Sendable {
             return
         }
 
-        if configuration.videoProcessors.isEmpty == false, processedVideoFrameCount == 0 {
-            writer.cancelWriting()
-            try? FileManager.default.removeItem(at: outputURL)
-            dispatchCallback(with: SessionError.noProcessedVideoFrames, completionHandler)
-            return
-        }
-
         if reader.status == .cancelled || writer.status == .cancelled {
             if writer.status != .cancelled {
                 writer.cancelWriting()
             }
             try? FileManager.default.removeItem(at: outputURL)
             dispatchCallback(with: SessionError.cancelled, completionHandler)
+            return
+        }
+
+        if videoPixelBufferAdaptor != nil, processedVideoFrameCount == 0 {
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: outputURL)
+            dispatchCallback(with: SessionError.noProcessedVideoFrames, completionHandler)
             return
         }
 
@@ -476,6 +661,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         } else {
             writer.finishWriting {
                 self.queue.async {
+                    guard self.didDeliverCallback == false else { return }
                     if self.writer.status == .failed {
                         try? FileManager.default.removeItem(at: self.outputURL)
                         self.dispatchCallback(with: self.writer.error, completionHandler)
@@ -488,92 +674,252 @@ final class VideoAssetExportSession: @unchecked Sendable {
         }
     }
 
-    private func appendProcessedVideoSampleBuffer(
-        _ sampleBuffer: CMSampleBuffer,
-        to input: AVAssetWriterInput
-    ) -> Result<Bool, Error> {
-        guard CMSampleBufferGetImageBuffer(sampleBuffer) != nil else {
-            return .failure(SessionError.processedVideoFrameUnavailable)
-        }
-
+    private func makeVideoFrame(from sampleBuffer: CMSampleBuffer) -> MediaFrame? {
+        guard CMSampleBufferGetImageBuffer(sampleBuffer) != nil else { return nil }
         let metadata = FrameMetadata(
             presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
             duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
             sourceTime: CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
         )
-        let frame = SampleBufferFrame(sampleBuffer: sampleBuffer, metadata: metadata)
-        let processedResult = processVideoFrame(frame)
+        return SampleBufferFrame(sampleBuffer: sampleBuffer, metadata: metadata)
+    }
 
-        switch processedResult {
+    private func handleProcessedVideoFrame(
+        _ result: Result<MediaFrame, Error>,
+        timing: VideoProcessingTiming,
+        generation: UInt64,
+        sourceSampleBuffer: CMSampleBuffer,
+        input: AVAssetWriterInput
+    ) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard videoProcessingInFlight, generation == videoProcessingGeneration else { return }
+        cancelVideoProcessingTimeout()
+        videoProcessingInFlight = false
+        let ownerDeliveredAt = configuration.performanceAccumulator.now()
+        configuration.performanceAccumulator.recordProcessorCompleted(
+            submittedAt: timing.submittedAt,
+            queueDelayNanoseconds: timing.queueDelayNanoseconds,
+            executionDurationNanoseconds: timing.executionDurationNanoseconds,
+            callbackCompletedAt: timing.callbackCompletedAt,
+            ownerDeliveredAt: ownerDeliveredAt
+        )
+        guard videoCompleted == false, cancelled == false, didBeginFinishing == false else { return }
+
+        switch result {
         case .failure(let error):
-            return .failure(error)
+            failExport(error)
         case .success(let processedFrame):
-            guard let adaptor = videoPixelBufferAdaptor else {
-                return .failure(SessionError.processedVideoAdaptorUnavailable)
+            guard videoPixelBufferAdaptor != nil else {
+                failExport(SessionError.processedVideoAdaptorUnavailable)
+                return
             }
             let processedBox = UnsafeSendableBox(value: processedFrame)
-            let sampleBufferBox2 = UnsafeSendableBox(value: sampleBuffer)
+            let sampleBufferBox2 = UnsafeSendableBox(value: sourceSampleBuffer)
             guard let processedPixelBuffer = extractPixelBuffer(processedBox.value) ?? CMSampleBufferGetImageBuffer(extractSampleBuffer(processedBox.value) ?? sampleBufferBox2.value) else {
-                return .failure(SessionError.processedVideoFrameUnavailable)
+                failExport(SessionError.processedVideoFrameUnavailable)
+                return
             }
             let presentationTime = processedFrame.metadata.presentationTime
-            let appended = adaptor.append(processedPixelBuffer, withPresentationTime: presentationTime)
-            if appended {
-                processedVideoFrameCount += 1
+            pendingProcessedVideoFrame = PendingProcessedVideoFrame(
+                pixelBuffer: processedPixelBuffer,
+                presentationTime: presentationTime
+            )
+            configuration.performanceAccumulator.recordPendingProcessedFrame(at: ownerDeliveredAt)
+            if status == .exporting, let videoOutput {
+                pumpVideo(from: videoOutput, to: input)
             }
-            return .success(appended)
         }
     }
 
-    private func processVideoFrame(_ frame: MediaFrame) -> Result<MediaFrame, Error> {
-        guard !configuration.videoProcessors.isEmpty else {
-            return .success(frame)
+    private func scheduleVideoProcessingTimeout(for generation: UInt64) {
+        guard let timeout = configuration.videoFrameProcessingTimeout,
+              timeout.isFinite,
+              timeout > 0 else { return }
+        cancelVideoProcessingTimeout()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + timeout)
+        timer.setEventHandler { [weak self] in
+            // pause 只停止继续取帧；已经交给外部 processor 的调用仍受同一截止时间约束，
+            // 避免卡死调用借暂停进入无界等待。
+            guard let self,
+                  self.videoProcessingInFlight,
+                  self.videoProcessingGeneration == generation,
+                  self.cancelled == false,
+                  self.didBeginFinishing == false else { return }
+            self.cancelVideoProcessingTimeout()
+            self.videoProcessingInFlight = false
+            self.configuration.performanceAccumulator.recordProcessorTimedOut()
+            self.failExport(SessionError.videoFrameProcessingTimedOut(seconds: timeout))
+        }
+        videoProcessingTimeoutTimer = timer
+        timer.resume()
+    }
+
+    private func cancelVideoProcessingTimeout() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        videoProcessingTimeoutTimer?.cancel()
+        videoProcessingTimeoutTimer = nil
+    }
+
+    private func processVideoFrame(
+        _ frame: MediaFrame,
+        submittedAt: UInt64,
+        at index: Int = 0,
+        accumulatedQueueDelayNanoseconds: UInt64 = 0,
+        accumulatedExecutionDurationNanoseconds: UInt64 = 0,
+        completion: @escaping (Result<MediaFrame, Error>, VideoProcessingTiming) -> Void
+    ) {
+        guard index < configuration.videoProcessors.count else {
+            let completedAt = configuration.performanceAccumulator.now()
+            completion(.success(frame), VideoProcessingTiming(
+                submittedAt: submittedAt,
+                queueDelayNanoseconds: accumulatedQueueDelayNanoseconds,
+                executionDurationNanoseconds: accumulatedExecutionDurationNanoseconds,
+                callbackCompletedAt: completedAt
+            ))
+            return
         }
 
-        var currentFrame = frame
-        for processor in configuration.videoProcessors {
-            let semaphore = DispatchSemaphore(value: 0)
-            var result: Result<MediaFrame, Error>?
-            processor.process(currentFrame) { output in
-                result = output
-                semaphore.signal()
+        let processor = configuration.videoProcessors[index]
+        let frameBox = UnsafeSendableBox(value: frame)
+        let completionBox = UnsafeSendableBox(value: completion)
+        let stageSubmittedAt = configuration.performanceAccumulator.now()
+        processorQueue.async { [weak self] in
+            guard let self else {
+                let completedAt = DispatchTime.now().uptimeNanoseconds
+                completionBox.value(.failure(SessionError.invalidStatus), VideoProcessingTiming(
+                    submittedAt: submittedAt,
+                    queueDelayNanoseconds: accumulatedQueueDelayNanoseconds,
+                    executionDurationNanoseconds: accumulatedExecutionDurationNanoseconds,
+                    callbackCompletedAt: completedAt
+                ))
+                return
             }
-            semaphore.wait()
-            switch result {
-            case .success(let processedFrame):
-                currentFrame = processedFrame
-            case .failure(let error):
-                return .failure(error)
-            case .none:
-                return .failure(SessionError.invalidStatus)
+            let stageStartedAt = self.configuration.performanceAccumulator.now()
+            processor.process(frameBox.value) { [weak self] result in
+                guard let self else {
+                    let completedAt = DispatchTime.now().uptimeNanoseconds
+                    completionBox.value(.failure(SessionError.invalidStatus), VideoProcessingTiming(
+                        submittedAt: submittedAt,
+                        queueDelayNanoseconds: accumulatedQueueDelayNanoseconds,
+                        executionDurationNanoseconds: accumulatedExecutionDurationNanoseconds,
+                        callbackCompletedAt: completedAt
+                    ))
+                    return
+                }
+                let stageCompletedAt = self.configuration.performanceAccumulator.now()
+                let queueDelayNanoseconds = Self.addingClamped(
+                    accumulatedQueueDelayNanoseconds,
+                    Self.elapsedNanoseconds(from: stageSubmittedAt, to: stageStartedAt)
+                )
+                let executionDurationNanoseconds = Self.addingClamped(
+                    accumulatedExecutionDurationNanoseconds,
+                    Self.elapsedNanoseconds(from: stageStartedAt, to: stageCompletedAt)
+                )
+                switch result {
+                case .success(let processedFrame):
+                    self.processVideoFrame(
+                        processedFrame,
+                        submittedAt: submittedAt,
+                        at: index + 1,
+                        accumulatedQueueDelayNanoseconds: queueDelayNanoseconds,
+                        accumulatedExecutionDurationNanoseconds: executionDurationNanoseconds,
+                        completion: completionBox.value
+                    )
+                case .failure(let error):
+                    completionBox.value(.failure(error), VideoProcessingTiming(
+                        submittedAt: submittedAt,
+                        queueDelayNanoseconds: queueDelayNanoseconds,
+                        executionDurationNanoseconds: executionDurationNanoseconds,
+                        callbackCompletedAt: stageCompletedAt
+                    ))
+                }
             }
         }
-        return .success(currentFrame)
+    }
+
+    private static func elapsedNanoseconds(from start: UInt64, to end: UInt64) -> UInt64 {
+        end >= start ? end - start : 0
+    }
+
+    private static func addingClamped(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let addition = lhs.addingReportingOverflow(rhs)
+        return addition.overflow ? .max : addition.partialValue
+    }
+
+    private func dispatchProgress(for sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
+        let fraction = (CMSampleBufferGetPresentationTimeStamp(sampleBuffer) - configuration.timeRange.start).seconds / max(duration.seconds, 0.001)
+        switch mediaType {
+        case .video:
+            dispatchProgressCallback { $0.updateVideoEncodingProgress(fractionCompleted: fraction) }
+        case .audio:
+            dispatchProgressCallback { $0.updateAudioEncodingProgress(fractionCompleted: fraction) }
+        default:
+            break
+        }
     }
 
     private func dispatchProgressCallback(with updater: @escaping (ExportProgress) -> Void) {
-        let box = UnsafeSendableBox(value: updater)
-        let progressBox = UnsafeSendableBox(value: self.progress)
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard let progress else { return }
+        updater(progress)
+        pendingProgressSnapshot = progress.makeSnapshot()
+        guard progressHandler != nil, progressDeliveryTimer == nil else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + Self.progressDeliveryInterval)
+        timer.setEventHandler { [weak self] in
+            self?.flushProgressCallback()
+        }
+        progressDeliveryTimer = timer
+        timer.resume()
+    }
+
+    private func flushProgressCallback() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        progressDeliveryTimer?.cancel()
+        progressDeliveryTimer = nil
+        guard let snapshot = pendingProgressSnapshot,
+              let progressHandler else {
+            pendingProgressSnapshot = nil
+            return
+        }
+        pendingProgressSnapshot = nil
+        let snapshotBox = UnsafeSendableBox(value: snapshot)
+        let handlerBox = UnsafeSendableBox(value: progressHandler)
         DispatchQueue.main.async {
-            guard let progress = progressBox.value else { return }
-            box.value(progress)
-            self.progressHandler?(progress)
+            handlerBox.value(snapshotBox.value)
         }
     }
 
     private func dispatchStatus(_ status: Status) {
-        DispatchQueue.main.async { [self] in
-            self.statusHandler?(status)
+        let box = UnsafeSendableBox(value: statusHandler)
+        DispatchQueue.main.async {
+            box.value?(status)
         }
     }
 
     private func dispatchCallback(with error: Error?, _ completionHandler: @escaping (Error?) -> Void) {
-        let box = UnsafeSendableBox(value: completionHandler)
-        DispatchQueue.main.async { [self] in
-            self.progressHandler = nil
-            self.status = error == nil ? .completed : (self.cancelled ? .cancelled : .failed)
-            self.dispatchStatus(self.status)
-            box.value(error)
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard didDeliverCallback == false else { return }
+        didDeliverCallback = true
+        cancelVideoProcessingTimeout()
+        configuration.performanceAccumulator.markFinal()
+        flushProgressCallback()
+        let finalStatus: Status = error == nil ? .completed : (cancelled ? .cancelled : .failed)
+        let shouldDispatchStatus = status != finalStatus
+        status = finalStatus
+        progressHandler = nil
+        pendingProgressSnapshot = nil
+        self.completionHandler = nil
+        lifecycleRetain = nil
+        let completionBox = UnsafeSendableBox(value: completionHandler)
+        let statusBox = UnsafeSendableBox(value: statusHandler)
+        DispatchQueue.main.async {
+            if shouldDispatchStatus {
+                statusBox.value?(finalStatus)
+            }
+            completionBox.value(error)
         }
     }
 
@@ -597,23 +943,6 @@ final class VideoAssetExportSession: @unchecked Sendable {
         }
         let nsError = error as NSError?
         return nsError?.domain == AVFoundationErrorDomain && nsError?.code == -11834
-    }
-
-    private static func makeReaderVideoComposition(
-        from asset: AVAsset,
-        videoTracks: [AVAssetTrack],
-        shouldUseVideoProcessorPath: Bool
-    ) -> AVVideoComposition? {
-        guard shouldUseVideoProcessorPath else {
-            return nil
-        }
-        guard #available(macOS 10.14, iOS 11.0, tvOS 11.0, watchOS 4.0, *) else {
-            return nil
-        }
-        guard videoTracks.isEmpty == false else {
-            return nil
-        }
-        return AVMutableVideoComposition(propertiesOf: asset)
     }
 
     private static func makeFormatDescription(from descriptions: [Any]) -> CMFormatDescription? {
@@ -640,3 +969,11 @@ final class VideoAssetExportSession: @unchecked Sendable {
 }
 
 extension VideoAssetExportSession: ReaderWriterExportSession {}
+
+#if DEBUG
+extension VideoAssetExportSession {
+    var _usesImplicitVideoCompositionForTesting: Bool {
+        videoOutput is AVAssetReaderVideoCompositionOutput
+    }
+}
+#endif

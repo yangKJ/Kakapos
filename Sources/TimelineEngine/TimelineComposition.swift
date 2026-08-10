@@ -12,10 +12,11 @@ import AVFoundation
 import CoreGraphics
 import QuartzCore
 
-public enum TimelineLayerKind: Equatable {
+public enum TimelineLayerKind: Equatable, Sendable {
     case clip
     case image
     case text
+    case audio
     case effect
 }
 
@@ -46,6 +47,34 @@ public struct ResolvedTimelineLayers {
     public let effectLayers: [EffectLayer]
 }
 
+public struct TimelineCompilationDiagnostic: Equatable, Sendable {
+    public let layerKind: TimelineLayerKind
+    public let layerLevel: Int
+    public let mediaType: String
+    public let description: String
+
+    public init(layerKind: TimelineLayerKind, layerLevel: Int, mediaType: String, description: String) {
+        self.layerKind = layerKind
+        self.layerLevel = layerLevel
+        self.mediaType = mediaType
+        self.description = description
+    }
+}
+
+public enum TimelineCompilationError: LocalizedError {
+    case insertionFailed([TimelineCompilationDiagnostic])
+
+    public var errorDescription: String? {
+        switch self {
+        case .insertionFailed(let diagnostics):
+            let details = diagnostics.map {
+                "\($0.layerKind) layer \($0.layerLevel) \($0.mediaType): \($0.description)"
+            }.joined(separator: "; ")
+            return "Timeline compilation failed: \(details)"
+        }
+    }
+}
+
 public struct CompiledTimelineComposition {
     public let composition: AVMutableComposition
     public let videoComposition: AVMutableVideoComposition
@@ -54,6 +83,11 @@ public struct CompiledTimelineComposition {
     public let resolvedLayers: ResolvedTimelineLayers
     public let renderPlan: TimelineRenderPlan
     public let overlayLayer: CALayer?
+    public let diagnostics: [TimelineCompilationDiagnostic]
+
+    public var isValid: Bool {
+        diagnostics.isEmpty
+    }
 }
 
 public struct TimelineCompilationSummary {

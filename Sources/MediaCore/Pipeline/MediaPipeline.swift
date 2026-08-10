@@ -145,7 +145,9 @@ public final class MediaPipeline: @unchecked Sendable {
 
     public let source: MediaSource
     public let chain: MediaProcessorChain
-    public private(set) var state: State = .idle
+    public var state: State {
+        stateQueue.sync { _state }
+    }
 
     public var stateHandler: ((State) -> Void)?
 
@@ -160,14 +162,17 @@ public final class MediaPipeline: @unchecked Sendable {
     }
 
     public var snapshot: Snapshot {
-        Snapshot(
+        let runtimeState = stateQueue.sync {
+            (state: _state, metadata: _lastFrameMetadata, error: _lastErrorDescription)
+        }
+        return Snapshot(
             sourceTypeName: String(describing: type(of: source)),
             processorTypeNames: processors.map { String(describing: type(of: $0)) },
             sinkTypeNames: sinks.map { String(describing: type(of: $0)) },
-            state: state,
+            state: runtimeState.state,
             sourceSnapshot: (source as? MediaSourceSnapshotProviding)?.sourceSnapshot,
-            lastFrameMetadata: lastFrameMetadata,
-            lastErrorDescription: lastErrorDescription
+            lastFrameMetadata: runtimeState.metadata,
+            lastErrorDescription: runtimeState.error
         )
     }
 
@@ -207,6 +212,10 @@ public final class MediaPipeline: @unchecked Sendable {
         stateQueue.sync { _lastErrorDescription }
     }
 
+    public var droppedSourceFrameCount: Int {
+        stateQueue.sync { _droppedSourceFrameCount }
+    }
+
     public var errorHandler: ((Error) -> Void)? {
         get { chain.errorHandler }
         set { chain.errorHandler = newValue }
@@ -228,14 +237,23 @@ public final class MediaPipeline: @unchecked Sendable {
     private var hasFinished = false
     private var acceptsSourceCallbacks = true
     private var pendingSourceFrameDeliveries = 0
+    private var sourceFrameCompletionsInProgress = 0
     private var sourceDidFinish = false
+    private var _state: State = .idle
     private var _lastFrameMetadata: FrameMetadata?
     private var _lastErrorDescription: String?
+    private var _droppedSourceFrameCount = 0
 
-    public init(source: MediaSource, processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
+    public init(
+        source: MediaSource,
+        processors: [FrameProcessor] = [],
+        sinks: [MediaSink] = [],
+        deliveryPolicy: MediaSourceDeliveryPolicy = .unbounded
+    ) {
         self.source = source
         self.chain = MediaProcessorChain(processors: processors, sinks: sinks)
         self.sourceAdapter = MediaSourceNodeAdapter(source: source)
+        self.sourceAdapter.deliveryPolicy = deliveryPolicy
         self.sourceAdapter.add(consumer: chain.node)
         self.sourceAdapter.shouldAcceptSourceCallbacks = { [weak self] in
             self?.canAcceptSourceCallbacks() ?? false
@@ -253,6 +271,9 @@ public final class MediaPipeline: @unchecked Sendable {
         self.sourceAdapter.frameTransmissionCompletedHandler = { [weak self] result in
             self?.completeSourceFrameDelivery(result)
         }
+        self.sourceAdapter.droppedFrameHandler = { [weak self] _ in
+            self?.recordDroppedSourceFrame()
+        }
         self.sourceAdapter.errorHandler = { [weak self] error in
             guard let self, self.canAcceptSourceCallbacks() else { return }
             self.failChain(with: error)
@@ -264,10 +285,10 @@ public final class MediaPipeline: @unchecked Sendable {
     }
 
     public func start() {
-        guard canStart() else { return }
+        guard canStart(), sourceAdapter.prepareForStartIfIdle() else { return }
+        guard transitionIfNeeded(from: [.idle, .finished, .cancelled, .failed], to: .running) else { return }
         resetLifecycleState()
         resetSourceCallbacksAcceptance()
-        transitionIfNeeded(from: [.idle, .finished, .cancelled, .failed], to: .running)
         source.start()
     }
 
@@ -329,10 +350,16 @@ public final class MediaPipeline: @unchecked Sendable {
 
     private func completeSourceFrameDelivery(_ result: Result<Void, Error>) {
         let shouldFinish = stateQueue.sync { () -> Bool in
+            sourceFrameCompletionsInProgress += 1
             if pendingSourceFrameDeliveries > 0 {
                 pendingSourceFrameDeliveries -= 1
             }
             return sourceDidFinish && pendingSourceFrameDeliveries == 0
+        }
+        defer {
+            stateQueue.sync {
+                sourceFrameCompletionsInProgress = max(0, sourceFrameCompletionsInProgress - 1)
+            }
         }
 
         if case .failure(let error) = result {
@@ -378,25 +405,36 @@ public final class MediaPipeline: @unchecked Sendable {
         }
     }
 
+    private func recordDroppedSourceFrame() {
+        stateQueue.sync {
+            _droppedSourceFrameCount += 1
+        }
+    }
+
     private func resetLifecycleState() {
         stateQueue.sync {
             hasFinished = false
             sourceDidFinish = false
             pendingSourceFrameDeliveries = 0
+            sourceFrameCompletionsInProgress = 0
             _lastFrameMetadata = nil
             _lastErrorDescription = nil
+            _droppedSourceFrameCount = 0
         }
     }
 
     private func canStart() -> Bool {
         stateQueue.sync {
-            state != .running && state != .paused
+            _state != .running
+                && _state != .paused
+                && pendingSourceFrameDeliveries == 0
+                && sourceFrameCompletionsInProgress == 0
         }
     }
 
     private func canStop() -> Bool {
         stateQueue.sync {
-            state != .finished && state != .cancelled && state != .failed
+            _state != .finished && _state != .cancelled && _state != .failed
         }
     }
 
@@ -422,11 +460,11 @@ public final class MediaPipeline: @unchecked Sendable {
     @discardableResult
     private func transitionIfNeeded(from allowedStates: [State]?, to newState: State) -> Bool {
         let didChange = stateQueue.sync { () -> Bool in
-            if let allowedStates, !allowedStates.contains(state) {
+            if let allowedStates, !allowedStates.contains(_state) {
                 return false
             }
-            guard state != newState else { return false }
-            state = newState
+            guard _state != newState else { return false }
+            _state = newState
             return true
         }
         guard didChange else { return false }

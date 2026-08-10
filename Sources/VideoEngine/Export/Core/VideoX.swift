@@ -53,6 +53,10 @@ public struct VideoX {
             readerWriterJob?.lastProgressInfo ?? legacyFallbackReaderWriterJob?.lastProgressInfo
         }
 
+        public var performanceSnapshot: ReaderWriterExportJob.PerformanceSnapshot? {
+            readerWriterJob?.performanceSnapshot ?? legacyFallbackReaderWriterJob?.performanceSnapshot
+        }
+
         public var configurationSummaryText: String? {
             readerWriterJob?.configurationSummaryText ?? legacyFallbackReaderWriterJob?.configurationSummaryText
         }
@@ -395,6 +399,7 @@ extension VideoX {
             videoComposition: components.videoComposition,
             audioMix: components.audioMix,
             videoProcessors: instructionPlan.videoProcessors,
+            videoFrameProcessingTimeout: VideoX.Option.setupVideoFrameProcessingTimeout(options: options),
             shouldOptimizeForNetworkUse: VideoX.Option.setupOptimizeForNetworkUse(options: options)
         )
     }

@@ -31,6 +31,7 @@ public extension RecordedClip {
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
         videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil,
         renderSize: CGSize = CGSize(width: 720, height: 1280),
         frameDuration: CMTime = CMTime(value: 1, timescale: 30),
         startTime: CMTime = .zero,
@@ -48,7 +49,8 @@ public extension RecordedClip {
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
-            videoProcessors: videoProcessors
+            videoProcessors: videoProcessors,
+            videoFrameProcessingTimeout: videoFrameProcessingTimeout
         )
     }
 
@@ -58,6 +60,7 @@ public extension RecordedClip {
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
         videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil,
         renderSize: CGSize = CGSize(width: 720, height: 1280),
         frameDuration: CMTime = CMTime(value: 1, timescale: 30),
         startTime: CMTime = .zero,
@@ -75,7 +78,8 @@ public extension RecordedClip {
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
-            videoProcessors: videoProcessors
+            videoProcessors: videoProcessors,
+            videoFrameProcessingTimeout: videoFrameProcessingTimeout
         )
     }
 }

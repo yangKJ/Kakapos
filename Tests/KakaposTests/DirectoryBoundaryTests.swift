@@ -149,6 +149,21 @@ final class DirectoryBoundaryTests: XCTestCase {
         )
     }
 
+    func testExampleTargetConsumesTheModularPackageInsteadOfCompilingLibrarySources() throws {
+        let project = try String(
+            contentsOf: repositoryRoot().appendingPathComponent("Kakapos.xcodeproj/project.pbxproj"),
+            encoding: .utf8
+        )
+        let targetStart = try XCTUnwrap(project.range(of: "/* KakaposExamples */ = {\n\t\t\tisa = PBXNativeTarget;"))
+        let targetEnd = try XCTUnwrap(project.range(of: "/* End PBXNativeTarget section */"))
+        let target = String(project[targetStart.lowerBound..<targetEnd.lowerBound])
+
+        XCTAssertTrue(project.contains("isa = XCLocalSwiftPackageReference;"))
+        XCTAssertTrue(project.contains("productName = Kakapos;"))
+        XCTAssertTrue(target.contains("/* Kakapos */"))
+        XCTAssertFalse(target.contains("F7E48A5C2F756805002B22D9 /* Sources */"))
+    }
+
     func testCameraEngineUsesOwnedSubdirectories() throws {
         let cameraRoot = repositoryRoot().appendingPathComponent("Sources/CameraEngine", isDirectory: true)
         let entries = try FileManager.default.contentsOfDirectory(

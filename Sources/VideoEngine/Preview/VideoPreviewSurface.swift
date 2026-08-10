@@ -21,10 +21,11 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
     ) -> Void
 
     private struct Submission: @unchecked Sendable {
-        let pixelBuffer: CVPixelBuffer
-        let metadata: FrameMetadata
+        let frame: MediaFrame
         let generation: VideoPreviewGeneration
         let identity: VideoPreviewModeIdentity
+
+        var metadata: FrameMetadata { frame.metadata }
     }
 
     public var framePresented: PresentationHandler?
@@ -64,8 +65,7 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
     }
 
     func submit(
-        pixelBuffer: CVPixelBuffer,
-        metadata: FrameMetadata,
+        frame: MediaFrame,
         generation: VideoPreviewGeneration,
         identity: VideoPreviewModeIdentity
     ) {
@@ -75,8 +75,7 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
             return
         }
         pendingSubmission = Submission(
-            pixelBuffer: pixelBuffer,
-            metadata: metadata,
+            frame: frame,
             generation: generation,
             identity: identity
         )
@@ -188,8 +187,23 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
     }
 
     private func fittedImage(for submission: Submission, in bounds: CGRect) -> CIImage? {
-        let transformed = CIImage(cvPixelBuffer: submission.pixelBuffer)
-            .transformed(by: submission.metadata.trackTransform)
+        let sourceImage: CIImage?
+        if let pixelBuffer = extractPixelBuffer(submission.frame) {
+            sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
+        } else if let textureFrame = submission.frame as? TextureFrame,
+                  let texture = extractTexture(textureFrame) {
+            let textureImage = CIImage(
+                mtlTexture: texture,
+                options: [.colorSpace: colorSpace as Any]
+            )
+            sourceImage = textureFrame.coordinateSpace == .pixelBuffer
+                ? textureImage?.oriented(.downMirrored)
+                : textureImage
+        } else {
+            sourceImage = nil
+        }
+        guard let sourceImage else { return nil }
+        let transformed = sourceImage.transformed(by: submission.metadata.trackTransform)
         let extent = transformed.extent.integral
         guard !extent.isInfinite, !extent.isEmpty else { return nil }
         let normalized = transformed.transformed(by: CGAffineTransform(

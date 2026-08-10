@@ -91,11 +91,10 @@ public final class VideoPreviewSession: @unchecked Sendable {
         let nextLane = try VideoPreviewProcessingLane(
             generation: generation,
             mode: mode
-        ) { [weak self] pixelBuffer, metadata, generation, identity in
+        ) { [weak self] frame, generation, identity in
             guard let self, self.accepts(generation: generation, identity: identity) else { return }
             self.surface.submit(
-                pixelBuffer: pixelBuffer,
-                metadata: metadata,
+                frame: frame,
                 generation: generation,
                 identity: identity
             )

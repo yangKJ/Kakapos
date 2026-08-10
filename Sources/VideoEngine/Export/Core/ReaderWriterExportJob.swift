@@ -21,6 +21,10 @@ protocol ReaderWriterExportSession {
 }
 
 public final class ReaderWriterExportJob: @unchecked Sendable {
+    private struct UnsafeSendableBox<T>: @unchecked Sendable {
+        let value: T
+    }
+
     public enum Status: String, Equatable, Sendable, Codable {
         case idle
         case exporting
@@ -219,9 +223,21 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         stateQueue.sync { _status }
     }
 
+    /// 独立于状态回调的性能观测；`isFinal` 可能先于主队列上的终态通知变为 `true`。
+    public var performanceSnapshot: PerformanceSnapshot {
+        performanceAccumulator.snapshot
+    }
+
     public var snapshot: Snapshot {
-        Snapshot(
-            status: status,
+        let dynamicState = stateQueue.sync {
+            (
+                status: _status,
+                lastProgressInfo: _lastProgressInfo,
+                lastErrorDescription: _lastErrorDescription
+            )
+        }
+        return Snapshot(
+            status: dynamicState.status,
             fileType: fileType,
             timeRange: timeRange ?? CMTimeRange(start: .zero, duration: .positiveInfinity),
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
@@ -231,9 +247,9 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             processorCount: videoProcessors.count,
             hasVideoComposition: videoComposition != nil,
             hasAudioMix: audioMix != nil,
-            lastPhase: lastProgressInfo?.phase ?? .idle,
-            lastProgressInfo: lastProgressInfo,
-            lastErrorDescription: lastErrorDescription
+            lastPhase: dynamicState.lastProgressInfo?.phase ?? .idle,
+            lastProgressInfo: dynamicState.lastProgressInfo,
+            lastErrorDescription: dynamicState.lastErrorDescription
         )
     }
 
@@ -286,9 +302,12 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
     private let videoComposition: AVVideoComposition?
     private let audioMix: AVAudioMix?
     private let videoProcessors: [FrameProcessor]
+    private let videoFrameProcessingTimeout: TimeInterval?
     private let shouldOptimizeForNetworkUse: Bool
     private let metadata: [AVMetadataItem]
     private let artifactValidationExpectation: VideoArtifactValidationExpectation?
+    private let preflightError: Error?
+    private let performanceAccumulator: ReaderWriterExportPerformanceAccumulator
     private let sessionFactory: (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.reader-writer-export.state")
     private var _status: Status = .idle
@@ -306,9 +325,11 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         videoComposition: AVVideoComposition? = nil,
         audioMix: AVAudioMix? = nil,
         videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil,
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
-        artifactValidationExpectation: VideoArtifactValidationExpectation? = nil
+        artifactValidationExpectation: VideoArtifactValidationExpectation? = nil,
+        preflightError: Error? = nil
     ) {
         self.init(
             asset: asset,
@@ -318,9 +339,11 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             videoComposition: videoComposition,
             audioMix: audioMix,
             videoProcessors: videoProcessors,
+            videoFrameProcessingTimeout: videoFrameProcessingTimeout,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
             artifactValidationExpectation: artifactValidationExpectation,
+            preflightError: preflightError,
             sessionFactory: Self.defaultSessionFactory
         )
     }
@@ -333,9 +356,11 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         videoComposition: AVVideoComposition? = nil,
         audioMix: AVAudioMix? = nil,
         videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil,
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
         artifactValidationExpectation: VideoArtifactValidationExpectation? = nil,
+        preflightError: Error? = nil,
         sessionFactory: @escaping (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession
     ) {
         self.asset = asset
@@ -345,14 +370,24 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         self.videoComposition = videoComposition
         self.audioMix = audioMix
         self.videoProcessors = videoProcessors
+        self.videoFrameProcessingTimeout = videoFrameProcessingTimeout.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         self.shouldOptimizeForNetworkUse = shouldOptimizeForNetworkUse
         self.metadata = metadata
         self.artifactValidationExpectation = artifactValidationExpectation
+        self.preflightError = preflightError
+        self.performanceAccumulator = ReaderWriterExportPerformanceAccumulator()
         self.sessionFactory = sessionFactory
     }
 
     public func export(completion: @escaping (Result<URL, Error>) -> Void) {
-        guard status == .idle else {
+        let didAcquireExport = stateQueue.sync { () -> Bool in
+            guard _status == .idle else { return false }
+            _status = .exporting
+            _didDeliverCompletion = false
+            exportCompletion = completion
+            return true
+        }
+        guard didAcquireExport else {
             completion(.failure(VideoX.Error.error(NSError(
                 domain: "Kakapos.ReaderWriterExportJob",
                 code: -2000,
@@ -360,14 +395,21 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             ))))
             return
         }
+        deliverStatusCallback(.exporting)
 
         do {
             removePartialOutputIfNeeded()
             let configuration = try makeConfiguration()
             let session = try sessionFactory(asset, outputURL, configuration)
-            exportSession = session
-            exportCompletion = completion
-            setStatus(.exporting)
+            let shouldStartSession = stateQueue.sync { () -> Bool in
+                guard _status == .exporting, _didDeliverCompletion == false else { return false }
+                exportSession = session
+                return true
+            }
+            guard shouldStartSession else {
+                session.cancel()
+                return
+            }
             session.export(
                 progress: { [weak self] progress in
                     self?.handleProgress(progress)
@@ -377,6 +419,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
                 },
                 completion: { [weak self] error in
                     guard let self else { return }
+                    self.performanceAccumulator.markFinal()
                     if let error {
                         let mappedError = Self.mapError(error)
                         if !Self.isCancelledError(mappedError) {
@@ -390,16 +433,24 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
                         self.removePartialOutputIfNeeded()
                         self.deliverCompletion(.failure(mappedError))
                     } else {
-                        self.finishSuccessfulExport()
+                        if self.status == .cancelled {
+                            self.removePartialOutputIfNeeded()
+                            self.deliverCompletion(.failure(VideoX.Error.exportCancelled))
+                        } else {
+                            self.finishSuccessfulExport()
+                        }
                     }
                 }
             )
         } catch {
-            storeError(error)
-            setStatus(.failed)
+            performanceAccumulator.markFinal()
+            let mappedError = Self.mapError(error)
+            if status != .cancelled {
+                storeError(mappedError)
+                setStatus(.failed)
+            }
             removePartialOutputIfNeeded()
-            exportCompletion = nil
-            completion(.failure(Self.mapError(error)))
+            deliverCompletion(status == .cancelled ? .failure(VideoX.Error.exportCancelled) : .failure(mappedError))
         }
     }
 
@@ -420,23 +471,21 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
     }
 
     public func cancel() {
-        if status.isTerminal {
-            return
-        }
-        if let exportSession {
-            setStatus(.cancelled)
-            exportSession.cancel()
-            return
-        }
-        let shouldCancel = stateQueue.sync { () -> Bool in
-            guard _status != .completed && _status != .cancelled && _status != .failed else { return false }
+        let cancellation = stateQueue.sync { () -> (didCancel: Bool, session: ReaderWriterExportSession?, hasCompletion: Bool) in
+            guard _status != .completed && _status != .cancelled && _status != .failed else {
+                return (false, nil, false)
+            }
             _status = .cancelled
-            return true
+            return (true, exportSession, exportCompletion != nil)
         }
-        guard shouldCancel else { return }
-        removePartialOutputIfNeeded()
-        DispatchQueue.main.async {
-            self.statusHandler?(.cancelled)
+        guard cancellation.didCancel else { return }
+        performanceAccumulator.markFinal()
+        deliverStatusCallback(.cancelled)
+        if let session = cancellation.session {
+            session.cancel()
+        } else if cancellation.hasCompletion {
+            removePartialOutputIfNeeded()
+            deliverCompletion(.failure(VideoX.Error.exportCancelled))
         }
     }
 
@@ -452,7 +501,14 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         videoProcessors.count
     }
 
+    var _videoFrameProcessingTimeoutForTesting: TimeInterval? {
+        videoFrameProcessingTimeout
+    }
+
     private func makeConfiguration() throws -> VideoAssetExportSession.Configuration {
+        if let preflightError {
+            throw preflightError
+        }
         let videoSettings = try makeVideoSettings()
         let audioSettings = makeAudioSettings()
         return VideoAssetExportSession.Configuration(
@@ -465,7 +521,9 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             videoComposition: videoComposition,
             audioMix: audioMix,
             videoProcessors: videoProcessors,
-            videoEncodingStrategy: videoProcessors.isEmpty ? .automatic : .encoded
+            videoFrameProcessingTimeout: videoFrameProcessingTimeout,
+            videoEncodingStrategy: videoProcessors.isEmpty ? .automatic : .encoded,
+            performanceAccumulator: performanceAccumulator
         )
     }
 
@@ -498,7 +556,6 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
     }
 
     private func handleProgress(_ progress: VideoAssetExportSession.ExportProgress) {
-        guard status == .exporting else { return }
         let info = ProgressInfo(
             videoProgress: progress.videoProgress?.fractionCompleted ?? 0,
             audioProgress: progress.audioProgress?.fractionCompleted ?? 0,
@@ -507,9 +564,19 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             finishWritingProgress: progress.finishWritingProgress.fractionCompleted,
             phase: progress.phase
         )
-        storeProgress(info)
-        DispatchQueue.main.async {
-            self.progressHandler?(info)
+        let handler = stateQueue.sync { () -> ((ProgressInfo) -> Void)? in
+            guard _status == .exporting else { return nil }
+            _lastProgressInfo = info
+            return progressHandler
+        }
+        guard let handler else { return }
+        if Thread.isMainThread {
+            handler(info)
+        } else {
+            let handlerBox = UnsafeSendableBox(value: handler)
+            DispatchQueue.main.async {
+                handlerBox.value(info)
+            }
         }
     }
 
@@ -541,8 +608,8 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
     }
 
     private func storeProgress(_ info: ProgressInfo) {
-        guard status == .exporting else { return }
         stateQueue.sync {
+            guard _status == .exporting else { return }
             _lastProgressInfo = info
         }
     }
@@ -564,9 +631,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             return true
         }
         guard didChange else { return }
-        DispatchQueue.main.async {
-            self.statusHandler?(status)
-        }
+        deliverStatusCallback(status)
     }
 
     private func transitionStatusIfNeeded(from expectedStatus: Status, to newStatus: Status) {
@@ -579,9 +644,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             return true
         }
         guard didChange else { return }
-        DispatchQueue.main.async {
-            self.statusHandler?(newStatus)
-        }
+        deliverStatusCallback(newStatus)
     }
 
     private static func status(from status: VideoAssetExportSession.Status) -> Status {
@@ -609,6 +672,8 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             return VideoX.Error.addVideoTrack
         case VideoAssetExportSession.SessionError.cancelled:
             return VideoX.Error.exportCancelled
+        case VideoAssetExportSession.SessionError.videoFrameProcessingTimedOut(let seconds):
+            return VideoX.Error.frameProcessingTimedOut(seconds: seconds)
         default:
             return VideoX.Error.toError(error)
         }
@@ -632,6 +697,22 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             return completion
         }
         completion?(result)
+    }
+
+    private func deliverStatusCallback(_ status: Status) {
+        let deliverCurrentStatus = { [weak self] in
+            guard let self else { return }
+            let handler = self.stateQueue.sync { () -> ((Status) -> Void)? in
+                guard self._status == status else { return nil }
+                return self.statusHandler
+            }
+            handler?(status)
+        }
+        if Thread.isMainThread {
+            deliverCurrentStatus()
+        } else {
+            DispatchQueue.main.async(execute: deliverCurrentStatus)
+        }
     }
 
     nonisolated(unsafe) private static let defaultSessionFactory: (AVAsset, URL, VideoAssetExportSession.Configuration) throws -> ReaderWriterExportSession = { asset, outputURL, configuration in

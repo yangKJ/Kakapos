@@ -18,6 +18,7 @@ extension VideoX {
         case exportSessionEmpty
         case exportAsynchronously(AVAssetExportSession.Status)
         case exportCancelled
+        case frameProcessingTimedOut(seconds: TimeInterval)
         case unsupportedFileType
         case exportOutputURL
         case newRenderedPixelBufferForRequestFailure
@@ -53,6 +54,8 @@ extension VideoX.Error: CustomStringConvertible, CustomNSError {
             return "Export asynchronously other is \(status)."
         case .exportCancelled:
             return "Cancelled export video."
+        case .frameProcessingTimedOut(let seconds):
+            return "Video frame processing timed out after \(seconds) seconds."
         case .unsupportedFileType:
             return "The output video format unsupported file type."
         case .exportOutputURL:
@@ -80,6 +83,8 @@ extension VideoX.Error: CustomStringConvertible, CustomNSError {
         case .exportAsynchronously:
             return nil
         case .exportCancelled:
+            return nil
+        case .frameProcessingTimedOut:
             return nil
         case .unsupportedFileType:
             return nil

@@ -36,6 +36,16 @@ Kakapos keeps a small board surface for day-to-day use, while the engine view ex
 - **Timeline Engine**: timeline layers, groups, keyframes, transitions, audio mix, and timeline export.
 - **Media Core**: shared `MediaFrame`, `FrameMetadata`, `FrameProcessor`, `MediaSource`, `MediaSink`, and `MediaPipeline` contracts.
 
+### Platform Availability
+
+| Distribution | Declared minimums | Notes |
+| --- | --- | --- |
+| Swift Package Manager | iOS 13, tvOS 12, watchOS 5, macOS 12 | Media Core, Video, and Timeline are the portable engine layers. Platform SDK availability still determines which AVFoundation features can run. |
+| CocoaPods | iOS 13, macOS 12 | The podspec does not currently declare tvOS or watchOS deployment targets. |
+| Camera capture | iOS / iPadOS | Camera hardware, microphone, permissions, depth, portrait matte, multicam, and AR capabilities are runtime-gated. |
+
+Build success is not a substitute for device validation. Camera permissions, interruption recovery, orientation, HDR, audio/video sync, and long-recording memory behavior should be verified on the target devices.
+
 ### Lightweight Boards
 
 Kakapos stays easier to adopt when the public surface is used in four small boards instead of one large API surface.
@@ -87,6 +97,26 @@ let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [si
 pipeline.start()
 ```
 
+`MediaPipeline` keeps lossless/unbounded delivery as the default for offline work. Real-time callers can opt into an explicit bounded policy:
+
+```swift
+let previewPipeline = MediaPipeline(
+    source: source,
+    processors: [processor],
+    sinks: [previewSink],
+    deliveryPolicy: .latestOnly
+)
+
+let recordingPipeline = MediaPipeline(
+    source: source,
+    processors: [processor],
+    sinks: [recorderSink],
+    deliveryPolicy: .boundedDropNewest(maximumInFlightFrames: 6)
+)
+```
+
+`PreviewPipeline` uses latest-only delivery, while `RecordingPipeline` uses a bounded real-time queue. `droppedSourceFrameCount` exposes pressure without changing offline pipelines into lossy pipelines.
+
 For reusable real-time routing, build a chain once and attach it anywhere a `MediaSink` is accepted:
 
 ```swift
@@ -102,6 +132,8 @@ let previewChain = MediaProcessorChain(
 ```
 
 For offline export users, the recommended public path still starts at `KakaposSurface`:
+
+Reader/writer export accepts an optional `videoFrameProcessingTimeout` watchdog. `performanceSnapshot` reports library-side sample, processor, backpressure, finishing, and terminal timing, and freezes at terminal completion. These metrics do not measure GPU execution, process memory peaks, or device-level HDR behavior.
 
 ---
 
@@ -244,10 +276,16 @@ timeline.addLayer(ClipLayer(asset: firstAsset, timeRange: CMTimeRange(start: .ze
 timeline.addLayer(ClipLayer(asset: secondAsset, timeRange: CMTimeRange(start: firstDuration, duration: secondDuration)))
 
 let compiled = timeline.compile()
+guard compiled.isValid else {
+    print(compiled.diagnostics)
+    return
+}
 let item = AVPlayerItem(asset: compiled.composition)
 item.videoComposition = compiled.videoComposition
 item.audioMix = compiled.audioMix
 ```
+
+Track insertion failures are retained in `CompiledTimelineComposition.diagnostics`. Export jobs created from an invalid compiled timeline fail closed instead of silently exporting a partial composition.
 
 ### Commercial Boundary
 

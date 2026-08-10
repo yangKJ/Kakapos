@@ -228,8 +228,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     }
 
     private let sessionQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.session")
-    private let videoOutputQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.video")
-    private let audioOutputQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.audio")
+    /// 视频与音频统一进入同一个 owner，保证 frameIndex 与最近帧元数据严格有序。
+    private let mediaOutputQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.media-output")
     private let processingQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.processing")
     private let photoQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.photo")
     private let outputNode = MediaOutputNode()
@@ -670,7 +670,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     private func configureVideoOutput() throws {
         videoOutput.alwaysDiscardsLateVideoFrames = false
         videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
-        videoOutput.setSampleBufferDelegate(self, queue: videoOutputQueue)
+        videoOutput.setSampleBufferDelegate(self, queue: mediaOutputQueue)
         guard session.canAddOutput(videoOutput) else {
             throw CameraSourceError.cannotAddOutput(.video)
         }
@@ -679,7 +679,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
 
     private func configureAudioOutputIfNeeded() throws {
         guard configuration.captureMode.includesAudio else { return }
-        audioOutput.setSampleBufferDelegate(self, queue: audioOutputQueue)
+        audioOutput.setSampleBufferDelegate(self, queue: mediaOutputQueue)
         guard session.canAddOutput(audioOutput) else {
             throw CameraSourceError.cannotAddOutput(.audio)
         }
@@ -725,7 +725,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             depthDataOutput = nil
         }
         let output = AVCaptureDepthDataOutput()
-        output.setDelegate(self, callbackQueue: videoOutputQueue)
+        output.setDelegate(self, callbackQueue: mediaOutputQueue)
         guard session.canAddOutput(output) else {
             throw CameraSourceError.cannotAddDepthOutput
         }
@@ -736,7 +736,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         }
         if configuration.advanced.requiresSynchronizedDepthData {
             let synchronizer = AVCaptureDataOutputSynchronizer(dataOutputs: [videoOutput, output])
-            synchronizer.setDelegate(self, queue: videoOutputQueue)
+            synchronizer.setDelegate(self, queue: mediaOutputQueue)
             outputSynchronizer = synchronizer
         } else {
             outputSynchronizer = nil

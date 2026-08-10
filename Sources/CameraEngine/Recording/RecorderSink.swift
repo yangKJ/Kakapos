@@ -139,8 +139,18 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     public let outputURL: URL
-    public private(set) var state: State = .idle
-    public private(set) var recordedClip: RecordedClip?
+    public var state: State {
+        lifecycleLock.lock()
+        let value = _state
+        lifecycleLock.unlock()
+        return value
+    }
+    public var recordedClip: RecordedClip? {
+        lifecycleLock.lock()
+        let value = _recordedClip
+        lifecycleLock.unlock()
+        return value
+    }
     public var durationChangedHandler: ((CMTime) -> Void)?
     public var stateChangedHandler: ((State) -> Void)?
     public var droppedFrameHandler: ((FrameMetadata) -> Void)?
@@ -216,6 +226,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     private var terminalError: Error?
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
     private let lifecycleLock = NSLock()
+    private var _state: State = .idle
+    private var _recordedClip: RecordedClip?
     private var acceptsFrames = true
     private var cancellationRequested = false
     private var inFlightFrameCount = 0
@@ -229,20 +241,10 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard reserveFrameSlot() else {
+        guard enqueueAcceptedFrame(frame, completion: completion) else {
             droppedFrameHandler?(frame.metadata)
             completion(.success(()))
             return
-        }
-        queue.async {
-            defer { self.releaseFrameSlot() }
-            do {
-                try self.consumeOnQueue(frame)
-                completion(.success(()))
-            } catch {
-                self.runtimeErrorHandler?(error)
-                completion(.failure(error))
-            }
         }
     }
 
@@ -311,7 +313,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
                             fallbackStartedAt: self.startTime,
                             fallbackEndedAt: self.lastPresentationTime
                         )
-                        self.recordedClip = clip
+                        self.storeRecordedClip(clip)
                         self.setState(.finished)
                         self.resolveFinishCompletions(with: .success(clip))
                     } else {
@@ -367,7 +369,9 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     private func consumeOnQueue(_ frame: MediaFrame) throws {
-        guard canAcceptFrames() else { return }
+        // `consume(_:)` 已在入队前预留了帧槽；停止录制只应拒绝后续帧，
+        // 不能丢弃已经被接收、但尚未在串行队列执行的帧。
+        guard !isCancellationRequested() else { return }
         guard state != .paused else { return }
         guard state != .cancelled && state != .finished else { return }
         if let sampleBuffer = extractSampleBuffer(frame), CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
@@ -569,8 +573,13 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     private func setState(_ newState: State) {
-        guard state != newState else { return }
-        state = newState
+        lifecycleLock.lock()
+        guard _state != newState else {
+            lifecycleLock.unlock()
+            return
+        }
+        _state = newState
+        lifecycleLock.unlock()
         DispatchQueue.main.async {
             self.stateChangedHandler?(newState)
         }
@@ -587,7 +596,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         writer.cancelWriting()
         try? FileManager.default.removeItem(at: outputURL)
         setState(.cancelled)
-        recordedClip = nil
+        storeRecordedClip(nil)
         resolveFinishCompletions(with: .failure(VideoX.Error.exportCancelled))
     }
 
@@ -617,17 +626,41 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         return result
     }
 
-    private func reserveFrameSlot() -> Bool {
+    private func enqueueAcceptedFrame(
+        _ frame: MediaFrame,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) -> Bool {
         lifecycleLock.lock()
-        defer { lifecycleLock.unlock() }
-        guard acceptsFrames, inFlightFrameCount < maximumInFlightFrameCount else { return false }
+        guard acceptsFrames, inFlightFrameCount < maximumInFlightFrameCount else {
+            lifecycleLock.unlock()
+            return false
+        }
         inFlightFrameCount += 1
+        // 入队动作与 acceptsFrames 的切换共用同一把锁，从而形成严格次序：
+        // 已接受的帧一定排在 finish 请求之前，之后到达的帧一定被拒绝。
+        queue.async {
+            defer { self.releaseFrameSlot() }
+            do {
+                try self.consumeOnQueue(frame)
+                completion(.success(()))
+            } catch {
+                self.runtimeErrorHandler?(error)
+                completion(.failure(error))
+            }
+        }
+        lifecycleLock.unlock()
         return true
     }
 
     private func releaseFrameSlot() {
         lifecycleLock.lock()
         inFlightFrameCount = max(0, inFlightFrameCount - 1)
+        lifecycleLock.unlock()
+    }
+
+    private func storeRecordedClip(_ clip: RecordedClip?) {
+        lifecycleLock.lock()
+        _recordedClip = clip
         lifecycleLock.unlock()
     }
 }

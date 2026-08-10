@@ -5,6 +5,7 @@
 //  Created by Condy on 2026/6/22.
 //
 
+import Kakapos
 import SwiftUI
 
 struct AdvancedCaptureShowcaseView: View {

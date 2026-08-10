@@ -42,6 +42,14 @@ struct PlayerFrameCoordinator {
         playbackState = .running
     }
 
+    mutating func resumeAfterSeek(with item: AnyObject?) {
+        if playbackState == .finished {
+            _ = start(with: item)
+        } else {
+            resume()
+        }
+    }
+
     mutating func stop() {
         playbackState = .finished
     }

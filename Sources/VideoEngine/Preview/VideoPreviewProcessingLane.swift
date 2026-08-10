@@ -5,14 +5,12 @@
 //  Created by Condy on 2026/8/5.
 //
 
-import CoreVideo
 import Foundation
 import KakaposMediaCore
 
 final class VideoPreviewProcessingLane: @unchecked Sendable {
     typealias Output = (
-        CVPixelBuffer,
-        FrameMetadata,
+        MediaFrame,
         VideoPreviewGeneration,
         VideoPreviewModeIdentity
     ) -> Void
@@ -86,12 +84,21 @@ final class VideoPreviewProcessingLane: @unchecked Sendable {
     }
 
     private func finish(_ frame: MediaFrame) {
-        guard let pixelBuffer = extractPixelBuffer(frame), isCurrent else {
+        guard isSupportedOutput(frame), isCurrent else {
             finishCurrentWork()
             return
         }
-        output(pixelBuffer, frame.metadata, generation, identity)
+        output(frame, generation, identity)
         finishCurrentWork()
+    }
+
+    private func isSupportedOutput(_ frame: MediaFrame) -> Bool {
+        if extractPixelBuffer(frame) != nil { return true }
+        #if canImport(Metal)
+        return extractTexture(frame) != nil
+        #else
+        return false
+        #endif
     }
 
     private func finishCurrentWork() {

@@ -14,6 +14,7 @@ public struct VideoTranscodeConfiguration: @unchecked Sendable {
     public let fileType: AVFileType
     public let timeRange: CMTimeRange?
     public let shouldOptimizeForNetworkUse: Bool
+    public let videoFrameProcessingTimeout: TimeInterval?
     public let durationTolerance: CMTime
 
     public init(
@@ -21,12 +22,14 @@ public struct VideoTranscodeConfiguration: @unchecked Sendable {
         fileType: AVFileType = .mp4,
         timeRange: CMTimeRange? = nil,
         shouldOptimizeForNetworkUse: Bool = true,
+        videoFrameProcessingTimeout: TimeInterval? = nil,
         durationTolerance: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600)
     ) {
         self.outputURL = outputURL
         self.fileType = fileType
         self.timeRange = timeRange
         self.shouldOptimizeForNetworkUse = shouldOptimizeForNetworkUse
+        self.videoFrameProcessingTimeout = videoFrameProcessingTimeout.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         self.durationTolerance = durationTolerance
     }
 }
@@ -85,6 +88,7 @@ public final class TranscodeSession: @unchecked Sendable {
                 fileType: request.configuration.fileType,
                 timeRange: request.configuration.timeRange,
                 videoProcessors: processors,
+                videoFrameProcessingTimeout: request.configuration.videoFrameProcessingTimeout,
                 shouldOptimizeForNetworkUse: request.configuration.shouldOptimizeForNetworkUse,
                 artifactValidationExpectation: expectation
             )

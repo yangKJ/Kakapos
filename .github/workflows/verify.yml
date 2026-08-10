@@ -13,3 +13,24 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+
+  apple-platforms:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        destination:
+          - generic/platform=iOS Simulator
+          - generic/platform=tvOS Simulator
+          - generic/platform=watchOS Simulator
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build package product
+        run: xcodebuild -project Kakapos.xcodeproj -scheme Kakapos -destination '${{ matrix.destination }}' CODE_SIGNING_ALLOWED=NO build
+
+  example:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS example
+        run: xcodebuild -project Kakapos.xcodeproj -scheme KakaposExamples -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build

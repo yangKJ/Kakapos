@@ -5,6 +5,7 @@
 //  Created by Condy on 2026/6/22.
 //
 
+import Kakapos
 import SwiftUI
 
 struct KakaposShowcaseView: View {
@@ -28,6 +29,9 @@ struct KakaposShowcaseView: View {
             }
             #if !os(macOS)
             .navigationBarHidden(true)
+            #endif
+            #if os(macOS)
+            ShowcaseWelcomeDetail()
             #endif
         }
         #if !os(macOS)
@@ -228,6 +232,25 @@ struct KakaposShowcaseView: View {
         .buttonStyle(.plain)
     }
 }
+
+#if os(macOS)
+private struct ShowcaseWelcomeDetail: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "sparkles.rectangle.stack")
+                .font(.system(size: 46, weight: .light))
+            Text("Kakapos Media Engine")
+                .font(.largeTitle.bold())
+            Text("Choose Camera, Preview, Export, or Timeline from the showcase to inspect a complete media workflow.")
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: 520)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
+    }
+}
+#endif
 
 struct ShowcaseRouteCard: View {
     let icon: String

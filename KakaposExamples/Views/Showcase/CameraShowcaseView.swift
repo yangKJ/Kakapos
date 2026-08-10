@@ -9,6 +9,7 @@ import SwiftUI
 import AVFoundation
 import AVKit
 import Harbeth
+import Kakapos
 
 struct CameraShowcaseView: View {
     @ObservedObject var mediaStore: ExampleAppState

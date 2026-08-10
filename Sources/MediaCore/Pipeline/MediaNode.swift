@@ -100,7 +100,11 @@ open class MediaOutputNode: MediaFrameSourceNode {
         detachedConsumers.forEach { $0.remove(source: self) }
     }
 
-    public func transmit(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+    public func transmit(
+        _ frame: MediaFrame,
+        shouldContinue: () -> Bool = { true },
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
         let consumers = self.consumers
         guard !consumers.isEmpty else {
             completion(.success(()))
@@ -129,21 +133,40 @@ open class MediaOutputNode: MediaFrameSourceNode {
             completion(result)
         }
 
-        for consumer in consumers {
-            consumer.consume(frame, from: self) { result in
-                lock.lock()
-                if case .failure(let error) = result, capturedError == nil {
-                    capturedError = error
-                }
-                if remainingConsumers > 0 {
-                    remainingConsumers -= 1
-                }
-                let shouldComplete = remainingConsumers == 0
-                lock.unlock()
+        func recordCompletion(_ result: Result<Void, Error>) {
+            lock.lock()
+            if case .failure(let error) = result, capturedError == nil {
+                capturedError = error
+            }
+            if remainingConsumers > 0 {
+                remainingConsumers -= 1
+            }
+            let shouldComplete = remainingConsumers == 0
+            lock.unlock()
 
-                if shouldComplete {
-                    finishIfNeeded()
+            if shouldComplete {
+                finishIfNeeded()
+            }
+        }
+
+        for (index, consumer) in consumers.enumerated() {
+            guard shouldContinue() else {
+                for _ in index..<consumers.count {
+                    recordCompletion(.success(()))
                 }
+                break
+            }
+            let consumerCompletionLock = NSLock()
+            var consumerDidComplete = false
+            consumer.consume(frame, from: self) { result in
+                consumerCompletionLock.lock()
+                guard consumerDidComplete == false else {
+                    consumerCompletionLock.unlock()
+                    return
+                }
+                consumerDidComplete = true
+                consumerCompletionLock.unlock()
+                recordCompletion(result)
             }
         }
     }
@@ -168,12 +191,25 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode {
             return
         }
 
+        let stageCompletionLock = NSLock()
+        var stageDidComplete = false
         processors[index].process(frame) { [weak self] result in
+            stageCompletionLock.lock()
+            guard stageDidComplete == false else {
+                stageCompletionLock.unlock()
+                return
+            }
+            stageDidComplete = true
+            stageCompletionLock.unlock()
+            guard let self else {
+                completion(.failure(MediaCoreError.processingNodeUnavailable))
+                return
+            }
             switch result {
             case .success(let processedFrame):
-                self?.process(processedFrame, at: index + 1, completion: completion)
+                self.process(processedFrame, at: index + 1, completion: completion)
             case .failure(let error):
-                self?.errorHandler?(error)
+                self.errorHandler?(error)
                 completion(.failure(error))
             }
         }
@@ -200,8 +236,19 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     public var frameTransmissionStartedHandler: (() -> Void)?
     public var frameTransmissionCompletedHandler: ((Result<Void, Error>) -> Void)?
     public var shouldAcceptSourceCallbacks: (() -> Bool)?
+    public var deliveryPolicy: MediaSourceDeliveryPolicy = .unbounded
+    public var droppedFrameHandler: ((MediaFrame) -> Void)?
+
+    /// 供同模块内需要原子登记在途帧的编排器使用。
+    /// 返回 `true` 表示该帧已被生命周期 owner 接受并计入在途工作。
+    var sourceFrameAcceptanceHandler: (() -> Bool)?
 
     private let outputNode = MediaOutputNode()
+    private let deliveryLock = NSLock()
+    private var inFlightDeliveryCount = 0
+    private var pendingLatestFrame: MediaFrame?
+    private var sourceDidFinishDelivery = false
+    private var didDeliverFinish = false
 
     public init(source: MediaSource) {
         self.source = source
@@ -228,13 +275,30 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
 
     public func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
         guard shouldAcceptSourceCallbacks?() ?? true else { return }
+        let decision = enqueue(frame)
+        if let droppedFrame = decision.droppedFrame {
+            droppedFrameHandler?(droppedFrame)
+        }
+        guard decision.shouldTransmit else { return }
+        transmitAcceptedFrame(frame)
+    }
+
+    private func transmitAcceptedFrame(_ frame: MediaFrame) {
+        let acceptsFrame = sourceFrameAcceptanceHandler?() ?? (shouldAcceptSourceCallbacks?() ?? true)
+        guard acceptsFrame else {
+            completeDelivery()
+            return
+        }
         frameTransmissionStartedHandler?()
         frameHandler?(frame)
         outputNode.transmit(frame) { [weak self] result in
-            self?.frameTransmissionCompletedHandler?(result)
-            if case .failure(let error) = result {
-                self?.errorHandler?(error)
+            guard let self else { return }
+            if let frameTransmissionCompletedHandler = self.frameTransmissionCompletedHandler {
+                frameTransmissionCompletedHandler(result)
+            } else if case .failure(let error) = result {
+                self.errorHandler?(error)
             }
+            self.completeDelivery()
         }
     }
 
@@ -245,7 +309,81 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
 
     public func mediaSourceDidFinish(_ source: MediaSource) {
         guard shouldAcceptSourceCallbacks?() ?? true else { return }
-        finishHandler?()
+        let shouldFinish = deliveryLock.withKakaposLock { () -> Bool in
+            sourceDidFinishDelivery = true
+            guard inFlightDeliveryCount == 0, pendingLatestFrame == nil, didDeliverFinish == false else {
+                return false
+            }
+            didDeliverFinish = true
+            return true
+        }
+        if shouldFinish {
+            finishHandler?()
+        }
+    }
+
+    func prepareForStartIfIdle() -> Bool {
+        deliveryLock.withKakaposLock {
+            guard inFlightDeliveryCount == 0, pendingLatestFrame == nil else { return false }
+            pendingLatestFrame = nil
+            sourceDidFinishDelivery = false
+            didDeliverFinish = false
+            return true
+        }
+    }
+
+    private func enqueue(_ frame: MediaFrame) -> (shouldTransmit: Bool, droppedFrame: MediaFrame?) {
+        deliveryLock.withKakaposLock {
+            switch deliveryPolicy {
+            case .unbounded:
+                inFlightDeliveryCount += 1
+                return (true, nil)
+            case .latestOnly:
+                guard inFlightDeliveryCount > 0 else {
+                    inFlightDeliveryCount = 1
+                    return (true, nil)
+                }
+                let replacedFrame = pendingLatestFrame
+                pendingLatestFrame = frame
+                return (false, replacedFrame)
+            case .boundedDropNewest:
+                let maximum = deliveryPolicy.normalizedMaximumInFlightFrames ?? 1
+                guard inFlightDeliveryCount < maximum else {
+                    return (false, frame)
+                }
+                inFlightDeliveryCount += 1
+                return (true, nil)
+            }
+        }
+    }
+
+    private func completeDelivery() {
+        let next = deliveryLock.withKakaposLock { () -> (frame: MediaFrame?, shouldFinish: Bool) in
+            inFlightDeliveryCount = max(0, inFlightDeliveryCount - 1)
+            if let pendingLatestFrame {
+                self.pendingLatestFrame = nil
+                inFlightDeliveryCount += 1
+                return (pendingLatestFrame, false)
+            }
+            guard sourceDidFinishDelivery, inFlightDeliveryCount == 0, didDeliverFinish == false else {
+                return (nil, false)
+            }
+            didDeliverFinish = true
+            return (nil, true)
+        }
+        if let frame = next.frame {
+            transmitAcceptedFrame(frame)
+        } else if next.shouldFinish {
+            finishHandler?()
+        }
+    }
+}
+
+private extension NSLock {
+    func withKakaposLock<T>(_ operation: () -> T) -> T {
+        lock()
+        defer { unlock() }
+        return operation()
     }
 }
 
@@ -324,7 +462,17 @@ public final class MediaConsumerChainNode: MediaOutputNode, MediaFrameConsumerNo
         }
 
         for sink in sinks {
+            let sinkCompletionLock = NSLock()
+            var sinkDidComplete = false
             sink.finish { result in
+                sinkCompletionLock.lock()
+                guard sinkDidComplete == false else {
+                    sinkCompletionLock.unlock()
+                    return
+                }
+                sinkDidComplete = true
+                sinkCompletionLock.unlock()
+
                 lock.lock()
                 if case .failure(let error) = result, capturedError == nil {
                     capturedError = error

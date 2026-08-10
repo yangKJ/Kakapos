@@ -66,6 +66,9 @@ extension VideoX.Option {
     
     /// Set speed the scale at which the video composition should render.
     public static let VideoCompositionRenderScale: VideoX.Option = .init(rawValue: 1 << 8)
+
+    /// Fails reader/writer export when one video frame processor does not complete in time. Disabled by default.
+    public static let VideoFrameProcessingTimeout: VideoX.Option = .init(rawValue: 1 << 9)
 }
 
 extension VideoX.Option {
@@ -132,6 +135,13 @@ extension VideoX.Option {
         guard let value = VideoX.Option.VideoCompositionRenderScale.has(with: options) as? Float else {
             return 1.0
         }
+        return value
+    }
+
+    static func setupVideoFrameProcessingTimeout(options: [VideoX.Option: Any]) -> TimeInterval? {
+        guard let value = VideoX.Option.VideoFrameProcessingTimeout.has(with: options) as? TimeInterval,
+              value.isFinite,
+              value > 0 else { return nil }
         return value
     }
     

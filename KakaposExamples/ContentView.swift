@@ -5,6 +5,7 @@
 //  Created by Condy on 2023/7/31.
 //
 
+import Kakapos
 import SwiftUI
 
 final class ExampleAppState: ObservableObject {

@@ -12,6 +12,7 @@
 		87244EE52A77802000875A27 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87244EE42A77802000875A27 /* ContentView.swift */; };
 		87244EE72A77802200875A27 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 87244EE62A77802200875A27 /* Assets.xcassets */; };
 		87244EEB2A77802200875A27 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 87244EEA2A77802200875A27 /* Preview Assets.xcassets */; };
+		A1B2C3D62FC0000100C0D0E1 /* Kakapos in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D52FC0000100C0D0E1 /* Kakapos */; };
 		F7CE63412F752BCE00A57E99 /* Harbeth in Frameworks */ = {isa = PBXBuildFile; productRef = F7CE63402F752BCE00A57E99 /* Harbeth */; };
 		F7E48A6B2F757904002B22D9 /* IMG_1388.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = F7E48A6A2F757904002B22D9 /* IMG_1388.mp4 */; };
 /* End PBXBuildFile section */
@@ -41,6 +42,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1B2C3D62FC0000100C0D0E1 /* Kakapos in Frameworks */,
 				F7CE63412F752BCE00A57E99 /* Harbeth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -109,10 +111,10 @@
 			);
 			fileSystemSynchronizedGroups = (
 				F7E186122FE90E9A00B7B06A /* Views */,
-				F7E48A5C2F756805002B22D9 /* Sources */,
 			);
 			name = KakaposExamples;
 			packageProductDependencies = (
+				A1B2C3D52FC0000100C0D0E1 /* Kakapos */,
 				F7CE63402F752BCE00A57E99 /* Harbeth */,
 			);
 			productName = KakaposExamples;
@@ -144,6 +146,7 @@
 			);
 			mainGroup = 8762D4482977C4D4009405E2;
 			packageReferences = (
+				A1B2C3D42FC0000100C0D0E1 /* XCLocalSwiftPackageReference "." */,
 				F7CE633F2F752BCE00A57E99 /* XCRemoteSwiftPackageReference "Harbeth" */,
 			);
 			productRefGroup = 8762D4482977C4D4009405E2;
@@ -421,6 +424,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		A1B2C3D42FC0000100C0D0E1 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		F7CE633F2F752BCE00A57E99 /* XCRemoteSwiftPackageReference "Harbeth" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -433,6 +443,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A1B2C3D52FC0000100C0D0E1 /* Kakapos */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1B2C3D42FC0000100C0D0E1 /* XCLocalSwiftPackageReference "." */;
+			productName = Kakapos;
+		};
 		F7CE63402F752BCE00A57E99 /* Harbeth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F7CE633F2F752BCE00A57E99 /* XCRemoteSwiftPackageReference "Harbeth" */;

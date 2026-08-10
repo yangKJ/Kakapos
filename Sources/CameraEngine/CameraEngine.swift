@@ -189,7 +189,8 @@ public final class CameraEngine {
         processors: [FrameProcessor] = []
     ) throws -> CameraRecordingController {
         let controller: CameraRecordingController
-        if let recordingController {
+        if let recordingController,
+           [RecorderSink.State.preparing, .recording, .paused].contains(recordingController.state) {
             controller = recordingController
             controller.start()
         } else {

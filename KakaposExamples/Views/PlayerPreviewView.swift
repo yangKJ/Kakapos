@@ -8,6 +8,7 @@
 import SwiftUI
 import AVFoundation
 import Harbeth
+import Kakapos
 
 struct PlayerPreviewView: View {
     @ObservedObject var mediaStore: ExampleAppState
