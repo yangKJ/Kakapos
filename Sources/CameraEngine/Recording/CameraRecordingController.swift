@@ -119,8 +119,10 @@ public final class CameraRecordingController {
     }
 
     public func stopRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
+        // 先关闭 source ingress，再等待 recorder 收口已接受的帧，避免 finishWriting
+        // 期间继续生成无意义的 processor 工作。
+        pipeline.stop()
         recorderSink.finishRecording { [weak self] result in
-            self?.pipeline.stop()
             if case .success(let clip) = result {
                 clip.segments.last.map { self?.emit(.clipCompleted($0)) }
             } else if case .failure(let error) = result {

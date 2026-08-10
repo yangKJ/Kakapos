@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVKit
+import Kakapos
 
 struct RecordingStudioShowcaseView: View {
     @ObservedObject var mediaStore: ExampleAppState

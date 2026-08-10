@@ -50,6 +50,10 @@ public final class TimelineExportTask {
         readerWriterJob.lastProgressInfo
     }
 
+    public var performanceSnapshot: ReaderWriterExportJob.PerformanceSnapshot {
+        readerWriterJob.performanceSnapshot
+    }
+
     public var summary: Summary {
         let compiledSummary = compiledComposition.summary
         return Summary(
@@ -86,7 +90,8 @@ public final class TimelineExportTask {
         fileType: AVFileType = .mp4,
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
-        videoProcessors: [FrameProcessor] = []
+        videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil
     ) {
         self.init(
             compiledComposition: compiledComposition,
@@ -95,7 +100,8 @@ public final class TimelineExportTask {
                 fileType: fileType,
                 shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
                 metadata: metadata,
-                videoProcessors: videoProcessors
+                videoProcessors: videoProcessors,
+                videoFrameProcessingTimeout: videoFrameProcessingTimeout
             )
         )
     }

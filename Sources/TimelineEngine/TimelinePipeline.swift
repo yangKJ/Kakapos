@@ -137,6 +137,7 @@ public final class TimelinePipeline {
         compile().makeProcessorChain()
     }
 
+    @MainActor
     public func makePlayerItem() -> AVPlayerItem {
         compile().makePlayerItem()
     }
@@ -146,14 +147,16 @@ public final class TimelinePipeline {
         fileType: AVFileType = .mp4,
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
-        videoProcessors: [FrameProcessor] = []
+        videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil
     ) -> ReaderWriterExportJob {
         compile().makeExportJob(
             outputURL: outputURL,
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
-            videoProcessors: videoProcessors
+            videoProcessors: videoProcessors,
+            videoFrameProcessingTimeout: videoFrameProcessingTimeout
         )
     }
 
@@ -162,7 +165,8 @@ public final class TimelinePipeline {
         fileType: AVFileType = .mp4,
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
-        videoProcessors: [FrameProcessor] = []
+        videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil
     ) -> TimelineExportTask {
         TimelineExportTask(
             compiledComposition: compile(),
@@ -170,7 +174,8 @@ public final class TimelinePipeline {
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
-            videoProcessors: videoProcessors
+            videoProcessors: videoProcessors,
+            videoFrameProcessingTimeout: videoFrameProcessingTimeout
         )
     }
 
@@ -181,6 +186,7 @@ public final class TimelinePipeline {
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
         videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil,
         complete: @escaping (Result<URL, VideoX.Error>) -> Void,
         progress: ((Float) -> Void)? = nil,
         progressInfo: ((ReaderWriterExportJob.ProgressInfo) -> Void)? = nil
@@ -190,7 +196,8 @@ public final class TimelinePipeline {
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
-            videoProcessors: videoProcessors
+            videoProcessors: videoProcessors,
+            videoFrameProcessingTimeout: videoFrameProcessingTimeout
         )
         exportTask.start(
             complete: complete,
@@ -203,6 +210,7 @@ public final class TimelinePipeline {
 
 #if canImport(UIKit) || os(macOS)
 public extension TimelinePipeline {
+    @MainActor
     func makePreviewPipeline(
         preferredFramesPerSecond: Int = 30,
         processors: [FrameProcessor] = [],

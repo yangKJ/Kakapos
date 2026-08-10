@@ -52,7 +52,10 @@ extension VideoX.Provider {
         } else {
             let fileType_: MovieFileType = .mp4
             self.fileType = fileType_
-            self.outputURL = try! FileManager.default.kaka.createURL(pathExtension: fileType_.pathExtension)
+            self.outputURL = (try? FileManager.default.kaka.createURL(pathExtension: fileType_.pathExtension))
+                ?? FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension(fileType_.pathExtension)
         }
     }
     

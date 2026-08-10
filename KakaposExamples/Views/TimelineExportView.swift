@@ -8,6 +8,7 @@
 import SwiftUI
 import AVFoundation
 import AVKit
+import Kakapos
 
 struct TimelineExportView: View {
     @ObservedObject var mediaStore: ExampleAppState

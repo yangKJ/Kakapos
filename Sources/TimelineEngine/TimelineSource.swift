@@ -627,7 +627,8 @@ public extension CompiledTimelineComposition {
             .compactMap { $0.source.processor }
     }
 
-    nonisolated func makePlayerItem() -> AVPlayerItem {
+    @MainActor
+    func makePlayerItem() -> AVPlayerItem {
         let compositionBox = TimelineSourceSendableBox(value: composition)
         let playerItem = AVPlayerItem(asset: compositionBox.value)
         playerItem.videoComposition = videoComposition
@@ -640,7 +641,8 @@ public extension CompiledTimelineComposition {
         fileType: AVFileType = .mp4,
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
-        videoProcessors: [FrameProcessor] = []
+        videoProcessors: [FrameProcessor] = [],
+        videoFrameProcessingTimeout: TimeInterval? = nil
     ) -> ReaderWriterExportJob {
         let processors = videoProcessors.isEmpty ? timelineProcessors : videoProcessors
         return ReaderWriterExportJob(
@@ -651,8 +653,12 @@ public extension CompiledTimelineComposition {
             videoComposition: videoComposition,
             audioMix: audioMix,
             videoProcessors: processors,
+            videoFrameProcessingTimeout: videoFrameProcessingTimeout,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
-            metadata: metadata
+            metadata: metadata,
+            preflightError: diagnostics.isEmpty
+                ? nil
+                : TimelineCompilationError.insertionFailed(diagnostics)
         )
     }
 

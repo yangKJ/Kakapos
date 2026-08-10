@@ -1,6 +1,9 @@
 import XCTest
 import AVFoundation
 import CoreGraphics
+#if canImport(Metal)
+import Metal
+#endif
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -344,6 +347,70 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.frames.first?.metadata.frameIndex, 2)
     }
 
+    func testMediaOutputNodeIgnoresDuplicateConsumerCompletion() {
+        let output = MediaOutputNode()
+        output.add(consumer: DoubleCompletingConsumerNode())
+        let deferred = output.add(consumer: DeferredConsumerNode())
+        var completionCount = 0
+
+        output.transmit(MetadataOnlyFrame(metadata: FrameMetadata(presentationTime: .zero))) { result in
+            if case .failure(let error) = result {
+                XCTFail("Unexpected fan-out failure: \(error)")
+            }
+            completionCount += 1
+        }
+
+        XCTAssertEqual(completionCount, 0)
+        deferred.complete()
+        XCTAssertEqual(completionCount, 1)
+    }
+
+    func testMediaPipelineLatestOnlyPolicyBoundsSlowProcessorAndFinishesAfterLatestFrame() throws {
+        typealias PendingProcessing = (
+            frame: MediaFrame,
+            completion: (Result<MediaFrame, Error>) -> Void
+        )
+        let source = ManualSource()
+        let sink = TestSink()
+        var pendingProcessing: [PendingProcessing] = []
+        let processor = ClosureFrameProcessor { frame, completion in
+            pendingProcessing.append((frame, completion))
+        }
+        let pipeline = MediaPipeline(
+            source: source,
+            processors: [processor],
+            sinks: [sink],
+            deliveryPolicy: .latestOnly
+        )
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+
+        pipeline.start()
+        for index in 1...3 {
+            source.emit(PixelBufferFrame(
+                pixelBuffer: pixelBuffer,
+                metadata: FrameMetadata(
+                    presentationTime: CMTime(value: CMTimeValue(index), timescale: 30),
+                    frameIndex: Int64(index)
+                )
+            ))
+        }
+        source.finish()
+
+        XCTAssertEqual(pendingProcessing.count, 1)
+        XCTAssertEqual(pipeline.droppedSourceFrameCount, 1)
+        XCTAssertEqual(pipeline.state, .running)
+
+        let first = pendingProcessing.removeFirst()
+        first.completion(.success(first.frame))
+        XCTAssertEqual(pendingProcessing.count, 1)
+        let latest = pendingProcessing.removeFirst()
+        latest.completion(.success(latest.frame))
+
+        XCTAssertEqual(sink.frames.compactMap { $0.metadata.frameIndex }, [1, 3])
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(pipeline.droppedSourceFrameCount, 1)
+    }
+
     func testMediaPipelineSummaryDescribesSourceProcessorsSinksAndState() throws {
         let source = TestSource(frames: [])
         let sink = TestSink()
@@ -467,6 +534,39 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(lastFrameMetadata.trackTransformA, 1, accuracy: 0.0001)
         XCTAssertEqual(lastFrameMetadata.trackTransformD, 1, accuracy: 0.0001)
         XCTAssertEqual(decoded.lastErrorDescription, nil)
+    }
+
+    func testMediaPipelineDoesNotRestartUntilCancelledRunIsQuiescent() throws {
+        let source = ManualSource()
+        let processingStarted = expectation(description: "old run processing started")
+        var deferredCompletion: ((Result<MediaFrame, Error>) -> Void)?
+        let pipeline = MediaPipeline(
+            source: source,
+            processors: [ClosureFrameProcessor { _, completion in
+                deferredCompletion = completion
+                processingStarted.fulfill()
+            }],
+            sinks: [TestSink()]
+        )
+
+        pipeline.start()
+        source.emit(PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        ))
+        wait(for: [processingStarted], timeout: 1)
+        pipeline.cancel()
+
+        pipeline.start()
+        XCTAssertEqual(source.startCount, 1)
+        XCTAssertEqual(pipeline.state, .cancelled)
+
+        deferredCompletion?(.failure(NSError(domain: "OldRun", code: 1)))
+        pipeline.start()
+
+        XCTAssertEqual(source.startCount, 2)
+        XCTAssertEqual(pipeline.state, .running)
+        XCTAssertNil(pipeline.lastErrorDescription)
     }
 
     #if canImport(UIKit) || os(macOS)
@@ -606,6 +706,79 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(childSink.frames.first?.metadata.frameIndex, 31)
     }
 
+    func testMediaGraphWaitsForAcceptedFramesBeforeFinishingBranches() throws {
+        let source = ManualSource()
+        let sink = DeferredConsumeSink()
+        let graph = MediaGraph(
+            source: source,
+            branches: [MediaGraphBranch(sinks: [sink])]
+        )
+        let completion = expectation(description: "graph finishes after accepted frame")
+        graph.completionHandler = { completion.fulfill() }
+
+        graph.start()
+        source.emit(PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        ))
+        source.finish()
+
+        XCTAssertEqual(sink.finishCount, 0)
+        XCTAssertEqual(sink.pendingConsumeCount, 1)
+
+        sink.completeNextConsume(with: .success(()))
+
+        wait(for: [completion], timeout: 1)
+        XCTAssertEqual(sink.finishCount, 1)
+    }
+
+    func testMediaGraphRejectsLateFramesAndFinishAfterCancellation() throws {
+        let source = ManualSource()
+        let sink = CountingSink()
+        let graph = MediaGraph(
+            source: source,
+            branches: [MediaGraphBranch(sinks: [sink])]
+        )
+        var completionCount = 0
+        graph.completionHandler = { completionCount += 1 }
+
+        graph.start()
+        graph.cancel()
+        source.emit(PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        ))
+        source.finish()
+
+        XCTAssertEqual(source.cancelCount, 1)
+        XCTAssertEqual(sink.consumeCount, 0)
+        XCTAssertEqual(sink.finishCount, 0)
+        XCTAssertEqual(completionCount, 0)
+    }
+
+    func testMediaGraphReportsBranchFailureOnceAndCancelsTheSource() throws {
+        let source = ManualSource()
+        let error = NSError(domain: "MediaGraphTests", code: 41)
+        let graph = MediaGraph(
+            source: source,
+            branches: [MediaGraphBranch(sinks: [FailingConsumeSink(error: error)])]
+        )
+        var receivedErrors: [NSError] = []
+        graph.errorHandler = { receivedErrors.append($0 as NSError) }
+
+        graph.start()
+        source.emit(PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        ))
+        source.fail(error)
+
+        XCTAssertEqual(source.cancelCount, 1)
+        XCTAssertEqual(receivedErrors.count, 1)
+        XCTAssertEqual(receivedErrors.first?.domain, "MediaGraphTests")
+        XCTAssertEqual(receivedErrors.first?.code, 41)
+    }
+
     func testImageSourceEmitsFrameSequenceWithMetadata() throws {
         let frames = [
             StillImageFrame(image: try makeImage(width: 10, height: 10), duration: CMTime(value: 1, timescale: 30)),
@@ -632,6 +805,295 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.frames.last?.metadata.duration, CMTime(value: 2, timescale: 30))
     }
 
+    func testAssetSourceStopWakesPausedReaderAndFinishesOnce() throws {
+        let callbackQueue = DispatchQueue(label: "com.condy.kakapos.tests.asset-source.stop")
+        callbackQueue.suspend()
+        var callbackQueueIsSuspended = true
+        defer {
+            if callbackQueueIsSuspended {
+                callbackQueue.resume()
+            }
+        }
+        let source = AssetSource(asset: AVAsset(url: try makeSampleAssetURL()), callbackQueue: callbackQueue)
+        let spy = MediaSourceDelegateSpy()
+        let finished = expectation(description: "asset source stopped")
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        source.pause()
+        XCTAssertEqual(source.state, .paused)
+        source.stop()
+        XCTAssertEqual(source.state, .finished)
+        callbackQueue.resume()
+        callbackQueueIsSuspended = false
+
+        wait(for: [finished], timeout: 2)
+        source.stop()
+        Thread.sleep(forTimeInterval: 0.05)
+        XCTAssertEqual(spy.outputCount, 0)
+        XCTAssertEqual(spy.finishCount, 1)
+    }
+
+    func testAssetSourceCancelWakesPausedReaderAndFinishesOnce() throws {
+        let callbackQueue = DispatchQueue(label: "com.condy.kakapos.tests.asset-source.cancel")
+        callbackQueue.suspend()
+        var callbackQueueIsSuspended = true
+        defer {
+            if callbackQueueIsSuspended {
+                callbackQueue.resume()
+            }
+        }
+        let source = AssetSource(asset: AVAsset(url: try makeSampleAssetURL()), callbackQueue: callbackQueue)
+        let spy = MediaSourceDelegateSpy()
+        let finished = expectation(description: "asset source cancelled")
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        source.pause()
+        XCTAssertEqual(source.state, .paused)
+        source.cancel()
+        XCTAssertEqual(source.state, .cancelled)
+        callbackQueue.resume()
+        callbackQueueIsSuspended = false
+
+        wait(for: [finished], timeout: 2)
+        source.cancel()
+        Thread.sleep(forTimeInterval: 0.05)
+        XCTAssertEqual(spy.outputCount, 0)
+        XCTAssertEqual(spy.finishCount, 1)
+    }
+
+    func testImageSourceStopWakesPausedProducerAndFinishesOnce() throws {
+        let callbackQueue = DispatchQueue(label: "com.condy.kakapos.tests.image-source.stop")
+        callbackQueue.suspend()
+        var callbackQueueIsSuspended = true
+        defer {
+            if callbackQueueIsSuspended {
+                callbackQueue.resume()
+            }
+        }
+        let source = ImageSource(
+            frames: [StillImageFrame(image: try makeImage(width: 16, height: 16))],
+            isLooping: true,
+            callbackQueue: callbackQueue
+        )
+        let spy = MediaSourceDelegateSpy()
+        let finished = expectation(description: "image source stopped")
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        source.pause()
+        source.stop()
+        callbackQueue.resume()
+        callbackQueueIsSuspended = false
+
+        wait(for: [finished], timeout: 2)
+        source.stop()
+        Thread.sleep(forTimeInterval: 0.05)
+        XCTAssertEqual(spy.outputCount, 0)
+        XCTAssertEqual(spy.finishCount, 1)
+    }
+
+    func testImageSourceCancelInvalidatesQueuedFramesAndFinishesOnce() throws {
+        let callbackQueue = DispatchQueue(label: "com.condy.kakapos.tests.image-source.cancel")
+        callbackQueue.suspend()
+        var callbackQueueIsSuspended = true
+        defer {
+            if callbackQueueIsSuspended {
+                callbackQueue.resume()
+            }
+        }
+        let source = ImageSource(
+            frames: [StillImageFrame(image: try makeImage(width: 512, height: 512))],
+            isLooping: true,
+            callbackQueue: callbackQueue
+        )
+        let spy = MediaSourceDelegateSpy()
+        let finished = expectation(description: "image source cancelled")
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        Thread.sleep(forTimeInterval: 0.02)
+        source.pause()
+        source.cancel()
+        callbackQueue.resume()
+        callbackQueueIsSuspended = false
+
+        wait(for: [finished], timeout: 2)
+        source.cancel()
+        Thread.sleep(forTimeInterval: 0.05)
+        XCTAssertEqual(spy.outputCount, 0)
+        XCTAssertEqual(spy.finishCount, 1)
+    }
+
+    func testAssetSourceStopWaitsForActiveDeliveryAndDropsQueuedFrames() throws {
+        let callbackQueue = DispatchQueue(
+            label: "com.condy.kakapos.tests.asset-source.concurrent-delivery",
+            attributes: .concurrent
+        )
+        let source = AssetSource(asset: AVAsset(url: try makeSampleAssetURL()), callbackQueue: callbackQueue)
+        let spy = BlockingMediaSourceDelegateSpy()
+        let finished = expectation(description: "asset source finished after delivery fence")
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        XCTAssertEqual(spy.outputStarted.wait(timeout: .now() + 2), .success)
+        source.pause()
+
+        let stopReturned = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            source.stop()
+            stopReturned.signal()
+        }
+        XCTAssertEqual(stopReturned.wait(timeout: .now() + 0.05), .timedOut)
+
+        spy.allowOutputToReturn.signal()
+        XCTAssertEqual(stopReturned.wait(timeout: .now() + 2), .success)
+        let countWhenStopReturned = spy.outputCount
+        wait(for: [finished], timeout: 2)
+        Thread.sleep(forTimeInterval: 0.05)
+
+        XCTAssertEqual(spy.outputCount, countWhenStopReturned)
+        XCTAssertEqual(spy.finishCount, 1)
+    }
+
+    func testAssetSourceNaturalCompletionOrdersFramesBeforeFinishOnConcurrentQueue() throws {
+        let callbackQueue = DispatchQueue(
+            label: "com.condy.kakapos.tests.asset-source.concurrent-order",
+            attributes: .concurrent
+        )
+        let source = AssetSource(asset: AVAsset(url: try makeSampleAssetURL()), callbackQueue: callbackQueue)
+        let spy = OrderedMediaSourceDelegateSpy()
+        let finished = expectation(description: "asset source naturally finished")
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        wait(for: [finished], timeout: 5)
+
+        let events = spy.events
+        XCTAssertGreaterThan(events.filter { $0.hasPrefix("frame:") }.count, 0)
+        XCTAssertEqual(events.last, "finish")
+        XCTAssertEqual(events.filter { $0 == "finish" }.count, 1)
+    }
+
+    func testImageSourceCancelWaitsForActiveDeliveryAndDropsQueuedFrames() throws {
+        let callbackQueue = DispatchQueue(
+            label: "com.condy.kakapos.tests.image-source.concurrent-delivery",
+            attributes: .concurrent
+        )
+        let source = ImageSource(
+            frames: [StillImageFrame(image: try makeImage(width: 64, height: 64))],
+            isLooping: true,
+            callbackQueue: callbackQueue
+        )
+        let spy = BlockingMediaSourceDelegateSpy()
+        let finished = expectation(description: "image source finished after delivery fence")
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        XCTAssertEqual(spy.outputStarted.wait(timeout: .now() + 2), .success)
+
+        let cancelReturned = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            source.cancel()
+            cancelReturned.signal()
+        }
+        XCTAssertEqual(cancelReturned.wait(timeout: .now() + 0.05), .timedOut)
+
+        spy.allowOutputToReturn.signal()
+        XCTAssertEqual(cancelReturned.wait(timeout: .now() + 2), .success)
+        let countWhenCancelReturned = spy.outputCount
+        wait(for: [finished], timeout: 2)
+        Thread.sleep(forTimeInterval: 0.05)
+
+        XCTAssertEqual(spy.outputCount, countWhenCancelReturned)
+        XCTAssertEqual(spy.finishCount, 1)
+    }
+
+    func testImageSourceNaturalCompletionOrdersFramesBeforeFinishOnConcurrentQueue() throws {
+        let callbackQueue = DispatchQueue(
+            label: "com.condy.kakapos.tests.image-source.concurrent-order",
+            attributes: .concurrent
+        )
+        let source = ImageSource(
+            frames: [
+                StillImageFrame(image: try makeImage(width: 16, height: 16)),
+                StillImageFrame(image: try makeImage(width: 24, height: 24))
+            ],
+            callbackQueue: callbackQueue
+        )
+        let spy = OrderedMediaSourceDelegateSpy()
+        let finished = expectation(description: "image source naturally finished")
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        wait(for: [finished], timeout: 2)
+
+        XCTAssertEqual(spy.events, ["frame:0", "frame:1", "finish"])
+    }
+
+    func testImageSourceDelegateCancellationPreventsNodeDelivery() throws {
+        let source = ImageSource(
+            frames: [StillImageFrame(image: try makeImage(width: 16, height: 16))],
+            isLooping: true,
+            callbackQueue: DispatchQueue(label: "com.condy.kakapos.tests.image-source.reentrant-cancel")
+        )
+        let spy = MediaSourceDelegateSpy()
+        let consumer = TestConsumerNode()
+        let finished = expectation(description: "image source cancelled from delegate")
+        var consumerCount = 0
+        consumer.onFrame = { _ in consumerCount += 1 }
+        source.add(consumer: consumer)
+        spy.outputHandler = { source.cancel() }
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        wait(for: [finished], timeout: 2)
+
+        XCTAssertEqual(spy.outputCount, 1)
+        XCTAssertEqual(spy.finishCount, 1)
+        XCTAssertEqual(consumerCount, 0)
+    }
+
+    func testImageSourceNodeCancellationPreventsLaterConsumerDelivery() throws {
+        let source = ImageSource(
+            frames: [StillImageFrame(image: try makeImage(width: 16, height: 16))],
+            isLooping: true,
+            callbackQueue: DispatchQueue(label: "com.condy.kakapos.tests.image-source.node-cancel")
+        )
+        let spy = MediaSourceDelegateSpy()
+        let firstConsumer = TestConsumerNode()
+        let secondConsumer = TestConsumerNode()
+        let finished = expectation(description: "image source cancelled from first node consumer")
+        var firstConsumerCount = 0
+        var secondConsumerCount = 0
+        firstConsumer.onFrame = { _ in
+            firstConsumerCount += 1
+            source.cancel()
+        }
+        secondConsumer.onFrame = { _ in secondConsumerCount += 1 }
+        source.add(consumer: firstConsumer)
+        source.add(consumer: secondConsumer)
+        spy.finishHandler = { finished.fulfill() }
+        source.delegate = spy
+
+        source.start()
+        wait(for: [finished], timeout: 2)
+
+        XCTAssertEqual(firstConsumerCount, 1)
+        XCTAssertEqual(secondConsumerCount, 0)
+        XCTAssertEqual(spy.finishCount, 1)
+    }
+
     func testTimelineCompositionCompilesEmptyComposition() {
         let timeline = TimelineComposition(renderSize: CGSize(width: 1920, height: 1080), frameDuration: CMTime(value: 1, timescale: 30))
 
@@ -648,6 +1110,40 @@ final class MediaEngineTests: XCTestCase {
             compiled.summary.summaryText,
             "size 1920x1080 · frame 30fps · video 0 · image 0 · text 0 · effect 0 · transitions 0 · intervals 0 · segments 0/0/0 · audio 0/0 · transitionSegments 0 · tracks 0/0 · sources 0 · processors 0"
         )
+    }
+
+    func testTimelineCompilationReportsInvalidSourceRangeAndExportFailsClosed() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let invalidRange = CMTimeRange(
+            start: CMTime(seconds: 30, preferredTimescale: 600),
+            duration: CMTime(seconds: 1, preferredTimescale: 600)
+        )
+        let layer = ClipLayer(
+            asset: asset,
+            timeRange: CMTimeRange(start: .zero, duration: invalidRange.duration),
+            sourceTimeRange: invalidRange,
+            layerLevel: 4
+        )
+        let compiled = TimelineComposition(layers: [layer]).compile()
+
+        XCTAssertFalse(compiled.isValid)
+        XCTAssertEqual(compiled.diagnostics.first?.layerKind, .clip)
+        XCTAssertEqual(compiled.diagnostics.first?.layerLevel, 4)
+        XCTAssertEqual(compiled.diagnostics.first?.mediaType, AVMediaType.video.rawValue)
+
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let completion = expectation(description: "invalid timeline export fails")
+        compiled.makeExportJob(outputURL: outputURL).export { result in
+            guard case .failure = result else {
+                return XCTFail("Invalid timeline must not export a partial composition.")
+            }
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
     func testTimelineCompositionProducesCompilationSummaryForMixedLayers() throws {
@@ -1315,6 +1811,100 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(info.phase, .idle)
     }
 
+    func testReaderWriterPerformanceSnapshotPreservesTimingArithmeticAndFreezesAtTerminalState() {
+        let clock = ManualExportPerformanceClock()
+        let accumulator = ReaderWriterExportPerformanceAccumulator(clock: { clock.now() })
+
+        clock.set(seconds: 0)
+        accumulator.markStarted()
+        accumulator.recordVideoSampleRead()
+        accumulator.recordAudioSampleRead()
+
+        clock.set(seconds: 1)
+        let submittedAt = accumulator.now()
+        accumulator.recordProcessorSubmitted()
+        clock.set(seconds: 2)
+        let executionStartedAt = accumulator.now()
+        clock.set(seconds: 5)
+        let callbackCompletedAt = accumulator.now()
+        clock.set(seconds: 6)
+        accumulator.recordProcessorCompleted(
+            submittedAt: submittedAt,
+            queueDelayNanoseconds: executionStartedAt - submittedAt,
+            executionDurationNanoseconds: callbackCompletedAt - executionStartedAt,
+            callbackCompletedAt: callbackCompletedAt,
+            ownerDeliveredAt: accumulator.now()
+        )
+        accumulator.recordPendingProcessedFrame()
+        accumulator.recordProcessedFrameWriterBackpressure()
+        accumulator.recordProcessedFrameWriterBackpressure()
+        clock.set(seconds: 7)
+        accumulator.recordPendingProcessedFrameWritten()
+        accumulator.recordVideoSampleWritten()
+        accumulator.recordAudioSampleWritten()
+        clock.set(seconds: 8)
+        accumulator.markFinishing()
+        clock.set(seconds: 10)
+        accumulator.markFinal()
+
+        let snapshot = accumulator.snapshot
+        XCTAssertEqual(snapshot.videoSamplesRead, 1)
+        XCTAssertEqual(snapshot.audioSamplesRead, 1)
+        XCTAssertEqual(snapshot.videoSamplesWritten, 1)
+        XCTAssertEqual(snapshot.audioSamplesWritten, 1)
+        XCTAssertEqual(snapshot.processorInvocationCount, 1)
+        XCTAssertEqual(snapshot.processorCompletionCount, 1)
+        XCTAssertEqual(snapshot.processorTimeoutCount, 0)
+        XCTAssertEqual(snapshot.peakProcessorInFlightCount, 1)
+        XCTAssertEqual(snapshot.peakPendingProcessedFrameCount, 1)
+        XCTAssertEqual(snapshot.processedFrameWriterBackpressureCount, 1)
+        XCTAssertEqual(snapshot.processorQueueDelay.total, 1, accuracy: 0.000_001)
+        XCTAssertEqual(snapshot.processorExecutionDuration.total, 3, accuracy: 0.000_001)
+        XCTAssertEqual(snapshot.processorTotalDuration.total, 4, accuracy: 0.000_001)
+        XCTAssertEqual(snapshot.processorOwnerDeliveryDelay.total, 1, accuracy: 0.000_001)
+        XCTAssertEqual(snapshot.processorEndToEndDuration.total, 5, accuracy: 0.000_001)
+        XCTAssertEqual(snapshot.processedFrameWriterWaitDuration.total, 1, accuracy: 0.000_001)
+        XCTAssertEqual(snapshot.sessionDuration, 10, accuracy: 0.000_001)
+        XCTAssertEqual(snapshot.finishingDuration, 2, accuracy: 0.000_001)
+        XCTAssertTrue(snapshot.isFinal)
+
+        clock.set(seconds: 20)
+        accumulator.recordVideoSampleRead()
+        accumulator.recordProcessorSubmitted()
+        accumulator.markFinal()
+        XCTAssertEqual(accumulator.snapshot, snapshot)
+    }
+
+    func testReaderWriterPerformanceSnapshotFreezesBeforeLateProcessorCompletionAfterTimeout() {
+        let clock = ManualExportPerformanceClock()
+        let accumulator = ReaderWriterExportPerformanceAccumulator(clock: { clock.now() })
+
+        accumulator.markStarted()
+        clock.set(seconds: 1)
+        let submittedAt = accumulator.now()
+        accumulator.recordProcessorSubmitted()
+        clock.set(seconds: 2)
+        accumulator.recordProcessorTimedOut()
+        accumulator.markFinishing()
+        clock.set(seconds: 3)
+        accumulator.markFinal()
+        let terminalSnapshot = accumulator.snapshot
+
+        clock.set(seconds: 4)
+        accumulator.recordProcessorCompleted(
+            submittedAt: submittedAt,
+            queueDelayNanoseconds: 0,
+            executionDurationNanoseconds: accumulator.now() - submittedAt,
+            callbackCompletedAt: accumulator.now(),
+            ownerDeliveredAt: accumulator.now()
+        )
+
+        XCTAssertEqual(terminalSnapshot.processorInvocationCount, 1)
+        XCTAssertEqual(terminalSnapshot.processorCompletionCount, 0)
+        XCTAssertEqual(terminalSnapshot.processorTimeoutCount, 1)
+        XCTAssertEqual(accumulator.snapshot, terminalSnapshot)
+    }
+
     func testReaderWriterProgressInfoTracksExportPhaseUpdates() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),
@@ -1701,6 +2291,111 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedStatuses, [.exporting, .completed])
     }
 
+    func testReaderWriterExportJobAcquiresConcurrentStartExactlyOnce() throws {
+        let session = FakeReaderWriterExportSession()
+        let sessionStarted = expectation(description: "single session started")
+        session.onExport = { sessionStarted.fulfill() }
+        let resultsDelivered = expectation(description: "both callers completed")
+        resultsDelivered.expectedFulfillmentCount = 2
+        let callersReady = expectation(description: "concurrent callers ready")
+        callersReady.expectedFulfillmentCount = 2
+        let startGate = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var factoryCallCount = 0
+        var results: [Result<URL, Error>] = []
+        let job = ReaderWriterExportJob(
+            asset: AVAsset(url: try makeSampleAssetURL()),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4"),
+            sessionFactory: { _, _, _ in
+                lock.lock()
+                factoryCallCount += 1
+                lock.unlock()
+                return session
+            }
+        )
+
+        for _ in 0..<2 {
+            DispatchQueue.global().async {
+                callersReady.fulfill()
+                startGate.wait()
+                job.export { result in
+                    lock.lock()
+                    results.append(result)
+                    lock.unlock()
+                    resultsDelivered.fulfill()
+                }
+            }
+        }
+
+        wait(for: [callersReady], timeout: 1)
+        startGate.signal()
+        startGate.signal()
+        wait(for: [sessionStarted], timeout: 1)
+        session.finish(with: nil)
+        wait(for: [resultsDelivered], timeout: 1)
+
+        lock.lock()
+        let capturedFactoryCallCount = factoryCallCount
+        let capturedResults = results
+        lock.unlock()
+        XCTAssertEqual(capturedFactoryCallCount, 1)
+        XCTAssertEqual(session.exportCallCount, 1)
+        XCTAssertEqual(capturedResults.filter { if case .success = $0 { return true }; return false }.count, 1)
+        XCTAssertEqual(capturedResults.filter { if case .failure = $0 { return true }; return false }.count, 1)
+        XCTAssertEqual(job.status, .completed)
+    }
+
+    func testReaderWriterExportJobDoesNotDeliverExportingAfterConcurrentCancellation() throws {
+        let factoryEntered = DispatchSemaphore(value: 0)
+        let completionDelivered = expectation(description: "cancel completion delivered")
+        let factoryGate = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var receivedStatuses: [ReaderWriterExportJob.Status] = []
+        let session = FakeReaderWriterExportSession()
+        let job = ReaderWriterExportJob(
+            asset: AVAsset(url: try makeSampleAssetURL()),
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4"),
+            sessionFactory: { _, _, _ in
+                factoryEntered.signal()
+                factoryGate.wait()
+                return session
+            }
+        )
+        job.statusHandler = { status in
+            lock.lock()
+            receivedStatuses.append(status)
+            lock.unlock()
+        }
+
+        DispatchQueue.global().async {
+            job.export { result in
+                guard case .failure = result else {
+                    XCTFail("Expected cancellation failure")
+                    completionDelivered.fulfill()
+                    return
+                }
+                completionDelivered.fulfill()
+            }
+        }
+
+        XCTAssertEqual(factoryEntered.wait(timeout: .now() + 1), .success)
+        job.cancel()
+        factoryGate.signal()
+        wait(for: [completionDelivered], timeout: 1)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        lock.lock()
+        let statuses = receivedStatuses
+        lock.unlock()
+        XCTAssertEqual(statuses, [.cancelled])
+        XCTAssertEqual(job.status, .cancelled)
+        XCTAssertEqual(session.cancelCallCount, 1)
+    }
+
     func testReaderWriterExportJobIgnoresLateProgressAndStatusAfterCompletion() {
         let job = ReaderWriterExportJob(
             asset: AVMutableComposition(),
@@ -1927,6 +2622,36 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedStatuses, [.exporting, .cancelled])
     }
 
+    func testReaderWriterExportJobKeepsCancellationWhenSessionCompletesSuccessfullyLate() throws {
+        let session = FakeReaderWriterExportSession()
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        let job = ReaderWriterExportJob(
+            asset: AVAsset(url: try makeSampleAssetURL()),
+            outputURL: outputURL,
+            sessionFactory: { _, _, _ in session }
+        )
+        let completion = expectation(description: "迟到成功仍按取消收口")
+
+        job.export { result in
+            guard case .failure(let error) = result,
+                  case VideoX.Error.exportCancelled = VideoX.Error.toError(error) else {
+                return XCTFail("Expected cancellation to win over a late successful session callback.")
+            }
+            completion.fulfill()
+        }
+        session.emitStatus(.exporting)
+        FileManager.default.createFile(atPath: outputURL.path, contents: Data("partial".utf8))
+
+        job.cancel()
+        session.finish(with: nil)
+
+        wait(for: [completion], timeout: 1)
+        XCTAssertEqual(job.status, .cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
     func testVideoXExportPipelineDefaultsToAssetExportSession() {
         XCTAssertEqual(VideoX.Option.setupExportPipeline(options: [:]), .assetExportSession)
     }
@@ -1937,6 +2662,15 @@ final class MediaEngineTests: XCTestCase {
         ]
 
         XCTAssertEqual(VideoX.Option.setupExportPipeline(options: options), .readerWriter)
+    }
+
+    func testVideoXFrameProcessingTimeoutIsOptionalAndRejectsNonPositiveValues() {
+        XCTAssertNil(VideoX.Option.setupVideoFrameProcessingTimeout(options: [:]))
+        XCTAssertNil(VideoX.Option.setupVideoFrameProcessingTimeout(options: [.VideoFrameProcessingTimeout: 0.0]))
+        XCTAssertNil(VideoX.Option.setupVideoFrameProcessingTimeout(options: [.VideoFrameProcessingTimeout: -1.0]))
+        XCTAssertNil(VideoX.Option.setupVideoFrameProcessingTimeout(options: [.VideoFrameProcessingTimeout: TimeInterval.infinity]))
+        XCTAssertNil(VideoX.Option.setupVideoFrameProcessingTimeout(options: [.VideoFrameProcessingTimeout: TimeInterval.nan]))
+        XCTAssertEqual(VideoX.Option.setupVideoFrameProcessingTimeout(options: [.VideoFrameProcessingTimeout: 2.5]), 2.5)
     }
 
     func testVideoXMakeExportJobReturnsNilForAssetExportSessionPipeline() throws {
@@ -1966,6 +2700,21 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(exportJob?._videoProcessorCountForTesting, 1)
         XCTAssertEqual(try exporter.makeReaderWriterExportJob(instructions: [instruction]).status, .idle)
         XCTAssertEqual(outputURL.pathExtension.lowercased(), "mov")
+    }
+
+    func testVideoXReaderWriterExportPassesFrameProcessingTimeoutOption() throws {
+        let exporter = try makeSampleExporter()
+        let instruction = FilterInstruction(processor: PassthroughFrameProcessor())
+
+        let exportJob = try XCTUnwrap(exporter.makeExportJob(
+            options: [
+                .ExportPipeline: VideoX.ExportPipeline.readerWriter,
+                .VideoFrameProcessingTimeout: 2.5
+            ],
+            instructions: [instruction]
+        ))
+
+        XCTAssertEqual(exportJob._videoFrameProcessingTimeoutForTesting, 2.5)
     }
 
     func testVideoXReaderWriterExportKeepsUnsupportedInstructionsInVideoComposition() throws {
@@ -2165,7 +2914,7 @@ final class MediaEngineTests: XCTestCase {
         let lane = try VideoPreviewProcessingLane(
             generation: .init(rawValue: 1),
             mode: .processed(plan)
-        ) { _, _, _, _ in
+        ) { _, _, _ in
             unexpectedOutput.fulfill()
         }
         let frame = PixelBufferFrame(
@@ -2179,6 +2928,120 @@ final class MediaEngineTests: XCTestCase {
 
         wait(for: [unexpectedOutput], timeout: 0.2)
     }
+
+    func testVideoTranscodeConfigurationNormalizesFrameProcessingTimeout() {
+        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+
+        XCTAssertNil(VideoTranscodeConfiguration(
+            outputURL: outputURL,
+            videoFrameProcessingTimeout: 0
+        ).videoFrameProcessingTimeout)
+        XCTAssertNil(VideoTranscodeConfiguration(
+            outputURL: outputURL,
+            videoFrameProcessingTimeout: .infinity
+        ).videoFrameProcessingTimeout)
+        XCTAssertEqual(VideoTranscodeConfiguration(
+            outputURL: outputURL,
+            videoFrameProcessingTimeout: 2.5
+        ).videoFrameProcessingTimeout, 2.5)
+    }
+
+    func testVideoPreviewLaneCoalescesBacklogToTheLatestPendingFrame() throws {
+        typealias PendingProcessing = (
+            frame: MediaFrame,
+            completion: (Result<MediaFrame, Error>) -> Void
+        )
+        var pendingProcessing: [PendingProcessing] = []
+        var outputFrameIndices: [Int64] = []
+        let plan = FrameProcessingPlan(
+            identity: .init(identifier: "latest-pending", revision: "1")
+        ) {
+            [ClosureFrameProcessor { frame, completion in
+                pendingProcessing.append((frame, completion))
+            }]
+        }
+        let lane = try VideoPreviewProcessingLane(
+            generation: .init(rawValue: 1),
+            mode: .processed(plan)
+        ) { frame, _, _ in
+            outputFrameIndices.append(frame.metadata.frameIndex ?? -1)
+        }
+
+        for index in 1...3 {
+            lane.consume(PixelBufferFrame(
+                pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+                metadata: FrameMetadata(
+                    presentationTime: CMTime(value: CMTimeValue(index), timescale: 30),
+                    frameIndex: Int64(index)
+                )
+            ))
+        }
+
+        XCTAssertEqual(pendingProcessing.count, 1)
+        let first = pendingProcessing.removeFirst()
+        first.completion(.success(first.frame))
+
+        XCTAssertEqual(outputFrameIndices, [1])
+        XCTAssertEqual(pendingProcessing.count, 1)
+        let latest = pendingProcessing.removeFirst()
+        latest.completion(.success(latest.frame))
+
+        XCTAssertEqual(outputFrameIndices, [1, 3])
+        XCTAssertTrue(pendingProcessing.isEmpty)
+    }
+
+    #if canImport(Metal)
+    func testVideoPreviewLaneForwardsTextureOutputWithoutPixelBufferReadback() throws {
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: 8,
+            height: 8,
+            mipmapped: false
+        )
+        descriptor.usage = [.shaderRead, .shaderWrite]
+        let texture = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
+        let metadata = FrameMetadata(
+            presentationTime: CMTime(value: 3, timescale: 30),
+            frameIndex: 3
+        )
+        let plan = FrameProcessingPlan(
+            identity: .init(identifier: "texture-preview", revision: "1")
+        ) {
+            [ClosureFrameProcessor { _, completion in
+                completion(.success(TextureFrame(
+                    texture: texture,
+                    metadata: metadata,
+                    coordinateSpace: .pixelBuffer
+                )))
+            }]
+        }
+        let output = expectation(description: "texture preview output")
+        let lane = try VideoPreviewProcessingLane(
+            generation: .init(rawValue: 7),
+            mode: .processed(plan)
+        ) { frame, generation, identity in
+            XCTAssertTrue(extractTexture(frame) === texture)
+            XCTAssertNil(extractPixelBuffer(frame))
+            XCTAssertEqual(
+                (frame as? TextureFrame)?.coordinateSpace,
+                .pixelBuffer
+            )
+            XCTAssertEqual(frame.metadata.presentationTime, metadata.presentationTime)
+            XCTAssertEqual(frame.metadata.frameIndex, metadata.frameIndex)
+            XCTAssertEqual(generation, .init(rawValue: 7))
+            XCTAssertEqual(identity, .processed(plan.identity))
+            output.fulfill()
+        }
+
+        lane.consume(PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero)
+        ))
+
+        wait(for: [output], timeout: 1)
+    }
+    #endif
 
     #endif
 
@@ -2275,6 +3138,280 @@ final class MediaEngineTests: XCTestCase {
             return XCTFail("Processed exports must never silently fall back to passthrough.")
         }
         job.cancel()
+    }
+
+    func testReaderWriterExportJobPassesNormalizedFrameProcessingTimeoutToSession() throws {
+        let session = FakeReaderWriterExportSession()
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        var capturedTimeout: TimeInterval?
+        let job = ReaderWriterExportJob(
+            asset: asset,
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4"),
+            videoProcessors: [PassthroughFrameProcessor()],
+            videoFrameProcessingTimeout: 2.5,
+            sessionFactory: { _, _, configuration in
+                capturedTimeout = configuration.videoFrameProcessingTimeout
+                return session
+            }
+        )
+
+        job.export { _ in }
+
+        XCTAssertEqual(try XCTUnwrap(capturedTimeout), 2.5, accuracy: 0.0001)
+        job.cancel()
+    }
+
+    func testProcessedReaderWriterSessionReadsTheSourceTrackWithoutImplicitVideoComposition() throws {
+        let asset = AVAsset(url: try makeSampleAssetURL())
+        let track = try XCTUnwrap(asset.tracks(withMediaType: .video).first)
+        let presentationSize = track.naturalSize.applying(track.preferredTransform)
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let session = try VideoAssetExportSession(
+            asset: asset,
+            outputURL: outputURL,
+            configuration: .init(
+                fileType: .mp4,
+                videoSettings: [
+                    AVVideoCodecKey: AVVideoCodecType.h264,
+                    AVVideoWidthKey: abs(presentationSize.width),
+                    AVVideoHeightKey: abs(presentationSize.height)
+                ],
+                audioSettings: [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVNumberOfChannelsKey: 2,
+                    AVSampleRateKey: 44_100,
+                    AVEncoderBitRateKey: 128_000
+                ],
+                videoProcessors: [PassthroughFrameProcessor()],
+                videoEncodingStrategy: .encoded
+            )
+        )
+
+        XCTAssertFalse(session._usesImplicitVideoCompositionForTesting)
+    }
+
+    func testProcessedReaderWriterSessionExportsARealEncodedArtifact() throws {
+        let sourceURL = try makeSampleAssetURL()
+        let sourceAsset = AVAsset(url: sourceURL)
+        let sourceTrack = try XCTUnwrap(sourceAsset.tracks(withMediaType: .video).first)
+        let sourcePresentationSize = sourceTrack.naturalSize.applying(sourceTrack.preferredTransform)
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let completion = expectation(description: "逐帧处理后的真实视频完成编码")
+        var receivedResult: Result<URL, Error>?
+        let job = ReaderWriterExportJob(
+            asset: sourceAsset,
+            outputURL: outputURL,
+            fileType: .mp4,
+            timeRange: CMTimeRange(
+                start: .zero,
+                duration: CMTime(seconds: 1, preferredTimescale: 600)
+            ),
+            videoProcessors: [PassthroughFrameProcessor(), PassthroughFrameProcessor()]
+        )
+
+        job.export { result in
+            receivedResult = result
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 15)
+        let exportedURL = try XCTUnwrap(receivedResult).get()
+        XCTAssertEqual(exportedURL, outputURL)
+        let report = try VideoArtifactValidator.validate(
+            url: exportedURL,
+            expectation: VideoArtifactValidationExpectation(
+                sourceDuration: CMTime(seconds: 1, preferredTimescale: 600),
+                expectsAudio: sourceAsset.tracks(withMediaType: .audio).isEmpty == false
+            )
+        )
+        let outputPresentationSize = report.naturalSize.applying(report.preferredTransform)
+        XCTAssertEqual(abs(outputPresentationSize.width), abs(sourcePresentationSize.width), accuracy: 1)
+        XCTAssertEqual(abs(outputPresentationSize.height), abs(sourcePresentationSize.height), accuracy: 1)
+        let performance = job.performanceSnapshot
+        XCTAssertTrue(performance.isFinal)
+        XCTAssertGreaterThan(performance.videoSamplesRead, 0)
+        XCTAssertEqual(performance.videoSamplesWritten, performance.videoSamplesRead)
+        XCTAssertEqual(performance.processorInvocationCount, performance.videoSamplesRead)
+        XCTAssertEqual(performance.processorCompletionCount, performance.processorInvocationCount)
+        XCTAssertEqual(performance.processorQueueDelay.count, performance.processorInvocationCount)
+        XCTAssertEqual(performance.processorExecutionDuration.count, performance.processorInvocationCount)
+        XCTAssertEqual(performance.peakProcessorInFlightCount, 1)
+        XCTAssertLessThanOrEqual(performance.peakPendingProcessedFrameCount, 1)
+        XCTAssertGreaterThanOrEqual(performance.processorEndToEndDuration.total, performance.processorTotalDuration.total)
+        XCTAssertGreaterThanOrEqual(performance.sessionDuration, performance.finishingDuration)
+    }
+
+    func testProcessedReaderWriterSessionCancelsWithoutWaitingForDeferredProcessor() throws {
+        let processorStarted = expectation(description: "异步处理器已接收视频帧")
+        let exportCompleted = expectation(description: "取消导出立即完成")
+        let duplicateCompletion = expectation(description: "取消后的迟到处理结果不得重复完成")
+        duplicateCompletion.isInverted = true
+        var deferredFrame: MediaFrame?
+        var deferredCompletion: ((Result<MediaFrame, Error>) -> Void)?
+        var receivedResult: Result<URL, Error>?
+        var completionCount = 0
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let processor = ClosureFrameProcessor { frame, completion in
+            deferredFrame = frame
+            deferredCompletion = completion
+            processorStarted.fulfill()
+        }
+        let job = ReaderWriterExportJob(
+            asset: AVAsset(url: try makeSampleAssetURL()),
+            outputURL: outputURL,
+            fileType: .mp4,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600)),
+            videoProcessors: [processor]
+        )
+
+        job.export { result in
+            completionCount += 1
+            if completionCount == 1 {
+                receivedResult = result
+                exportCompleted.fulfill()
+            } else {
+                duplicateCompletion.fulfill()
+            }
+        }
+
+        wait(for: [processorStarted], timeout: 5)
+        job.cancel()
+        wait(for: [exportCompleted], timeout: 3)
+
+        let terminalPerformance = job.performanceSnapshot
+        XCTAssertTrue(terminalPerformance.isFinal)
+        XCTAssertEqual(terminalPerformance.processorInvocationCount, 1)
+        XCTAssertEqual(terminalPerformance.processorCompletionCount, 0)
+
+        XCTAssertEqual(job.status, .cancelled)
+        guard case .failure(let error) = receivedResult,
+              case VideoX.Error.exportCancelled = VideoX.Error.toError(error) else {
+            return XCTFail("Expected the deferred export to finish as cancelled.")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+
+        if let deferredFrame, let deferredCompletion {
+            deferredCompletion(.success(deferredFrame))
+        } else {
+            XCTFail("Expected a deferred processor callback.")
+        }
+        wait(for: [duplicateCompletion], timeout: 0.2)
+        XCTAssertEqual(completionCount, 1)
+        XCTAssertEqual(job.status, .cancelled)
+        XCTAssertEqual(job.performanceSnapshot, terminalPerformance)
+    }
+
+    func testProcessedReaderWriterSessionFailsOnceWhenDeferredProcessorTimesOut() throws {
+        let processorStarted = expectation(description: "异步处理器已接收视频帧")
+        let exportCompleted = expectation(description: "处理器超时后导出失败")
+        let duplicateCompletion = expectation(description: "超时后的迟到处理结果不得重复完成")
+        duplicateCompletion.isInverted = true
+        var deferredFrame: MediaFrame?
+        var deferredCompletion: ((Result<MediaFrame, Error>) -> Void)?
+        var receivedResult: Result<URL, Error>?
+        var completionCount = 0
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let processor = ClosureFrameProcessor { frame, completion in
+            deferredFrame = frame
+            deferredCompletion = completion
+            processorStarted.fulfill()
+        }
+        let job = ReaderWriterExportJob(
+            asset: AVAsset(url: try makeSampleAssetURL()),
+            outputURL: outputURL,
+            fileType: .mp4,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600)),
+            videoProcessors: [processor],
+            videoFrameProcessingTimeout: 0.1
+        )
+
+        job.export { result in
+            completionCount += 1
+            if completionCount == 1 {
+                receivedResult = result
+                exportCompleted.fulfill()
+            } else {
+                duplicateCompletion.fulfill()
+            }
+        }
+
+        wait(for: [processorStarted, exportCompleted], timeout: 5)
+
+        XCTAssertEqual(job.status, .failed)
+        guard case .failure(let error) = receivedResult,
+              case VideoX.Error.frameProcessingTimedOut(let seconds) = VideoX.Error.toError(error) else {
+            return XCTFail("Expected the deferred export to fail with a typed processor timeout.")
+        }
+        XCTAssertEqual(seconds, 0.1, accuracy: 0.0001)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+        let terminalPerformance = job.performanceSnapshot
+        XCTAssertTrue(terminalPerformance.isFinal)
+        XCTAssertEqual(terminalPerformance.processorInvocationCount, 1)
+        XCTAssertEqual(terminalPerformance.processorCompletionCount, 0)
+        XCTAssertEqual(terminalPerformance.processorTimeoutCount, 1)
+
+        if let deferredFrame, let deferredCompletion {
+            deferredCompletion(.success(deferredFrame))
+        } else {
+            XCTFail("Expected a deferred processor callback.")
+        }
+        wait(for: [duplicateCompletion], timeout: 0.2)
+        XCTAssertEqual(completionCount, 1)
+        XCTAssertEqual(job.status, .failed)
+        XCTAssertEqual(job.performanceSnapshot, terminalPerformance)
+    }
+
+    func testProcessedReaderWriterSessionKeepsInFlightProcessorDeadlineWhilePaused() throws {
+        let processorStarted = expectation(description: "异步处理器已接收视频帧")
+        let paused = expectation(description: "导出已暂停")
+        let exportCompleted = expectation(description: "暂停期间在途处理器仍按截止时间失败")
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let processor = ClosureFrameProcessor { _, _ in
+            processorStarted.fulfill()
+        }
+        let job = ReaderWriterExportJob(
+            asset: AVAsset(url: try makeSampleAssetURL()),
+            outputURL: outputURL,
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600)),
+            videoProcessors: [processor],
+            videoFrameProcessingTimeout: 0.25
+        )
+        job.statusHandler = { status in
+            if status == .paused {
+                paused.fulfill()
+            }
+        }
+
+        job.export { result in
+            guard case .failure(let error) = result,
+                  case VideoX.Error.frameProcessingTimedOut = VideoX.Error.toError(error) else {
+                return XCTFail("Expected the in-flight processor deadline to remain active while paused.")
+            }
+            exportCompleted.fulfill()
+        }
+
+        wait(for: [processorStarted], timeout: 5)
+        job.pause()
+        wait(for: [paused, exportCompleted], timeout: 3)
+        XCTAssertEqual(job.status, .failed)
     }
 
     func testFrameProcessingPlanRejectsEmptyProcessorChains() {
@@ -2470,6 +3607,38 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(receivedImage?.height, 10)
         XCTAssertEqual(receivedMetadata?.frameIndex, metadata.frameIndex)
         XCTAssertEqual(receivedMetadata?.presentationTime, metadata.presentationTime)
+    }
+
+    func testPreviewSinkCoalescesSuspendedCallbackQueueToLatestFrame() throws {
+        let callbackQueue = DispatchQueue(label: "com.condy.kakapos.tests.preview-callback")
+        callbackQueue.suspend()
+        let callback = expectation(description: "latest preview callback")
+        var receivedFrameIndices: [Int64] = []
+        let sink = PreviewSink(callbackQueue: callbackQueue) { _, metadata in
+            receivedFrameIndices.append(metadata.frameIndex ?? -1)
+            callback.fulfill()
+        }
+        let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
+
+        for index in 0..<100 {
+            let frame = PixelBufferFrame(
+                pixelBuffer: pixelBuffer,
+                metadata: FrameMetadata(
+                    presentationTime: CMTime(value: CMTimeValue(index), timescale: 30),
+                    frameIndex: Int64(index)
+                )
+            )
+            sink.consume(frame) { result in
+                if case .failure(let error) = result {
+                    XCTFail("Unexpected preview sink failure: \(error)")
+                }
+            }
+        }
+
+        callbackQueue.resume()
+        wait(for: [callback], timeout: 1)
+        XCTAssertEqual(receivedFrameIndices, [99])
+        XCTAssertEqual(sink.lastFrame?.metadata.frameIndex, 99)
     }
 
     func testPreviewSinkSummaryReflectsPauseResumeAndBufferedFrameState() throws {
@@ -2684,13 +3853,12 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(pipeline.summary.pendingFrameIndex, snapshot.pendingFrameIndex)
     }
 
-    func testPreviewSinkCachesLatestFrameWhilePausedAndFlushesOnResume() throws {
+    func testPreviewSinkCoalescesQueuedFrameWhilePausedAndFlushesLatestOnResume() throws {
         let firstBuffer = try makePixelBuffer(width: 10, height: 8)
         let secondBuffer = try makePixelBuffer(width: 14, height: 12)
         let first = PixelBufferFrame(pixelBuffer: firstBuffer, metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1))
         let second = PixelBufferFrame(pixelBuffer: secondBuffer, metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2))
         let expectation = expectation(description: "flush cached preview frame")
-        expectation.expectedFulfillmentCount = 2
         var receivedFrameIndices: [Int64] = []
 
         let sink = PreviewSink { _, metadata in
@@ -2719,7 +3887,7 @@ final class MediaEngineTests: XCTestCase {
         sink.resume()
 
         wait(for: [expectation], timeout: 1)
-        XCTAssertEqual(receivedFrameIndices, [1, 2])
+        XCTAssertEqual(receivedFrameIndices, [2])
         XCTAssertEqual(sink.state, PreviewSink.State.active)
         XCTAssertEqual(sink.lastFrame?.metadata.frameIndex, 2)
         XCTAssertEqual(sink.lastImage?.width, 14)
@@ -2834,7 +4002,12 @@ final class MediaEngineTests: XCTestCase {
             )
         )
         let pipeline = PreviewPipeline(source: source) { _, _ in }
+        let completion = expectation(description: "preview pipeline completion")
+        pipeline.pipeline.completionHandler = {
+            completion.fulfill()
+        }
         pipeline.start()
+        wait(for: [completion], timeout: 1)
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -3447,6 +4620,25 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertFalse(coordinator.shouldDriveDisplayLink)
     }
 
+    func testPlayerFrameCoordinatorRestartsFinishedPlaybackAfterSeek() {
+        final class Token: NSObject {}
+
+        var coordinator = PlayerFrameCoordinator()
+        let token = Token()
+        _ = coordinator.start(with: token)
+        XCTAssertEqual(coordinator.markFrameOutput(), 1)
+        XCTAssertEqual(coordinator.markFrameOutput(), 2)
+        coordinator.stop()
+
+        coordinator.resumeAfterSeek(with: token)
+
+        XCTAssertEqual(coordinator.playbackState, .running)
+        XCTAssertTrue(coordinator.shouldDriveDisplayLink)
+        XCTAssertEqual(coordinator.generation, 2)
+        XCTAssertEqual(coordinator.frameIndex, 0)
+        XCTAssertEqual(coordinator.markFrameOutput(), 1)
+    }
+
     #if canImport(UIKit) || os(macOS)
     func testPlayerFrameSourceTracksPlaybackStateAndWaitingTransitions() {
         let player = AVPlayer()
@@ -3603,6 +4795,29 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(driver.setNeedsUpdateCallCount, 1)
         XCTAssertGreaterThanOrEqual(driver.updateIfNeededCallCount, 1)
         XCTAssertEqual(source.state, .active)
+    }
+
+    func testPlayerFrameSourceSeekDoesNotRestartAnExplicitlyStoppedSource() throws {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
+        let driver = FakePlayerFrameDriver()
+        let completion = expectation(description: "stopped source seek completed")
+        let source = PlayerFrameSource(
+            player: player,
+            driverFactory: { _, configuration, _ in
+                driver.configuration = configuration
+                return driver
+            }
+        )
+
+        source.start()
+        source.stop()
+        source.seek(to: .zero) { finished in
+            XCTAssertTrue(finished)
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 5)
+        XCTAssertEqual(source.state, .finished)
     }
 
     func testPlayerFrameSourceSeekClearsStaleFrameAndTagsNextFrameAsSeek() throws {
@@ -4868,13 +6083,17 @@ final class MediaEngineTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("mp4")
 
-        let exportJob = pipeline.makeExportJob(outputURL: outputURL)
+        let exportJob = pipeline.makeExportJob(
+            outputURL: outputURL,
+            videoFrameProcessingTimeout: 2.5
+        )
 
         XCTAssertEqual(exportJob.summary.status, .idle)
         XCTAssertEqual(exportJob.summary.processorCount, 0)
         XCTAssertGreaterThanOrEqual(exportJob.summary.videoTrackCount, 1)
         XCTAssertTrue(exportJob.summary.summaryText.contains("state idle"))
         XCTAssertTrue(exportJob.summary.summaryText.contains("tracks"))
+        XCTAssertEqual(exportJob._videoFrameProcessingTimeoutForTesting, 2.5)
     }
 
     func testTimelinePipelineBuildsTimelineExportTaskFromCompiledComposition() throws {
@@ -5018,6 +6237,7 @@ final class MediaEngineTests: XCTestCase {
     }
 
     #if canImport(UIKit) || os(macOS)
+    @MainActor
     func testTimelinePipelineCreatesPlayerItemAndPreviewPipeline() throws {
         let asset = AVAsset(url: try makeSampleAssetURL())
         let clip = ClipLayer(
@@ -5484,12 +6704,18 @@ private final class SequencedSource: MediaSource {
 
 private final class ManualSource: MediaSource {
     weak var delegate: MediaSourceDelegate?
+    private(set) var startCount = 0
+    private(set) var cancelCount = 0
 
-    func start() {}
+    func start() {
+        startCount += 1
+    }
     func pause() {}
     func resume() {}
     func stop() {}
-    func cancel() {}
+    func cancel() {
+        cancelCount += 1
+    }
 
     func emit(_ frame: MediaFrame) {
         delegate?.mediaSource(self, didOutput: frame)
@@ -5501,6 +6727,128 @@ private final class ManualSource: MediaSource {
 
     func fail(_ error: Error) {
         delegate?.mediaSource(self, didFail: error)
+    }
+}
+
+private final class MediaSourceDelegateSpy: MediaSourceDelegate {
+    private let lock = NSLock()
+    var outputHandler: (() -> Void)?
+    var finishHandler: (() -> Void)?
+    private var _outputCount = 0
+    private var _finishCount = 0
+
+    var outputCount: Int {
+        lock.lock()
+        let value = _outputCount
+        lock.unlock()
+        return value
+    }
+
+    var finishCount: Int {
+        lock.lock()
+        let value = _finishCount
+        lock.unlock()
+        return value
+    }
+
+    func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
+        lock.lock()
+        _outputCount += 1
+        let handler = outputHandler
+        lock.unlock()
+        handler?()
+    }
+
+    func mediaSource(_ source: MediaSource, didFail error: Error) {}
+
+    func mediaSourceDidFinish(_ source: MediaSource) {
+        lock.lock()
+        _finishCount += 1
+        let handler = finishHandler
+        lock.unlock()
+        handler?()
+    }
+}
+
+private final class BlockingMediaSourceDelegateSpy: MediaSourceDelegate {
+    let outputStarted = DispatchSemaphore(value: 0)
+    let allowOutputToReturn = DispatchSemaphore(value: 0)
+    var finishHandler: (() -> Void)?
+
+    private let lock = NSLock()
+    private var shouldBlockNextOutput = true
+    private var _outputCount = 0
+    private var _finishCount = 0
+
+    var outputCount: Int {
+        lock.lock()
+        let value = _outputCount
+        lock.unlock()
+        return value
+    }
+
+    var finishCount: Int {
+        lock.lock()
+        let value = _finishCount
+        lock.unlock()
+        return value
+    }
+
+    func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
+        lock.lock()
+        _outputCount += 1
+        let shouldBlock = shouldBlockNextOutput
+        shouldBlockNextOutput = false
+        lock.unlock()
+
+        if shouldBlock {
+            outputStarted.signal()
+            allowOutputToReturn.wait()
+        }
+    }
+
+    func mediaSource(_ source: MediaSource, didFail error: Error) {}
+
+    func mediaSourceDidFinish(_ source: MediaSource) {
+        lock.lock()
+        _finishCount += 1
+        let handler = finishHandler
+        lock.unlock()
+        handler?()
+    }
+}
+
+private final class OrderedMediaSourceDelegateSpy: MediaSourceDelegate {
+    var finishHandler: (() -> Void)?
+
+    private let lock = NSLock()
+    private var recordedEvents: [String] = []
+
+    var events: [String] {
+        lock.lock()
+        let value = recordedEvents
+        lock.unlock()
+        return value
+    }
+
+    func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
+        lock.lock()
+        recordedEvents.append("frame:\(frame.metadata.frameIndex.map(String.init) ?? "nil")")
+        lock.unlock()
+    }
+
+    func mediaSource(_ source: MediaSource, didFail error: Error) {
+        lock.lock()
+        recordedEvents.append("failure")
+        lock.unlock()
+    }
+
+    func mediaSourceDidFinish(_ source: MediaSource) {
+        lock.lock()
+        recordedEvents.append("finish")
+        let handler = finishHandler
+        lock.unlock()
+        handler?()
     }
 }
 
@@ -5530,15 +6878,19 @@ private final class FakeReaderWriterExportSession: ReaderWriterExportSession {
     private var statusHandler: ((VideoAssetExportSession.Status) -> Void)?
     private var completionHandler: ((Error?) -> Void)?
     private(set) var cancelCallCount = 0
+    private(set) var exportCallCount = 0
+    var onExport: (() -> Void)?
 
     func export(
         progress: ((VideoAssetExportSession.ExportProgress) -> Void)?,
         status: ((VideoAssetExportSession.Status) -> Void)?,
         completion: @escaping (Error?) -> Void
     ) {
+        exportCallCount += 1
         progressHandler = progress
         statusHandler = status
         completionHandler = completion
+        onExport?()
     }
 
     func pause() {}
@@ -5599,14 +6951,39 @@ private final class CountingStopSource: MediaSource {
 
 private final class CountingSink: MediaSink {
     var finishCount = 0
+    var consumeCount = 0
 
     func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        consumeCount += 1
         completion(.success(()))
     }
 
     func finish(completion: @escaping (Result<Void, Error>) -> Void) {
         finishCount += 1
         completion(.success(()))
+    }
+}
+
+private final class DeferredConsumeSink: MediaSink {
+    private var consumeCompletions: [(Result<Void, Error>) -> Void] = []
+    private(set) var finishCount = 0
+
+    var pendingConsumeCount: Int {
+        consumeCompletions.count
+    }
+
+    func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        consumeCompletions.append(completion)
+    }
+
+    func finish(completion: @escaping (Result<Void, Error>) -> Void) {
+        finishCount += 1
+        completion(.success(()))
+    }
+
+    func completeNextConsume(with result: Result<Void, Error>) {
+        guard consumeCompletions.isEmpty == false else { return }
+        consumeCompletions.removeFirst()(result)
     }
 }
 
@@ -5778,6 +7155,27 @@ private final class TestConsumerNode: MediaFrameConsumerNode {
     }
 }
 
+private final class DoubleCompletingConsumerNode: MediaFrameConsumerNode {
+    func consume(_ frame: MediaFrame, from source: MediaFrameSourceNode, completion: @escaping (Result<Void, Error>) -> Void) {
+        completion(.success(()))
+        completion(.success(()))
+    }
+}
+
+private final class DeferredConsumerNode: MediaFrameConsumerNode {
+    private var completion: ((Result<Void, Error>) -> Void)?
+
+    func consume(_ frame: MediaFrame, from source: MediaFrameSourceNode, completion: @escaping (Result<Void, Error>) -> Void) {
+        self.completion = completion
+    }
+
+    func complete() {
+        let completion = completion
+        self.completion = nil
+        completion?(.success(()))
+    }
+}
+
 #if canImport(UIKit) || os(macOS)
 private final class FakePlayerFrameDriver: PlayerFrameDriving {
     var configuration: PlayerFrameOutputDriver.Configuration = .default
@@ -5853,6 +7251,23 @@ private func pixelBufferChecksum(_ pixelBuffer: CVPixelBuffer) -> UInt64 {
 
 private struct MetadataOnlyFrame: MediaFrame {
     var metadata: FrameMetadata
+}
+
+private final class ManualExportPerformanceClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nanoseconds: UInt64 = 0
+
+    func set(seconds: UInt64) {
+        lock.lock()
+        nanoseconds = seconds * 1_000_000_000
+        lock.unlock()
+    }
+
+    func now() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return nanoseconds
+    }
 }
 
 private func makeImage(width: Int, height: Int) throws -> CGImage {

@@ -88,12 +88,7 @@ public final class MediaGraphBranch {
 public final class MediaGraph {
     public let source: MediaSource
     public private(set) var branches: [MediaGraphBranch]
-    public var errorHandler: ((Error) -> Void)? {
-        didSet {
-            sourceAdapter.errorHandler = errorHandler
-            branches.forEach { $0.attachErrorHandlerRecursively(errorHandler) }
-        }
-    }
+    public var errorHandler: ((Error) -> Void)?
     public var completionHandler: (() -> Void)?
     public var frameHandler: ((MediaFrame) -> Void)? {
         didSet {
@@ -103,7 +98,18 @@ public final class MediaGraph {
 
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-graph.state")
     private var hasFinished = false
+    private var acceptsSourceCallbacks = false
+    private var pendingSourceFrameDeliveries = 0
+    private var sourceDidFinish = false
+    private var isPaused = false
+    private var terminalState: TerminalState?
     private let sourceAdapter: MediaSourceNodeAdapter
+
+    private enum TerminalState {
+        case finished
+        case cancelled
+        case failed
+    }
 
     public init(
         source: MediaSource,
@@ -113,7 +119,19 @@ public final class MediaGraph {
         self.branches = branches
         self.sourceAdapter = MediaSourceNodeAdapter(source: source)
         self.sourceAdapter.finishHandler = { [weak self] in
-            self?.finishBranches()
+            self?.markSourceFinished()
+        }
+        self.sourceAdapter.sourceFrameAcceptanceHandler = { [weak self] in
+            self?.beginSourceFrameDeliveryIfAccepted() ?? false
+        }
+        self.sourceAdapter.frameTransmissionCompletedHandler = { [weak self] result in
+            self?.completeSourceFrameDelivery(result)
+        }
+        self.sourceAdapter.shouldAcceptSourceCallbacks = { [weak self] in
+            self?.canAcceptSourceCallbacks() ?? false
+        }
+        self.sourceAdapter.errorHandler = { [weak self] error in
+            self?.fail(with: error)
         }
         self.sourceAdapter.frameHandler = frameHandler
         rebuildConnections()
@@ -121,30 +139,71 @@ public final class MediaGraph {
 
     public func append(_ branch: MediaGraphBranch) {
         branches.append(branch)
-        branch.attachErrorHandlerRecursively(errorHandler)
+        branch.attachErrorHandlerRecursively(branchErrorHandler)
         rebuildConnections()
     }
 
     public func start() {
+        let shouldStart = stateQueue.sync { () -> Bool in
+            guard acceptsSourceCallbacks == false,
+                  sourceDidFinish == false,
+                  terminalState == nil,
+                  hasFinished == false else { return false }
+            acceptsSourceCallbacks = true
+            return true
+        }
+        guard shouldStart else { return }
         source.start()
     }
 
     public func pause() {
+        let shouldPause = stateQueue.sync { () -> Bool in
+            guard acceptsSourceCallbacks, terminalState == nil, isPaused == false else {
+                return false
+            }
+            isPaused = true
+            return true
+        }
+        guard shouldPause else { return }
         source.pause()
         branches.forEach { $0.pause() }
     }
 
     public func resume() {
+        let shouldResume = stateQueue.sync { () -> Bool in
+            guard acceptsSourceCallbacks, terminalState == nil, isPaused else {
+                return false
+            }
+            isPaused = false
+            return true
+        }
+        guard shouldResume else { return }
         source.resume()
         branches.forEach { $0.resume() }
     }
 
     public func stop() {
+        let shouldStop = stateQueue.sync { () -> Bool in
+            guard terminalState == nil, sourceDidFinish == false else { return false }
+            acceptsSourceCallbacks = false
+            sourceDidFinish = true
+            isPaused = false
+            return true
+        }
+        guard shouldStop else { return }
         source.stop()
-        finishBranches()
+        finishBranchesIfPossible()
     }
 
     public func cancel() {
+        let shouldCancel = stateQueue.sync { () -> Bool in
+            guard terminalState == nil else { return false }
+            terminalState = .cancelled
+            acceptsSourceCallbacks = false
+            isPaused = false
+            return true
+        }
+        guard shouldCancel else { return }
         source.cancel()
         branches.forEach { $0.cancel() }
     }
@@ -152,21 +211,91 @@ public final class MediaGraph {
     private func rebuildConnections() {
         sourceAdapter.removeAllConsumers()
         branches.forEach { branch in
-            branch.attachErrorHandlerRecursively(errorHandler)
-            sourceAdapter.add(consumer: branch.materializeNode(errorHandler: errorHandler))
+            branch.attachErrorHandlerRecursively(branchErrorHandler)
+            sourceAdapter.add(consumer: branch.materializeNode(errorHandler: branchErrorHandler))
         }
     }
 
-    private func finishBranches() {
+    private var branchErrorHandler: ((Error) -> Void) {
+        { [weak self] error in
+            self?.fail(with: error)
+        }
+    }
+
+    private func beginSourceFrameDeliveryIfAccepted() -> Bool {
+        stateQueue.sync {
+            guard acceptsSourceCallbacks, terminalState == nil, sourceDidFinish == false else {
+                return false
+            }
+            pendingSourceFrameDeliveries += 1
+            return true
+        }
+    }
+
+    private func completeSourceFrameDelivery(_ result: Result<Void, Error>) {
         let shouldFinish = stateQueue.sync { () -> Bool in
-            guard !hasFinished else { return false }
+            if pendingSourceFrameDeliveries > 0 {
+                pendingSourceFrameDeliveries -= 1
+            }
+            return sourceDidFinish
+                && pendingSourceFrameDeliveries == 0
+                && terminalState == nil
+        }
+
+        if case .failure(let error) = result {
+            fail(with: error)
+            return
+        }
+        if shouldFinish {
+            finishBranchesIfPossible()
+        }
+    }
+
+    private func markSourceFinished() {
+        let shouldFinish = stateQueue.sync { () -> Bool in
+            guard terminalState == nil else { return false }
+            acceptsSourceCallbacks = false
+            sourceDidFinish = true
+            return pendingSourceFrameDeliveries == 0
+        }
+        if shouldFinish {
+            finishBranchesIfPossible()
+        }
+    }
+
+    private func canAcceptSourceCallbacks() -> Bool {
+        stateQueue.sync {
+            acceptsSourceCallbacks && terminalState == nil && sourceDidFinish == false
+        }
+    }
+
+    private func fail(with error: Error) {
+        let shouldFail = stateQueue.sync { () -> Bool in
+            guard terminalState == nil else { return false }
+            terminalState = .failed
+            acceptsSourceCallbacks = false
+            isPaused = false
+            return true
+        }
+        guard shouldFail else { return }
+        source.cancel()
+        branches.forEach { $0.cancel() }
+        errorHandler?(error)
+    }
+
+    private func finishBranchesIfPossible() {
+        let shouldFinish = stateQueue.sync { () -> Bool in
+            guard !hasFinished,
+                  terminalState == nil,
+                  sourceDidFinish,
+                  pendingSourceFrameDeliveries == 0 else { return false }
             hasFinished = true
             return true
         }
         guard shouldFinish else { return }
 
         guard !branches.isEmpty else {
-            completionHandler?()
+            completeSuccessfully()
             return
         }
 
@@ -190,9 +319,9 @@ public final class MediaGraph {
             didComplete = true
             lock.unlock()
             if case .failure(let error) = result {
-                self.errorHandler?(error)
+                self.fail(with: error)
             } else {
-                self.completionHandler?()
+                self.completeSuccessfully()
             }
         }
 
@@ -212,6 +341,17 @@ public final class MediaGraph {
                     finishIfNeeded()
                 }
             }
+        }
+    }
+
+    private func completeSuccessfully() {
+        let shouldComplete = stateQueue.sync { () -> Bool in
+            guard terminalState == nil else { return false }
+            terminalState = .finished
+            return true
+        }
+        if shouldComplete {
+            completionHandler?()
         }
     }
 }

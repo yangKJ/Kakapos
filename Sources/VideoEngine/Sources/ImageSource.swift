@@ -44,19 +44,77 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
     }
 
     public weak var delegate: MediaSourceDelegate?
-    public var frames: [StillImageFrame]
-    public var renderSize: CGSize?
-    public var isLooping: Bool
-    public var callbackQueue: DispatchQueue
+    public var frames: [StillImageFrame] {
+        get {
+            pauseCondition.lock()
+            let value = configuredFrames
+            pauseCondition.unlock()
+            return value
+        }
+        set {
+            pauseCondition.lock()
+            configuredFrames = newValue
+            pauseCondition.unlock()
+        }
+    }
+    public var renderSize: CGSize? {
+        get {
+            pauseCondition.lock()
+            let value = configuredRenderSize
+            pauseCondition.unlock()
+            return value
+        }
+        set {
+            pauseCondition.lock()
+            configuredRenderSize = newValue
+            pauseCondition.unlock()
+        }
+    }
+    public var isLooping: Bool {
+        get {
+            pauseCondition.lock()
+            let value = configuredIsLooping
+            pauseCondition.unlock()
+            return value
+        }
+        set {
+            pauseCondition.lock()
+            configuredIsLooping = newValue
+            pauseCondition.unlock()
+        }
+    }
+    public var callbackQueue: DispatchQueue {
+        get {
+            pauseCondition.lock()
+            let value = configuredCallbackQueue
+            pauseCondition.unlock()
+            return value
+        }
+        set {
+            pauseCondition.lock()
+            configuredCallbackQueue = newValue
+            pauseCondition.unlock()
+        }
+    }
 
     private let queue = DispatchQueue(label: "com.condy.kakapos.image-source")
     private let outputNode = MediaOutputNode()
     private let pauseCondition = NSCondition()
+    private let deliveryFence = NSRecursiveLock()
+    private var configuredFrames: [StillImageFrame]
+    private var configuredRenderSize: CGSize?
+    private var configuredIsLooping: Bool
+    private var configuredCallbackQueue: DispatchQueue
+    private var deliveryQueue: DispatchQueue?
     private var shouldStop = false
     private var isPaused = false
     private var isCancelled = false
     private var currentIndex = 0
     private var currentPresentationTime: CMTime = .zero
+    private var generation: UInt64 = 0
+    private var hasStarted = false
+    private var isRunning = false
+    private var didScheduleTerminalCallback = false
 
     public init(
         frames: [StillImageFrame],
@@ -64,10 +122,10 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
         isLooping: Bool = false,
         callbackQueue: DispatchQueue = .main
     ) {
-        self.frames = frames
-        self.renderSize = renderSize
-        self.isLooping = isLooping
-        self.callbackQueue = callbackQueue
+        configuredFrames = frames
+        configuredRenderSize = renderSize
+        configuredIsLooping = isLooping
+        configuredCallbackQueue = callbackQueue
     }
 
     public convenience init(
@@ -115,22 +173,39 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
     #endif
 
     public func start() {
+        pauseCondition.lock()
+        guard hasStarted == false, didScheduleTerminalCallback == false else {
+            pauseCondition.unlock()
+            return
+        }
+        hasStarted = true
+        isRunning = true
+        shouldStop = false
+        isCancelled = false
+        generation &+= 1
+        let runGeneration = generation
+        let run = RunConfiguration(
+            frames: configuredFrames,
+            renderSize: configuredRenderSize,
+            isLooping: configuredIsLooping,
+            deliveryQueue: makeDeliveryQueueIfNeeded()
+        )
+        pauseCondition.unlock()
+
         queue.async {
-            guard !self.frames.isEmpty else {
-                self.callbackQueue.async {
-                    self.delegate?.mediaSourceDidFinish(self)
-                }
+            guard !run.frames.isEmpty else {
+                self.completeNaturally(expectedGeneration: runGeneration)
                 return
             }
-            self.shouldStop = false
-            self.isCancelled = false
-            self.consumeFrames()
+            self.consumeFrames(run, generation: runGeneration)
         }
     }
 
     public func pause() {
         pauseCondition.lock()
-        isPaused = true
+        if isRunning, shouldStop == false, isCancelled == false {
+            isPaused = true
+        }
         pauseCondition.unlock()
     }
 
@@ -142,34 +217,27 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
     }
 
     public func stop() {
-        queue.async {
-            self.shouldStop = true
-            self.resume()
-        }
+        terminate(cancelled: false)
     }
 
     public func cancel() {
-        queue.async {
-            self.isCancelled = true
-            self.shouldStop = true
-            self.resume()
-            self.callbackQueue.async {
-                self.delegate?.mediaSourceDidFinish(self)
-            }
-        }
+        terminate(cancelled: true)
     }
 
-    private func consumeFrames() {
-        repeat {
-            while currentIndex < frames.count && !shouldStop && !isCancelled {
-                waitIfNeeded()
-                if shouldStop || isCancelled {
-                    break
-                }
+    private struct RunConfiguration {
+        let frames: [StillImageFrame]
+        let renderSize: CGSize?
+        let isLooping: Bool
+        let deliveryQueue: DispatchQueue
+    }
 
-                let item = frames[currentIndex]
+    private func consumeFrames(_ run: RunConfiguration, generation expectedGeneration: UInt64) {
+        repeat {
+            while currentIndex < run.frames.count && waitUntilReady(for: expectedGeneration) {
+
+                let item = run.frames[currentIndex]
                 do {
-                    let pixelBuffer = try Self.makePixelBuffer(from: item.image, renderSize: renderSize)
+                    let pixelBuffer = try Self.makePixelBuffer(from: item.image, renderSize: run.renderSize)
                     let metadata = FrameMetadata(
                         presentationTime: currentPresentationTime,
                         duration: item.duration,
@@ -178,44 +246,140 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode {
                         frameIndex: Int64(currentIndex),
                         userInfo: item.userInfo.merging([
                             MetadataKey.imageIndex: currentIndex,
-                            MetadataKey.imageCount: frames.count,
-                            MetadataKey.isLooping: isLooping
+                            MetadataKey.imageCount: run.frames.count,
+                            MetadataKey.isLooping: run.isLooping
                         ]) { current, _ in current }
                     )
                     let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: metadata)
-                    callbackQueue.async {
+                    run.deliveryQueue.async {
+                        self.deliveryFence.lock()
+                        defer { self.deliveryFence.unlock() }
+                        guard self.canDeliverFrame(for: expectedGeneration) else { return }
                         self.delegate?.mediaSource(self, didOutput: frame)
-                        self.outputNode.transmit(frame) { _ in }
+                        guard self.canDeliverFrame(for: expectedGeneration) else { return }
+                        self.outputNode.transmit(
+                            frame,
+                            shouldContinue: { self.canDeliverFrame(for: expectedGeneration) }
+                        ) { _ in }
                     }
                     currentPresentationTime = currentPresentationTime + item.duration
                     currentIndex += 1
                 } catch {
-                    callbackQueue.async {
-                        self.delegate?.mediaSource(self, didFail: error)
-                        self.delegate?.mediaSourceDidFinish(self)
-                    }
+                    finish(with: error, expectedGeneration: expectedGeneration)
                     return
                 }
             }
 
-            if isLooping && !frames.isEmpty && !shouldStop && !isCancelled {
+            if run.isLooping && !run.frames.isEmpty && isRunActive(expectedGeneration) {
                 currentIndex = 0
                 continue
             }
             break
         } while true
 
-        callbackQueue.async {
+        completeNaturally(expectedGeneration: expectedGeneration)
+    }
+
+    private func waitUntilReady(for expectedGeneration: UInt64) -> Bool {
+        pauseCondition.lock()
+        while isPaused && generation == expectedGeneration && !shouldStop && !isCancelled {
+            pauseCondition.wait()
+        }
+        let isReady = isActiveRun(expectedGeneration)
+        pauseCondition.unlock()
+        return isReady
+    }
+
+    private func isActiveRun(_ expectedGeneration: UInt64) -> Bool {
+        generation == expectedGeneration
+            && isRunning
+            && shouldStop == false
+            && isCancelled == false
+            && didScheduleTerminalCallback == false
+    }
+
+    private func isRunActive(_ expectedGeneration: UInt64) -> Bool {
+        pauseCondition.lock()
+        let isActive = isActiveRun(expectedGeneration)
+        pauseCondition.unlock()
+        return isActive
+    }
+
+    private func canDeliverFrame(for expectedGeneration: UInt64) -> Bool {
+        pauseCondition.lock()
+        let canDeliver = generation == expectedGeneration
+        pauseCondition.unlock()
+        return canDeliver
+    }
+
+    private func terminate(cancelled: Bool) {
+        pauseCondition.lock()
+        guard didScheduleTerminalCallback == false else {
+            pauseCondition.unlock()
+            return
+        }
+        shouldStop = true
+        isCancelled = cancelled
+        isRunning = false
+        generation &+= 1
+        didScheduleTerminalCallback = true
+        let deliveryQueue = makeDeliveryQueueIfNeeded()
+        pauseCondition.broadcast()
+        pauseCondition.unlock()
+        deliveryFence.lock()
+        deliveryFence.unlock()
+        deliveryQueue.async {
             self.delegate?.mediaSourceDidFinish(self)
         }
     }
 
-    private func waitIfNeeded() {
+    private func finish(with error: Error, expectedGeneration: UInt64) {
         pauseCondition.lock()
-        while isPaused && !shouldStop && !isCancelled {
-            pauseCondition.wait()
+        guard generation == expectedGeneration, didScheduleTerminalCallback == false else {
+            pauseCondition.unlock()
+            return
         }
+        shouldStop = true
+        isRunning = false
+        generation &+= 1
+        didScheduleTerminalCallback = true
+        let deliveryQueue = makeDeliveryQueueIfNeeded()
+        pauseCondition.broadcast()
         pauseCondition.unlock()
+        deliveryQueue.async {
+            self.delegate?.mediaSource(self, didFail: error)
+            self.delegate?.mediaSourceDidFinish(self)
+        }
+    }
+
+    private func completeNaturally(expectedGeneration: UInt64) {
+        pauseCondition.lock()
+        guard generation == expectedGeneration, didScheduleTerminalCallback == false else {
+            pauseCondition.unlock()
+            return
+        }
+        shouldStop = true
+        isRunning = false
+        didScheduleTerminalCallback = true
+        let deliveryQueue = makeDeliveryQueueIfNeeded()
+        pauseCondition.broadcast()
+        pauseCondition.unlock()
+        deliveryQueue.async {
+            self.delegate?.mediaSourceDidFinish(self)
+        }
+    }
+
+    /// Must be called while `pauseCondition` is locked.
+    private func makeDeliveryQueueIfNeeded() -> DispatchQueue {
+        if let deliveryQueue {
+            return deliveryQueue
+        }
+        let queue = DispatchQueue(
+            label: "com.condy.kakapos.image-source.delivery",
+            target: configuredCallbackQueue
+        )
+        deliveryQueue = queue
+        return queue
     }
 
     private static func makePixelBuffer(from image: CGImage, renderSize: CGSize?) throws -> CVPixelBuffer {

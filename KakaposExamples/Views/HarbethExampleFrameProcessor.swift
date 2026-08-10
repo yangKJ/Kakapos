@@ -8,6 +8,7 @@
 import CoreVideo
 import Foundation
 import Harbeth
+import Kakapos
 
 private enum HarbethExampleFrameProcessorError: Error {
     case pixelBufferUnavailable

@@ -9,6 +9,7 @@ import SwiftUI
 import AVFoundation
 import AVKit
 import Harbeth
+import Kakapos
 import Photos
 
 struct OfflineExportView: View {

@@ -158,6 +158,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     private let driverFactory: (AVPlayer, PlayerFrameOutputDriver.Configuration, @escaping (PlayerFrameOutputDriver.VideoFrame) -> Void) -> PlayerFrameDriving
     private let lifecycleLock = NSLock()
     private var acceptsFrames = true
+    private var seekGeneration: UInt64 = 0
 
     public init(
         player: AVPlayer,
@@ -206,6 +207,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     public func start() {
         resetFrameAcceptance()
+        invalidatePendingSeeks(cancelPlayerSeeks: true)
         observePlayerIfNeeded()
         lastSeekTargetTime = nil
         lastFrame = nil
@@ -235,6 +237,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     public func stop() {
         rejectFurtherFrames()
+        invalidatePendingSeeks(cancelPlayerSeeks: true)
         coordinator.stop()
         updateState(from: coordinator.playbackState)
         lastSeekTargetTime = nil
@@ -264,6 +267,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         toleranceAfter: CMTime = .zero,
         completion: ((Bool) -> Void)? = nil
     ) {
+        let requestGeneration = nextSeekGeneration()
         lastSeekTargetTime = time
         lastFrame = nil
         lastFrameRequestReason = nil
@@ -272,8 +276,12 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
                 completion?(finished)
                 return
             }
-            if finished {
-                self.coordinator.resume()
+            guard self.isCurrentSeekGeneration(requestGeneration), self.canAcceptFrames() else {
+                completion?(finished)
+                return
+            }
+            if finished, self.canAcceptFrames() {
+                self.coordinator.resumeAfterSeek(with: self.player.currentItem)
                 self.updateState(from: self.coordinator.playbackState)
                 self.driver?.setNeedsUpdate()
                 self.driver?.updateIfNeeded()
@@ -369,6 +377,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     private func handleCurrentItemChange(_ item: AVPlayerItem?) {
         let didChange = coordinator.updateCurrentItem(item)
         if didChange {
+            invalidatePendingSeeks(cancelPlayerSeeks: false)
             lastSeekTargetTime = nil
             lastFrame = nil
             lastFrameRequestReason = nil
@@ -427,7 +436,8 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            self.coordinator.resume()
+            guard self.canAcceptFrames() else { return }
+            self.coordinator.resumeAfterSeek(with: self.player.currentItem)
             self.updateState(from: self.coordinator.playbackState)
             self.driver?.setNeedsUpdate()
         }
@@ -500,6 +510,30 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         let result = acceptsFrames
         lifecycleLock.unlock()
         return result
+    }
+
+    private func nextSeekGeneration() -> UInt64 {
+        lifecycleLock.lock()
+        seekGeneration &+= 1
+        let generation = seekGeneration
+        lifecycleLock.unlock()
+        return generation
+    }
+
+    private func invalidatePendingSeeks(cancelPlayerSeeks: Bool) {
+        lifecycleLock.lock()
+        seekGeneration &+= 1
+        lifecycleLock.unlock()
+        if cancelPlayerSeeks {
+            player.currentItem?.cancelPendingSeeks()
+        }
+    }
+
+    private func isCurrentSeekGeneration(_ generation: UInt64) -> Bool {
+        lifecycleLock.lock()
+        let isCurrent = seekGeneration == generation
+        lifecycleLock.unlock()
+        return isCurrent
     }
 
     @discardableResult

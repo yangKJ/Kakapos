@@ -25,6 +25,7 @@ internal final class TimelineCompiler {
         videoComposition.renderSize = compositionModel.renderSize
         videoComposition.frameDuration = compositionModel.frameDuration
         let audioMix = AVMutableAudioMix()
+        var diagnostics: [TimelineCompilationDiagnostic] = []
 
         let flattenedLayers = compositionModel.flattenedLayers()
         let resolvedLayers = resolve(flattenedLayers)
@@ -35,12 +36,18 @@ internal final class TimelineCompiler {
             audioLayers: resolvedLayers.audioLayers
         )
 
-        insertVideoLayers(resolvedLayers.videoLayers, allocation: videoAllocation, into: composition)
+        insertVideoLayers(
+            resolvedLayers.videoLayers,
+            allocation: videoAllocation,
+            into: composition,
+            diagnostics: &diagnostics
+        )
         let audioParameters = insertAudioLayers(
             clipLayers: resolvedLayers.videoLayers,
             audioLayers: resolvedLayers.audioLayers,
             allocation: audioAllocation,
-            into: composition
+            into: composition,
+            diagnostics: &diagnostics
         )
 
         let renderInstructions = buildRenderInstructions(
@@ -87,7 +94,8 @@ internal final class TimelineCompiler {
             renderInstructions: renderInstructions,
             resolvedLayers: resolvedLayers,
             renderPlan: renderPlan,
-            overlayLayer: overlayLayer
+            overlayLayer: overlayLayer,
+            diagnostics: diagnostics
         )
     }
 
@@ -172,22 +180,55 @@ internal final class TimelineCompiler {
     private func insertVideoLayers(
         _ layers: [ClipLayer],
         allocation: [ObjectIdentifier: CMPersistentTrackID],
-        into composition: AVMutableComposition
+        into composition: AVMutableComposition,
+        diagnostics: inout [TimelineCompilationDiagnostic]
     ) {
         for layer in layers {
-            guard let sourceTrack = layer.asset.tracks(withMediaType: .video).first else { continue }
+            guard let sourceTrack = layer.asset.tracks(withMediaType: .video).first else {
+                diagnostics.append(.init(
+                    layerKind: .clip,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.video.rawValue,
+                    description: "source video track is missing"
+                ))
+                continue
+            }
             let sourceRange = layer.sourceTimeRange ?? sourceTrack.timeRange
+            if let description = invalidSourceRangeDescription(sourceRange, for: sourceTrack) {
+                diagnostics.append(.init(
+                    layerKind: .clip,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.video.rawValue,
+                    description: description
+                ))
+                continue
+            }
             guard let trackID = allocation[ObjectIdentifier(layer)],
                   let compositionTrack = ensureTrack(
                     in: composition,
                     mediaType: .video,
                     preferredTrackID: trackID
                   ) else {
+                diagnostics.append(.init(
+                    layerKind: .clip,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.video.rawValue,
+                    description: "composition video track could not be allocated"
+                ))
                 continue
             }
 
-            try? compositionTrack.insertTimeRange(sourceRange, of: sourceTrack, at: layer.timeRange.start)
-            compositionTrack.preferredTransform = sourceTrack.preferredTransform
+            do {
+                try compositionTrack.insertTimeRange(sourceRange, of: sourceTrack, at: layer.timeRange.start)
+                compositionTrack.preferredTransform = sourceTrack.preferredTransform
+            } catch {
+                diagnostics.append(.init(
+                    layerKind: .clip,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.video.rawValue,
+                    description: error.localizedDescription
+                ))
+            }
         }
     }
 
@@ -195,13 +236,23 @@ internal final class TimelineCompiler {
         clipLayers: [ClipLayer],
         audioLayers: [AudioLayer],
         allocation: [ObjectIdentifier: CMPersistentTrackID],
-        into composition: AVMutableComposition
+        into composition: AVMutableComposition,
+        diagnostics: inout [TimelineCompilationDiagnostic]
     ) -> [AVMutableAudioMixInputParameters] {
         var parametersByTrackID: [CMPersistentTrackID: AVMutableAudioMixInputParameters] = [:]
 
         for layer in clipLayers {
             guard let sourceTrack = layer.asset.tracks(withMediaType: .audio).first else { continue }
             let sourceRange = layer.sourceTimeRange ?? sourceTrack.timeRange
+            if let description = invalidSourceRangeDescription(sourceRange, for: sourceTrack) {
+                diagnostics.append(.init(
+                    layerKind: .clip,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.audio.rawValue,
+                    description: description
+                ))
+                continue
+            }
             guard let trackID = allocation[ObjectIdentifier(layer)],
                   let compositionTrack = ensureTrack(
                     in: composition,
@@ -211,25 +262,68 @@ internal final class TimelineCompiler {
                 continue
             }
 
-            try? compositionTrack.insertTimeRange(sourceRange, of: sourceTrack, at: layer.timeRange.start)
+            do {
+                try compositionTrack.insertTimeRange(sourceRange, of: sourceTrack, at: layer.timeRange.start)
+            } catch {
+                diagnostics.append(.init(
+                    layerKind: .clip,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.audio.rawValue,
+                    description: error.localizedDescription
+                ))
+                continue
+            }
             let parameters = parametersByTrackID[trackID] ?? AVMutableAudioMixInputParameters(track: compositionTrack)
             applyClipAudioMix(layer, to: parameters)
             parametersByTrackID[trackID] = parameters
         }
 
         for layer in audioLayers {
-            guard let sourceTrack = layer.asset.tracks(withMediaType: .audio).first else { continue }
+            guard let sourceTrack = layer.asset.tracks(withMediaType: .audio).first else {
+                diagnostics.append(.init(
+                    layerKind: .audio,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.audio.rawValue,
+                    description: "source audio track is missing"
+                ))
+                continue
+            }
             let sourceRange = layer.sourceTimeRange ?? sourceTrack.timeRange
+            if let description = invalidSourceRangeDescription(sourceRange, for: sourceTrack) {
+                diagnostics.append(.init(
+                    layerKind: .audio,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.audio.rawValue,
+                    description: description
+                ))
+                continue
+            }
             guard let trackID = allocation[ObjectIdentifier(layer)],
                   let compositionTrack = ensureTrack(
                     in: composition,
                     mediaType: .audio,
                     preferredTrackID: trackID
                   ) else {
+                diagnostics.append(.init(
+                    layerKind: .audio,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.audio.rawValue,
+                    description: "composition audio track could not be allocated"
+                ))
                 continue
             }
 
-            try? compositionTrack.insertTimeRange(sourceRange, of: sourceTrack, at: layer.timeRange.start)
+            do {
+                try compositionTrack.insertTimeRange(sourceRange, of: sourceTrack, at: layer.timeRange.start)
+            } catch {
+                diagnostics.append(.init(
+                    layerKind: .audio,
+                    layerLevel: layer.layerLevel,
+                    mediaType: AVMediaType.audio.rawValue,
+                    description: error.localizedDescription
+                ))
+                continue
+            }
             let parameters = parametersByTrackID[trackID] ?? AVMutableAudioMixInputParameters(track: compositionTrack)
             applyAudioLayerMix(layer, to: parameters)
             parametersByTrackID[trackID] = parameters
@@ -242,6 +336,19 @@ internal final class TimelineCompiler {
         )
 
         return parametersByTrackID.keys.sorted().compactMap { parametersByTrackID[$0] }
+    }
+
+    private func invalidSourceRangeDescription(_ range: CMTimeRange, for track: AVAssetTrack) -> String? {
+        guard range.isValid, range.isEmpty == false, range.duration > .zero else {
+            return "source time range is invalid or empty"
+        }
+        let availableRange = track.timeRange
+        guard availableRange.isValid,
+              range.start >= availableRange.start,
+              range.end <= availableRange.end else {
+            return "source time range is outside the available track range"
+        }
+        return nil
     }
 
     private func applyClipAudioMix(_ layer: ClipLayer, to parameters: AVMutableAudioMixInputParameters) {

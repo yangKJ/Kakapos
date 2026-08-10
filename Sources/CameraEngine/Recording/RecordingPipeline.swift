@@ -316,7 +316,12 @@ public final class RecordingPipeline {
     ) throws {
         self.source = source
         self.recorderSink = try RecorderSink(outputURL: outputURL, fileType: fileType, configuration: recorderConfiguration)
-        self.pipeline = MediaPipeline(source: source, processors: processors, sinks: [recorderSink])
+        self.pipeline = MediaPipeline(
+            source: source,
+            processors: processors,
+            sinks: [recorderSink],
+            deliveryPolicy: .boundedDropNewest(maximumInFlightFrames: 6)
+        )
     }
 
     public func start() {

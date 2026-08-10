@@ -11,9 +11,15 @@ import CoreGraphics
 
 public enum MediaCoreError: LocalizedError {
     case pixelBufferUnavailable
+    case processingNodeUnavailable
 
     public var errorDescription: String? {
-        "A pixel buffer is required for this media operation."
+        switch self {
+        case .pixelBufferUnavailable:
+            return "A pixel buffer is required for this media operation."
+        case .processingNodeUnavailable:
+            return "The media processing node was released before processing completed."
+        }
     }
 }
 
@@ -125,6 +131,10 @@ public final class PreviewSink: MediaSink {
     private let callbackQueue: DispatchQueue
     private let lock = NSLock()
     private var pendingFrame: MediaFrame?
+    private var pendingCallback: (image: CGImage, metadata: FrameMetadata)?
+    private var isCallbackScheduled = false
+    private var finishRequested = false
+    private var finishCompletions: [(Result<Void, Error>) -> Void] = []
 
     public private(set) var state: State = .idle
     public private(set) var lastFrame: MediaFrame?
@@ -185,7 +195,7 @@ public final class PreviewSink: MediaSink {
         lock.lock()
         let currentState = state
         let isPaused = currentState == .paused
-        let isTerminal = currentState == .finished || currentState == .cancelled
+        let isTerminal = currentState == .finished || currentState == .cancelled || finishRequested
         if isTerminal {
             lock.unlock()
             completion(.success(()))
@@ -214,8 +224,17 @@ public final class PreviewSink: MediaSink {
         lastFrame = frame
         lastImage = previewImage
         lock.unlock()
-        callbackQueue.async {
-            self.handler(previewImage, frame.metadata)
+        lock.lock()
+        pendingCallback = (previewImage, frame.metadata)
+        let shouldScheduleCallback = isCallbackScheduled == false
+        if shouldScheduleCallback {
+            isCallbackScheduled = true
+        }
+        lock.unlock()
+        if shouldScheduleCallback {
+            callbackQueue.async { [weak self] in
+                self?.drainLatestCallback()
+            }
         }
         completion(.success(()))
     }
@@ -242,16 +261,69 @@ public final class PreviewSink: MediaSink {
     public func cancel() {
         lock.lock()
         pendingFrame = nil
+        pendingCallback = nil
+        finishRequested = false
+        let completions = finishCompletions
+        finishCompletions.removeAll()
         lock.unlock()
         updateState(.cancelled)
+        completions.forEach { $0(.success(())) }
     }
 
     public func finish(completion: @escaping (Result<Void, Error>) -> Void) {
         lock.lock()
+        if state == .finished || state == .cancelled {
+            lock.unlock()
+            completion(.success(()))
+            return
+        }
         pendingFrame = nil
+        finishRequested = true
+        let shouldFinishImmediately = isCallbackScheduled == false && pendingCallback == nil
+        if shouldFinishImmediately {
+            finishRequested = false
+        } else {
+            finishCompletions.append(completion)
+        }
         lock.unlock()
-        updateState(.finished)
-        completion(.success(()))
+        if shouldFinishImmediately {
+            updateState(.finished)
+            completion(.success(()))
+        }
+    }
+
+    private func drainLatestCallback() {
+        lock.lock()
+        let isTerminal = state == .finished || state == .cancelled
+        let callback = isTerminal ? nil : pendingCallback
+        pendingCallback = nil
+        lock.unlock()
+
+        if let callback {
+            handler(callback.image, callback.metadata)
+        }
+
+        lock.lock()
+        let shouldFinish = finishRequested && pendingCallback == nil
+        let shouldContinue = pendingCallback != nil && state != .finished && state != .cancelled && finishRequested == false
+        var finishCallbacks: [(Result<Void, Error>) -> Void] = []
+        if shouldFinish {
+            finishRequested = false
+            finishCallbacks = finishCompletions
+            finishCompletions.removeAll()
+            isCallbackScheduled = false
+        } else if shouldContinue == false {
+            isCallbackScheduled = false
+        }
+        lock.unlock()
+        if shouldFinish {
+            updateState(.finished)
+            finishCallbacks.forEach { $0(.success(())) }
+        } else if shouldContinue {
+            callbackQueue.async { [weak self] in
+                self?.drainLatestCallback()
+            }
+        }
     }
 
     private func updateState(_ newState: State) {
