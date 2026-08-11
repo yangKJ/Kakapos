@@ -52,14 +52,16 @@ public final class CameraRecordingController {
         source: MediaSource,
         outputURL: URL,
         fileType: AVFileType = .mp4,
-        processors: [FrameProcessor] = []
+        processors: [FrameProcessor] = [],
+        controlsSourceLifecycle: Bool = true
     ) throws {
         self.source = source
         self.pipeline = try RecordingPipeline(
             source: source,
             outputURL: outputURL,
             fileType: fileType,
-            processors: processors
+            processors: processors,
+            controlsSourceLifecycle: controlsSourceLifecycle
         )
         self.recorderSink = pipeline.recorderSink
         wireEvents()

@@ -8,6 +8,52 @@ import AVFoundation
 
 final class CameraEngineTests: XCTestCase {
 
+    func testCameraFrameIngressGateBoundsFramesBeforeAsyncDelivery() throws {
+        let gate = CameraFrameIngressGate(maximumInFlightFrameCount: 2)
+        gate.reset()
+
+        let videoToken = gate.admit(mediaKind: .video, branchCount: 2)
+        let audioToken = gate.admit(mediaKind: .audio, branchCount: 1)
+        XCTAssertNotNil(videoToken)
+        XCTAssertNotNil(audioToken)
+        XCTAssertNil(gate.admit(mediaKind: .video, branchCount: 2))
+        XCTAssertEqual(gate.snapshot.inFlightFrameCount, 2)
+        XCTAssertEqual(gate.snapshot.highWaterMark, 2)
+        XCTAssertEqual(gate.snapshot.droppedVideoFrameCount, 1)
+
+        gate.completeBranch(for: try XCTUnwrap(videoToken))
+        XCTAssertEqual(gate.snapshot.inFlightFrameCount, 2)
+        gate.completeBranch(for: try XCTUnwrap(videoToken))
+        XCTAssertEqual(gate.snapshot.inFlightFrameCount, 1)
+        XCTAssertNotNil(gate.admit(mediaKind: .audio, branchCount: 1))
+        XCTAssertEqual(gate.snapshot.highWaterMark, 2)
+    }
+
+    func testCameraFrameIngressGateInvalidatesOldGenerationAndTracksMediaDrops() throws {
+        let gate = CameraFrameIngressGate(maximumInFlightFrameCount: 1)
+        let firstGeneration = gate.reset()
+        let oldToken = try XCTUnwrap(gate.admit(mediaKind: .video, branchCount: 1))
+        XCTAssertTrue(gate.isActive(oldToken))
+        XCTAssertTrue(gate.isCurrentGeneration(firstGeneration))
+        XCTAssertNil(gate.admit(mediaKind: .audio, branchCount: 1))
+        XCTAssertEqual(gate.snapshot.droppedAudioFrameCount, 1)
+
+        let stoppedGeneration = gate.rejectFurtherFrames()
+        XCTAssertFalse(gate.isActive(oldToken))
+        XCTAssertTrue(gate.isCurrentGeneration(stoppedGeneration))
+        XCTAssertEqual(gate.snapshot.inFlightFrameCount, 0)
+
+        let nextGeneration = gate.reset()
+        XCTAssertFalse(gate.isCurrentGeneration(stoppedGeneration))
+        XCTAssertNotEqual(nextGeneration, firstGeneration)
+        XCTAssertEqual(gate.snapshot.droppedFrameCount, 0)
+    }
+
+    func testCameraSourceConfigurationClampsIngressCapacity() {
+        XCTAssertEqual(CameraSourceConfiguration(maximumInFlightFrameCount: 0).maximumInFlightFrameCount, 1)
+        XCTAssertEqual(CameraSourceConfiguration(maximumInFlightFrameCount: 9).maximumInFlightFrameCount, 9)
+    }
+
     func testCameraPositionAndVideoStabilizationModeAreCodable() throws {
         let payload = [
             "position": CameraPosition.front.rawValue,
@@ -302,6 +348,56 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertTrue(previewController.summaryText.contains("source state"))
     }
 
+    func testCameraEngineRebuildsTerminalProcessedPreviewPipeline() throws {
+        let engine = try CameraEngine(
+            configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
+        )
+        let firstController = engine.makePreviewController(mode: .processed, processors: [])
+        let firstPipeline = try XCTUnwrap(firstController.previewPipeline)
+
+        firstController.stop()
+        let secondController = engine.startPreview(mode: .processed, processors: [])
+        let secondPipeline = try XCTUnwrap(secondController.previewPipeline)
+
+        XCTAssertFalse(firstController === secondController)
+        XCTAssertFalse(firstPipeline === secondPipeline)
+        XCTAssertEqual(firstController.state, .stopped)
+        XCTAssertEqual(secondController.state, .running)
+        XCTAssertEqual(firstPipeline.state, .finished)
+        XCTAssertEqual(secondPipeline.state, .running)
+    }
+
+    func testCameraEngineRebuildsProcessedPreviewAfterProcessorFailure() throws {
+        let engine = try CameraEngine(
+            configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
+        )
+        let processingFailed = expectation(description: "processed preview fails")
+        let processor = ClosureFrameProcessor { _, completion in
+            processingFailed.fulfill()
+            completion(.failure(NSError(domain: "CameraPreviewFailure", code: 1)))
+        }
+        let firstController = engine.makePreviewController(mode: .processed, processors: [processor])
+        let firstPipeline = try XCTUnwrap(firstController.previewPipeline)
+        let sampleBuffer = try makeCameraSampleBuffer(
+            width: 16,
+            height: 16,
+            presentationTime: .zero
+        )
+
+        firstController.start()
+        engine.source._setStateForTesting(.running)
+        engine.source._emitForTesting(sampleBuffer: sampleBuffer, mediaType: .video)
+        wait(for: [processingFailed], timeout: 1)
+
+        XCTAssertEqual(firstController.state, .failed)
+        let secondController = engine.startPreview(mode: .processed, processors: [])
+        let secondPipeline = try XCTUnwrap(secondController.previewPipeline)
+
+        XCTAssertFalse(firstController === secondController)
+        XCTAssertFalse(firstPipeline === secondPipeline)
+        XCTAssertEqual(secondController.state, .running)
+    }
+
     func testCameraEngineStopRecordingFailsWithoutRecordingController() throws {
         let engine = try CameraEngine(
             configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
@@ -432,3 +528,35 @@ private func makeCameraTestPixelBuffer(width: Int, height: Int) throws -> CVPixe
     XCTAssertEqual(status, kCVReturnSuccess)
     return try XCTUnwrap(pixelBuffer)
 }
+
+#if canImport(UIKit) && !os(watchOS)
+private func makeCameraSampleBuffer(
+    width: Int,
+    height: Int,
+    presentationTime: CMTime
+) throws -> CMSampleBuffer {
+    let pixelBuffer = try makeCameraTestPixelBuffer(width: width, height: height)
+    var formatDescription: CMVideoFormatDescription?
+    let formatStatus = CMVideoFormatDescriptionCreateForImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: pixelBuffer,
+        formatDescriptionOut: &formatDescription
+    )
+    XCTAssertEqual(formatStatus, noErr)
+    var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: 30),
+        presentationTimeStamp: presentationTime,
+        decodeTimeStamp: .invalid
+    )
+    var sampleBuffer: CMSampleBuffer?
+    let sampleStatus = CMSampleBufferCreateReadyWithImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: pixelBuffer,
+        formatDescription: try XCTUnwrap(formatDescription),
+        sampleTiming: &timing,
+        sampleBufferOut: &sampleBuffer
+    )
+    XCTAssertEqual(sampleStatus, noErr)
+    return try XCTUnwrap(sampleBuffer)
+}
+#endif

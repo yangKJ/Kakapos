@@ -536,7 +536,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(decoded.lastErrorDescription, nil)
     }
 
-    func testMediaPipelineDoesNotRestartUntilCancelledRunIsQuiescent() throws {
+    func testMediaPipelineCancelledRunCannotRestartAfterQuiescing() throws {
         let source = ManualSource()
         let processingStarted = expectation(description: "old run processing started")
         var deferredCompletion: ((Result<MediaFrame, Error>) -> Void)?
@@ -564,9 +564,115 @@ final class MediaEngineTests: XCTestCase {
         deferredCompletion?(.failure(NSError(domain: "OldRun", code: 1)))
         pipeline.start()
 
-        XCTAssertEqual(source.startCount, 2)
-        XCTAssertEqual(pipeline.state, .running)
+        XCTAssertEqual(source.startCount, 1)
+        XCTAssertEqual(pipeline.state, .cancelled)
         XCTAssertNil(pipeline.lastErrorDescription)
+    }
+
+    func testMediaPipelineRejectsSourceCallbacksBeforeFirstStart() throws {
+        let source = ManualSource()
+        let sink = TestSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+        let frame = PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        )
+        source.emit(frame)
+        source.fail(NSError(domain: "BeforeStart", code: 1))
+        source.finish()
+
+        XCTAssertEqual(pipeline.state, .idle)
+        XCTAssertTrue(sink.frames.isEmpty)
+        XCTAssertNil(pipeline.lastFrameMetadata)
+        XCTAssertNil(pipeline.lastErrorDescription)
+
+        pipeline.start()
+        source.emit(frame)
+
+        XCTAssertEqual(pipeline.state, .running)
+        XCTAssertEqual(sink.frames.map(\.metadata.frameIndex), [1])
+    }
+
+    func testMediaPipelinesShareMultiplexingSourceWithoutCompetingForLifecycle() throws {
+        let source = MultiplexingManualSource()
+        let previewSink = CountingSink()
+        let recordingSink = CountingSink()
+        let previewPipeline = MediaPipeline(
+            source: source,
+            sinks: [previewSink],
+            deliveryPolicy: .latestOnly,
+            controlsSourceLifecycle: false
+        )
+        let recordingPipeline = MediaPipeline(
+            source: source,
+            sinks: [recordingSink],
+            deliveryPolicy: .boundedDropNewest(maximumInFlightFrames: 6),
+            controlsSourceLifecycle: false
+        )
+        let firstFrame = PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        )
+        let secondFrame = PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2)
+        )
+
+        previewPipeline.start()
+        recordingPipeline.start()
+        source.emit(firstFrame)
+
+        XCTAssertEqual(source.startCount, 0)
+        XCTAssertEqual(previewSink.consumeCount, 1)
+        XCTAssertEqual(recordingSink.consumeCount, 1)
+
+        previewPipeline.stop()
+        source.emit(secondFrame)
+
+        XCTAssertEqual(source.stopCount, 0)
+        XCTAssertEqual(previewSink.consumeCount, 1)
+        XCTAssertEqual(recordingSink.consumeCount, 2)
+
+        source.finish()
+
+        XCTAssertEqual(previewSink.finishCount, 1)
+        XCTAssertEqual(recordingSink.finishCount, 1)
+        XCTAssertEqual(previewPipeline.state, .finished)
+        XCTAssertEqual(recordingPipeline.state, .finished)
+    }
+
+    func testNonOwningPipelineFailureDoesNotCancelSharedSourceOrSiblingPipeline() throws {
+        let source = MultiplexingManualSource()
+        let expectedError = NSError(domain: "SharedCameraBranch", code: 1)
+        let failingPipeline = MediaPipeline(
+            source: source,
+            sinks: [FailingConsumeSink(error: expectedError)],
+            controlsSourceLifecycle: false
+        )
+        let siblingSink = CountingSink()
+        let siblingPipeline = MediaPipeline(
+            source: source,
+            sinks: [siblingSink],
+            controlsSourceLifecycle: false
+        )
+        let frame = PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        )
+        let nextFrame = PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: CMTime(value: 1, timescale: 30), frameIndex: 2)
+        )
+
+        failingPipeline.start()
+        siblingPipeline.start()
+        source.emit(frame)
+        source.emit(nextFrame)
+
+        XCTAssertEqual(failingPipeline.state, .failed)
+        XCTAssertEqual(source.cancelCount, 0)
+        XCTAssertEqual(siblingPipeline.state, .running)
+        XCTAssertEqual(siblingSink.consumeCount, 2)
     }
 
     #if canImport(UIKit) || os(macOS)
@@ -4409,7 +4515,7 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
-    func testMediaPipelineRestartClearsStaleFailureAndFrameMetadata() throws {
+    func testMediaPipelineFailedRunIsTerminalAndCannotConsumeAnotherSourceRun() throws {
         let firstFrame = PixelBufferFrame(
             pixelBuffer: try makePixelBuffer(width: 12, height: 10),
             metadata: FrameMetadata(presentationTime: .zero, sourceTime: .zero, frameIndex: 1)
@@ -4437,14 +4543,38 @@ final class MediaEngineTests: XCTestCase {
 
         pipeline.start()
 
-        XCTAssertEqual(pipeline.state, .finished)
-        XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 2)
-        XCTAssertNil(pipeline.lastErrorDescription)
-        XCTAssertEqual(sink.frames.count, 2)
+        XCTAssertEqual(pipeline.state, .failed)
+        XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 1)
+        XCTAssertEqual(pipeline.lastErrorDescription, "MediaPipelineRestartTests#91")
+        XCTAssertEqual(sink.frames.count, 1)
         XCTAssertEqual(
             pipeline.summary.summaryText,
-            "source SequencedSource · processors 0 · sinks 1 · state finished · frame 2 · presentation 0.03s · sourceTime 0.03s"
+            "source SequencedSource · processors 0 · sinks 1 · state failed · frame 1 · presentation 0.00s · sourceTime 0.00s · error MediaPipelineRestartTests#91"
         )
+    }
+
+    func testMediaPipelineFinishedRunIsTerminalAndCannotConsumeAnotherSourceRun() throws {
+        let firstFrame = PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        )
+        let secondFrame = PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 2)
+        )
+        let source = SequencedSource(runs: [
+            [.output(firstFrame), .finish],
+            [.output(secondFrame), .finish]
+        ])
+        let sink = TestSink()
+        let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
+
+        pipeline.start()
+        pipeline.start()
+
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(pipeline.lastFrameMetadata?.frameIndex, 1)
+        XCTAssertEqual(sink.frames.map(\.metadata.frameIndex), [1])
     }
 
     func testMediaPipelineSurfacesSinkFinishFailuresAfterSourceCompletion() {
@@ -6388,7 +6518,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(source.summary.captureMode, .videoWithoutAudio)
         XCTAssertEqual(
             source.summary.summaryText,
-            "state idle · position front · auth \(source.authorizationStatus.description) · paused no · mode videoWithoutAudio"
+            "state idle · position front · auth \(source.authorizationStatus.description) · paused no · mode videoWithoutAudio · ingress 0/6 · dropped 0"
         )
 
         source._setStateForTesting(.running)
@@ -6488,6 +6618,82 @@ final class MediaEngineTests: XCTestCase {
         source.cancel()
         source._emitForTesting(sampleBuffer: secondBuffer, mediaType: .video)
         XCTAssertEqual(receivedFrames.count, 2)
+    }
+
+    func testCameraSourceStopWaitsForActiveFrameHandlerAndSkipsDelegateFanout() throws {
+        let source = try CameraSource(configuration: .init(captureMode: .videoWithoutAudio))
+        let sampleBuffer = try makeSampleBuffer(
+            width: 20,
+            height: 12,
+            presentationTime: CMTime(value: 1, timescale: 30)
+        )
+        let delegate = MediaSourceDelegateSpy()
+        let handlerEntered = DispatchSemaphore(value: 0)
+        let releaseHandler = DispatchSemaphore(value: 0)
+        let stopReturned = expectation(description: "stop returns after active handler")
+        let returnLock = NSLock()
+        var didReturnFromStop = false
+
+        source.delegate = delegate
+        source._setStateForTesting(.running)
+        source.frameHandler = { _ in
+            handlerEntered.signal()
+            _ = releaseHandler.wait(timeout: .now() + 1)
+        }
+
+        DispatchQueue.global().async {
+            guard handlerEntered.wait(timeout: .now() + 1) == .success else { return }
+            source.stop()
+            returnLock.lock()
+            didReturnFromStop = true
+            returnLock.unlock()
+            stopReturned.fulfill()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            returnLock.lock()
+            let returnedBeforeRelease = didReturnFromStop
+            returnLock.unlock()
+            XCTAssertFalse(returnedBeforeRelease)
+            releaseHandler.signal()
+        }
+
+        source._emitForTesting(sampleBuffer: sampleBuffer, mediaType: .video)
+        wait(for: [stopReturned], timeout: 2)
+
+        XCTAssertEqual(delegate.outputCount, 0)
+    }
+
+    func testCameraSourceRepeatedStopAndCancelFinishOnce() throws {
+        let source = try CameraSource(configuration: .init(captureMode: .videoWithoutAudio))
+        let delegate = MediaSourceDelegateSpy()
+        let finished = expectation(description: "camera source finished once")
+        delegate.finishHandler = { finished.fulfill() }
+        source.delegate = delegate
+        source._setStateForTesting(.running)
+
+        source.stop()
+        source.stop()
+        source.cancel()
+
+        wait(for: [finished], timeout: 1)
+        XCTAssertEqual(delegate.finishCount, 1)
+    }
+
+    func testCameraSourceDefersRestartUntilExpectedStopNotificationIsConsumed() throws {
+        let source = try CameraSource(configuration: .init(captureMode: .videoWithoutAudio))
+        source._setStateForTesting(.running)
+        source._beginTerminalHandoffForTesting(expectsStopNotification: true)
+        source.start()
+        source._drainSessionQueueForTesting()
+        source._markTerminalCallbackDeliveredForTesting()
+
+        XCTAssertTrue(source._terminalHandoffForTesting.isPending)
+        XCTAssertTrue(source._terminalHandoffForTesting.restartRequested)
+
+        NotificationCenter.default.post(name: .AVCaptureSessionDidStopRunning, object: source.session)
+        source._drainSessionQueueForTesting()
+
+        XCTAssertFalse(source._terminalHandoffForTesting.isPending)
     }
 
     func testCameraSourceInterruptionCallbacksAndSnapshotStayInSync() throws {
@@ -6727,6 +6933,62 @@ private final class ManualSource: MediaSource {
 
     func fail(_ error: Error) {
         delegate?.mediaSource(self, didFail: error)
+    }
+}
+
+private final class WeakTestMediaSourceDelegateBox {
+    weak var value: MediaSourceDelegate?
+
+    init(_ value: MediaSourceDelegate) {
+        self.value = value
+    }
+}
+
+private final class MultiplexingManualSource: MediaSource, MediaSourceDelegateMultiplexing {
+    weak var delegate: MediaSourceDelegate?
+    private var delegates: [ObjectIdentifier: WeakTestMediaSourceDelegateBox] = [:]
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var cancelCount = 0
+
+    func addMediaSourceDelegate(_ delegate: MediaSourceDelegate) {
+        delegates[ObjectIdentifier(delegate)] = WeakTestMediaSourceDelegateBox(delegate)
+    }
+
+    func removeMediaSourceDelegate(_ delegate: MediaSourceDelegate) {
+        delegates.removeValue(forKey: ObjectIdentifier(delegate))
+    }
+
+    func start() {
+        startCount += 1
+    }
+
+    func pause() {}
+    func resume() {}
+
+    func stop() {
+        stopCount += 1
+    }
+
+    func cancel() {
+        cancelCount += 1
+    }
+
+    func emit(_ frame: MediaFrame) {
+        delegateSnapshot().forEach { $0.mediaSource(self, didOutput: frame) }
+    }
+
+    func finish() {
+        delegateSnapshot().forEach { $0.mediaSourceDidFinish(self) }
+    }
+
+    private func delegateSnapshot() -> [MediaSourceDelegate] {
+        delegates = delegates.filter { $0.value.value != nil }
+        var result = delegates.values.compactMap(\.value)
+        if let delegate, result.contains(where: { $0 === delegate }) == false {
+            result.append(delegate)
+        }
+        return result
     }
 }
 

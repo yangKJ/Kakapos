@@ -392,6 +392,9 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
     public var subjectAreaMonitoringEnabled: Bool
     public var automaticallyRequestsAuthorization: Bool
     public var previewGravity: AVLayerVideoGravity
+    /// Camera ingress 在创建任何异步帧投递前允许的最大在途帧数。
+    /// 超出容量的新帧会被丢弃，并记录到 `CameraFrameIngressSnapshot`。
+    public var maximumInFlightFrameCount: Int
     public var video: CameraVideoConfiguration
     public var audio: CameraAudioConfiguration
     public var photo: CameraPhotoConfiguration
@@ -411,6 +414,7 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
         subjectAreaMonitoringEnabled: Bool = true,
         automaticallyRequestsAuthorization: Bool = false,
         previewGravity: AVLayerVideoGravity = .resizeAspectFill,
+        maximumInFlightFrameCount: Int = 6,
         video: CameraVideoConfiguration = CameraVideoConfiguration(),
         audio: CameraAudioConfiguration = CameraAudioConfiguration(),
         photo: CameraPhotoConfiguration = CameraPhotoConfiguration(),
@@ -429,6 +433,7 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
         self.subjectAreaMonitoringEnabled = subjectAreaMonitoringEnabled
         self.automaticallyRequestsAuthorization = automaticallyRequestsAuthorization
         self.previewGravity = previewGravity
+        self.maximumInFlightFrameCount = max(1, maximumInFlightFrameCount)
         self.video = video
         self.audio = audio
         self.photo = photo

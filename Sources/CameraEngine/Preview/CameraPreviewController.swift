@@ -68,7 +68,19 @@ public final class CameraPreviewController {
     public private(set) var controllerState: State = .idle
 
     public var state: State {
-        controllerState
+        guard let previewPipeline else { return controllerState }
+        switch previewPipeline.state {
+        case .idle:
+            return controllerState
+        case .running:
+            return .running
+        case .paused:
+            return .paused
+        case .finished, .cancelled:
+            return .stopped
+        case .failed:
+            return .failed
+        }
     }
 
     public var summary: Summary {
@@ -77,7 +89,7 @@ public final class CameraPreviewController {
             sourceSummaryText: source.summaryText,
             pipelineSummaryText: previewPipeline?.summaryText,
             previewState: previewSink?.state,
-            controllerState: controllerState,
+            controllerState: state,
             lastFrameIndex: previewSink?.snapshot.lastFrameIndex,
             lastPresentationTime: previewSink?.snapshot.lastPresentationTime,
             lastErrorDescription: previewPipeline?.lastErrorDescription,
@@ -94,6 +106,7 @@ public final class CameraPreviewController {
         mode: Mode = .raw,
         processors: [FrameProcessor] = [],
         callbackQueue: DispatchQueue = .main,
+        controlsSourceLifecycle: Bool = true,
         handler: PreviewSink.Handler? = nil
     ) {
         self.source = source
@@ -109,6 +122,7 @@ public final class CameraPreviewController {
                 source: source,
                 processors: processors,
                 callbackQueue: callbackQueue,
+                controlsSourceLifecycle: controlsSourceLifecycle,
                 handler: resolvedHandler
             )
             self.previewSink = CameraPreviewSink(sink: pipeline.previewSink)

@@ -37,6 +37,15 @@ public extension MediaSourceDelegate {
     func mediaSourceDidFinish(_ source: MediaSource) {}
 }
 
+/// 允许同一个实时 source 同时为多个独立 pipeline 提供回调。
+///
+/// 普通 source 仍可只实现 `MediaSource.delegate`；只有明确支持并行分支的
+/// source 才需要实现该合同，并应以弱引用保存注册的 delegate。
+public protocol MediaSourceDelegateMultiplexing: AnyObject {
+    func addMediaSourceDelegate(_ delegate: MediaSourceDelegate)
+    func removeMediaSourceDelegate(_ delegate: MediaSourceDelegate)
+}
+
 public protocol MediaSource: AnyObject {
     var delegate: MediaSourceDelegate? { get set }
     func start()

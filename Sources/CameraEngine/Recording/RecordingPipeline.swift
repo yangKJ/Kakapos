@@ -312,7 +312,8 @@ public final class RecordingPipeline {
         outputURL: URL,
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = [],
-        recorderConfiguration: RecorderSink.Configuration = .init()
+        recorderConfiguration: RecorderSink.Configuration = .init(),
+        controlsSourceLifecycle: Bool = true
     ) throws {
         self.source = source
         self.recorderSink = try RecorderSink(outputURL: outputURL, fileType: fileType, configuration: recorderConfiguration)
@@ -320,7 +321,8 @@ public final class RecordingPipeline {
             source: source,
             processors: processors,
             sinks: [recorderSink],
-            deliveryPolicy: .boundedDropNewest(maximumInFlightFrames: 6)
+            deliveryPolicy: .boundedDropNewest(maximumInFlightFrames: 6),
+            controlsSourceLifecycle: controlsSourceLifecycle
         )
     }
 
