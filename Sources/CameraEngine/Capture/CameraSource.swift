@@ -49,7 +49,15 @@ public enum CameraSourceError: Error, LocalizedError, Equatable {
     }
 }
 
-public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, MediaSourceSnapshotProviding {
+private final class WeakMediaSourceDelegateBox {
+    weak var value: MediaSourceDelegate?
+
+    init(_ value: MediaSourceDelegate) {
+        self.value = value
+    }
+}
+
+public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMultiplexing, MediaFrameSourceNode, MediaSourceSnapshotProviding {
     public struct Snapshot: Equatable {
         public let state: CameraSessionState
         public let position: CameraPosition
@@ -61,6 +69,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
         public let lastMediaType: String?
+        public let frameIngressSnapshot: CameraFrameIngressSnapshot
         public let capabilitySnapshot: CameraCapabilitySnapshot
     }
 
@@ -75,6 +84,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         public let lastFrameIndex: Int64?
         public let lastPresentationTime: CMTime?
         public let lastMediaType: String?
+        public let frameIngressSnapshot: CameraFrameIngressSnapshot
         public let capabilitySnapshot: CameraCapabilitySnapshot
 
         public var summaryText: String {
@@ -88,6 +98,8 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             if let lastMediaType {
                 text += " · mediaType \(lastMediaType)"
             }
+            text += " · ingress \(frameIngressSnapshot.inFlightFrameCount)/\(frameIngressSnapshot.maximumInFlightFrameCount)"
+            text += " · dropped \(frameIngressSnapshot.droppedFrameCount)"
             text += " · metadata \(capabilitySnapshot.supportsMetadataObjects.rawValue)"
             text += " · depth \(capabilitySnapshot.supportsDepthData.rawValue)"
             text += " · portrait \(capabilitySnapshot.supportsPortraitEffectsMatte.rawValue)"
@@ -107,7 +119,18 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         public static let portraitEffectsMatteDelivered = "kakapos.camera.portrait-matte-delivered"
     }
 
-    public weak var delegate: MediaSourceDelegate?
+    public var delegate: MediaSourceDelegate? {
+        get {
+            delegateLock.lock()
+            defer { delegateLock.unlock() }
+            return primaryDelegate
+        }
+        set {
+            delegateLock.lock()
+            primaryDelegate = newValue
+            delegateLock.unlock()
+        }
+    }
     public let session: AVCaptureSession
     public let previewLayer: AVCaptureVideoPreviewLayer
     public let advancedOutput = CameraAdvancedOutput()
@@ -124,6 +147,10 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     public var authorizationStatusChangedHandler: ((CameraAuthorizationStatus) -> Void)?
     public var isRecordingActiveProvider: (() -> Bool)?
 
+    private weak var primaryDelegate: MediaSourceDelegate?
+    private let delegateLock = NSLock()
+    private var additionalDelegates: [ObjectIdentifier: WeakMediaSourceDelegateBox] = [:]
+
     public var snapshot: Snapshot {
         Snapshot(
             state: state,
@@ -136,6 +163,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             lastFrameIndex: frameIndex > 0 ? frameIndex : nil,
             lastPresentationTime: lastPresentationTime,
             lastMediaType: lastMediaType,
+            frameIngressSnapshot: frameIngressSnapshot,
             capabilitySnapshot: capabilitySnapshot
         )
     }
@@ -153,12 +181,26 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             lastFrameIndex: currentSnapshot.lastFrameIndex,
             lastPresentationTime: currentSnapshot.lastPresentationTime,
             lastMediaType: currentSnapshot.lastMediaType,
+            frameIngressSnapshot: currentSnapshot.frameIngressSnapshot,
             capabilitySnapshot: currentSnapshot.capabilitySnapshot
         )
     }
 
     public var summaryText: String {
         summary.summaryText
+    }
+
+    public func addMediaSourceDelegate(_ delegate: MediaSourceDelegate) {
+        delegateLock.lock()
+        additionalDelegates = additionalDelegates.filter { $0.value.value != nil }
+        additionalDelegates[ObjectIdentifier(delegate)] = WeakMediaSourceDelegateBox(delegate)
+        delegateLock.unlock()
+    }
+
+    public func removeMediaSourceDelegate(_ delegate: MediaSourceDelegate) {
+        delegateLock.lock()
+        additionalDelegates.removeValue(forKey: ObjectIdentifier(delegate))
+        delegateLock.unlock()
     }
 
     public var sourceSnapshot: MediaSourceSnapshot {
@@ -177,6 +219,11 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
                 "orientation": String(describing: currentSnapshot.deviceOrientation),
                 "mirrored": currentSnapshot.isMirrored ? "yes" : "no",
                 "mediaType": currentSnapshot.lastMediaType ?? "n/a",
+                "ingressInFlight": String(currentSnapshot.frameIngressSnapshot.inFlightFrameCount),
+                "ingressMaximum": String(currentSnapshot.frameIngressSnapshot.maximumInFlightFrameCount),
+                "ingressHighWater": String(currentSnapshot.frameIngressSnapshot.highWaterMark),
+                "droppedVideoFrames": String(currentSnapshot.frameIngressSnapshot.droppedVideoFrameCount),
+                "droppedAudioFrames": String(currentSnapshot.frameIngressSnapshot.droppedAudioFrameCount),
                 "metadataSupport": currentSnapshot.capabilitySnapshot.supportsMetadataObjects.rawValue,
                 "depthSupport": currentSnapshot.capabilitySnapshot.supportsDepthData.rawValue,
                 "portraitSupport": currentSnapshot.capabilitySnapshot.supportsPortraitEffectsMatte.rawValue
@@ -227,19 +274,31 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         )
     }
 
+    public var frameIngressSnapshot: CameraFrameIngressSnapshot {
+        frameIngressGate.snapshot
+    }
+
     private let sessionQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.session")
+    private let sessionQueueKey = DispatchSpecificKey<Void>()
     /// 视频与音频统一进入同一个 owner，保证 frameIndex 与最近帧元数据严格有序。
     private let mediaOutputQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.media-output")
     private let processingQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.processing")
     private let photoQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.photo")
     private let outputNode = MediaOutputNode()
+    private let frameIngressGate: CameraFrameIngressGate
+    private let runLock = NSLock()
+    private let frameDeliveryFence = NSRecursiveLock()
+    private var isRunActive = false
+    private var activeRunGeneration: UInt64?
+    private var isStopInProgress = false
+    private var restartRequestedAfterStop = false
+    private var expectedStopNotificationGeneration: UInt64?
+    private var didDeliverTerminalCallback = false
     private var lifecycle: CameraSessionLifecycle
     private var frameIndex: Int64 = 0
     private var lastPresentationTime: CMTime?
     private var lastMediaType: String?
     private var currentOrientation: AVCaptureVideoOrientation = .portrait
-    private let lifecycleLock = NSLock()
-    private var acceptsFrames = true
     private let ownsSession: Bool
 
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -268,12 +327,16 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         self.configuration = configuration
         self.currentPosition = configuration.preferredPosition
         self.authorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
+        self.frameIngressGate = CameraFrameIngressGate(
+            maximumInFlightFrameCount: configuration.maximumInFlightFrameCount
+        )
         self.lifecycle = CameraSessionLifecycle(
             position: configuration.preferredPosition,
             authorizationStatus: Self.authorizationStatus(for: configuration.captureMode)
         )
         self.ownsSession = true
         super.init()
+        sessionQueue.setSpecific(key: sessionQueueKey, value: ())
         configureDeviceController()
         configurePreviewLayer()
         applySessionPreset()
@@ -288,12 +351,16 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         self.configuration = configuration
         self.currentPosition = configuration.preferredPosition
         self.authorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
+        self.frameIngressGate = CameraFrameIngressGate(
+            maximumInFlightFrameCount: configuration.maximumInFlightFrameCount
+        )
         self.lifecycle = CameraSessionLifecycle(
             position: configuration.preferredPosition,
             authorizationStatus: Self.authorizationStatus(for: configuration.captureMode)
         )
         self.ownsSession = false
         super.init()
+        sessionQueue.setSpecific(key: sessionQueueKey, value: ())
         configureDeviceController()
         configurePreviewLayer()
         applySessionPreset()
@@ -316,41 +383,59 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     }
 
     public func start() {
-        resetFrameAcceptance()
-        refreshRuntimeStateForStart()
+        onSessionQueue { [weak self] in
+            self?.startOnSessionQueue()
+        }
+    }
+
+    private func startOnSessionQueue() {
+        guard !deferStartUntilTerminalHandoffIfNeeded() else { return }
         let status = Self.authorizationStatus(for: configuration.captureMode)
         authorizationStatus = status
         publish(.authorizationChanged(status))
         guard status == .authorized else {
             guard configuration.automaticallyRequestsAuthorization, status == .notDetermined else {
-                notifyAuthorizationFailure()
+                let failureGeneration = invalidateRunForFailure()
+                waitForActiveFrameDeliveries()
+                notifyAuthorizationFailure(generation: failureGeneration)
                 return
             }
+            guard let authorizationGeneration = beginAuthorizationRequestIfNeeded() else { return }
             requestRequiredAuthorizations { [weak self] granted in
                 guard let self else { return }
-                if granted {
-                    self.start()
-                } else {
-                    self.notifyAuthorizationFailure()
+                self.onSessionQueue {
+                    guard self.completeAuthorizationRequest(generation: authorizationGeneration) else { return }
+                    if granted {
+                        self.startOnSessionQueue()
+                    } else {
+                        let failureGeneration = self.invalidateRunForFailure()
+                        self.waitForActiveFrameDeliveries()
+                        self.notifyAuthorizationFailure(generation: failureGeneration)
+                    }
                 }
             }
             return
         }
+        guard let runGeneration = beginRunIfNeeded() else { return }
+        refreshRuntimeStateForStart()
         publish(.startRequested)
-        sessionQueue.async {
-            do {
-                try self.ensureSessionConfigured()
-                self.applyCurrentConnections()
-                if !self.session.isRunning {
-                    self.session.startRunning()
-                } else {
-                    self.publish(.didStartRunning)
-                }
-            } catch {
-                self.publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
-                DispatchQueue.main.async {
-                    self.delegate?.mediaSource(self, didFail: error)
-                }
+        do {
+            try ensureSessionConfigured()
+            guard isActiveRunGeneration(runGeneration) else { return }
+            applyCurrentConnections()
+            let wasAlreadyRunning = session.isRunning
+            guard startSessionIfRunIsActive(generation: runGeneration) else { return }
+            if wasAlreadyRunning {
+                publish(.didStartRunning)
+            }
+        } catch {
+            guard isActiveRunGeneration(runGeneration) else { return }
+            let failureGeneration = invalidateRunForFailure()
+            waitForActiveFrameDeliveries()
+            publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
+            DispatchQueue.main.async {
+                guard self.frameIngressGate.isCurrentGeneration(failureGeneration) else { return }
+                self.notifyDelegatesOfFailure(error)
             }
         }
     }
@@ -366,23 +451,25 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     }
 
     public func stop() {
-        rejectFurtherFrames()
+        guard let terminalGeneration = beginTerminalIfNeeded() else { return }
+        let terminalDelegates = mediaSourceDelegatesSnapshot()
+        waitForActiveFrameDeliveries()
         sessionQueue.async {
             self.lastVideoSampleBuffer = nil
             self.lastVideoPixelBuffer = nil
             if self.session.isRunning {
+                self.expectStopNotification(generation: terminalGeneration)
                 self.session.stopRunning()
-            } else {
-                self.publish(.didStopRunning)
-                DispatchQueue.main.async {
-                    self.delegate?.mediaSourceDidFinish(self)
-                }
+            }
+            self.publish(.didStopRunning)
+            DispatchQueue.main.async {
+                self.notifyDelegatesOfFinish(terminalDelegates)
+                self.markTerminalCallbackDelivered()
             }
         }
     }
 
     public func cancel() {
-        rejectFurtherFrames()
         stop()
     }
 
@@ -405,7 +492,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             } catch {
                 self.publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
                 DispatchQueue.main.async {
-                    self.delegate?.mediaSource(self, didFail: error)
+                    self.notifyDelegatesOfFailure(error)
                 }
             }
         }
@@ -420,7 +507,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             }
             guard self.photoOutput.connections.isEmpty == false else {
                 DispatchQueue.main.async {
-                    self.delegate?.mediaSource(self, didFail: CameraSourceError.cannotCapturePhoto)
+                    self.notifyDelegatesOfFailure(CameraSourceError.cannotCapturePhoto)
                 }
                 return
             }
@@ -456,7 +543,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         photoQueue.async {
             guard let pixelBuffer = self.lastVideoPixelBuffer else {
                 DispatchQueue.main.async {
-                    self.delegate?.mediaSource(self, didFail: CameraSourceError.photoFrameUnavailable)
+                    self.notifyDelegatesOfFailure(CameraSourceError.photoFrameUnavailable)
                 }
                 return
             }
@@ -526,6 +613,31 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     func _setStateForTesting(_ state: CameraSessionState) {
         self.state = state
         self.isPaused = state == .paused
+        if state == .running {
+            _ = beginRunIfNeeded()
+        }
+    }
+
+    func _drainSessionQueueForTesting() {
+        onSessionQueueSync {}
+    }
+
+    func _beginTerminalHandoffForTesting(expectsStopNotification: Bool) {
+        guard let generation = beginTerminalIfNeeded() else { return }
+        if expectsStopNotification {
+            expectStopNotification(generation: generation)
+        }
+    }
+
+    func _markTerminalCallbackDeliveredForTesting() {
+        markTerminalCallbackDelivered()
+    }
+
+    var _terminalHandoffForTesting: (isPending: Bool, restartRequested: Bool) {
+        runLock.lock()
+        let value = (isStopInProgress, restartRequestedAfterStop)
+        runLock.unlock()
+        return value
     }
 
     func _handleLifecycleActionForTesting(_ action: CameraLifecycleAction) {
@@ -805,6 +917,30 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         return AVCaptureDevice.default(for: .video)
     }
 
+    private func mediaSourceDelegatesSnapshot() -> [MediaSourceDelegate] {
+        delegateLock.lock()
+        additionalDelegates = additionalDelegates.filter { $0.value.value != nil }
+        var delegates = additionalDelegates.values.compactMap(\.value)
+        if let primaryDelegate,
+           delegates.contains(where: { $0 === primaryDelegate }) == false {
+            delegates.append(primaryDelegate)
+        }
+        delegateLock.unlock()
+        return delegates
+    }
+
+    private func notifyDelegatesOfFailure(_ error: Error) {
+        mediaSourceDelegatesSnapshot().forEach { delegate in
+            delegate.mediaSource(self, didFail: error)
+        }
+    }
+
+    private func notifyDelegatesOfFinish(_ delegates: [MediaSourceDelegate]? = nil) {
+        (delegates ?? mediaSourceDelegatesSnapshot()).forEach { delegate in
+            delegate.mediaSourceDidFinish(self)
+        }
+    }
+
     private func resolvedFlashMode() -> AVCaptureDevice.FlashMode {
         let preferred = deviceController.preferredFlashMode
         guard photoOutput.supportedFlashModes.contains(preferred) else {
@@ -814,7 +950,6 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
     }
 
     private func emit(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
-        guard canAcceptFrames() else { return }
         guard !isPaused else { return }
         frameIndex += 1
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
@@ -825,7 +960,7 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
             lastVideoSampleBuffer = sampleBuffer
             lastVideoPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         }
-        var frame = SampleBufferFrame(
+        let frame = SampleBufferFrame(
             sampleBuffer: sampleBuffer,
             metadata: FrameMetadata(
                 presentationTime: presentationTime,
@@ -842,13 +977,37 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
                 ]
             )
         )
-        frame.metadata.frameIndex = frameIndex
+        let mediaKind: CameraFrameIngressMediaKind = mediaType == .video ? .video : .audio
+        guard let ingressToken = frameIngressGate.admit(mediaKind: mediaKind, branchCount: 2) else {
+            return
+        }
         DispatchQueue.main.async {
+            self.frameDeliveryFence.lock()
+            defer {
+                self.frameDeliveryFence.unlock()
+                self.frameIngressGate.completeBranch(for: ingressToken)
+            }
+            guard self.frameIngressGate.isActive(ingressToken) else { return }
             self.frameHandler?(frame)
-            self.delegate?.mediaSource(self, didOutput: frame)
+            guard self.frameIngressGate.isActive(ingressToken) else { return }
+            for delegate in self.mediaSourceDelegatesSnapshot() {
+                guard self.frameIngressGate.isActive(ingressToken) else { break }
+                delegate.mediaSource(self, didOutput: frame)
+            }
         }
         processingQueue.async {
-            self.outputNode.transmit(frame) { _ in }
+            self.frameDeliveryFence.lock()
+            defer { self.frameDeliveryFence.unlock() }
+            guard self.frameIngressGate.isActive(ingressToken) else {
+                self.frameIngressGate.completeBranch(for: ingressToken)
+                return
+            }
+            self.outputNode.transmit(
+                frame,
+                shouldContinue: { self.frameIngressGate.isActive(ingressToken) }
+            ) { _ in
+                self.frameIngressGate.completeBranch(for: ingressToken)
+            }
         }
     }
 
@@ -932,12 +1091,13 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         finishIfNeeded()
     }
 
-    private func notifyAuthorizationFailure() {
+    private func notifyAuthorizationFailure(generation: UInt64) {
         let status = Self.authorizationStatus(for: configuration.captureMode)
         publish(.authorizationChanged(status))
         let error = CameraSourceError.authorizationDenied(requestedMediaTypes: configuration.requestedMediaTypes)
         DispatchQueue.main.async {
-            self.delegate?.mediaSource(self, didFail: error)
+            guard self.frameIngressGate.isCurrentGeneration(generation) else { return }
+            self.notifyDelegatesOfFailure(error)
         }
     }
 
@@ -971,23 +1131,157 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         applyMirroring(for: currentPosition)
     }
 
-    private func resetFrameAcceptance() {
-        lifecycleLock.lock()
-        acceptsFrames = true
-        lifecycleLock.unlock()
+    private func beginRunIfNeeded() -> UInt64? {
+        runLock.lock()
+        defer { runLock.unlock() }
+        guard !isRunActive, !isStopInProgress else { return nil }
+        isRunActive = true
+        didDeliverTerminalCallback = false
+        let generation = frameIngressGate.reset()
+        activeRunGeneration = generation
+        return generation
     }
 
-    private func rejectFurtherFrames() {
-        lifecycleLock.lock()
-        acceptsFrames = false
-        lifecycleLock.unlock()
+    private func beginAuthorizationRequestIfNeeded() -> UInt64? {
+        runLock.lock()
+        defer { runLock.unlock() }
+        guard !isRunActive, !isStopInProgress else { return nil }
+        isRunActive = true
+        didDeliverTerminalCallback = false
+        let generation = frameIngressGate.rejectFurtherFrames()
+        activeRunGeneration = generation
+        return generation
     }
 
-    private func canAcceptFrames() -> Bool {
-        lifecycleLock.lock()
-        let result = acceptsFrames
-        lifecycleLock.unlock()
-        return result
+    private func completeAuthorizationRequest(generation: UInt64) -> Bool {
+        runLock.lock()
+        defer { runLock.unlock() }
+        guard isRunActive,
+              !isStopInProgress,
+              frameIngressGate.isCurrentGeneration(generation) else { return false }
+        isRunActive = false
+        activeRunGeneration = nil
+        return true
+    }
+
+    private func beginTerminalIfNeeded() -> UInt64? {
+        runLock.lock()
+        defer { runLock.unlock() }
+        guard isRunActive, !isStopInProgress else { return nil }
+        isRunActive = false
+        activeRunGeneration = nil
+        isStopInProgress = true
+        didDeliverTerminalCallback = false
+        return frameIngressGate.rejectFurtherFrames()
+    }
+
+    private func invalidateRunForFailure() -> UInt64 {
+        runLock.lock()
+        defer { runLock.unlock() }
+        isRunActive = false
+        activeRunGeneration = nil
+        return frameIngressGate.rejectFurtherFrames()
+    }
+
+    private func deferStartUntilTerminalHandoffIfNeeded() -> Bool {
+        runLock.lock()
+        defer { runLock.unlock() }
+        guard isStopInProgress else { return false }
+        restartRequestedAfterStop = true
+        return true
+    }
+
+    private func expectStopNotification(generation: UInt64) {
+        runLock.lock()
+        if isStopInProgress {
+            expectedStopNotificationGeneration = generation
+        }
+        runLock.unlock()
+    }
+
+    private func currentActiveRunGeneration() -> UInt64? {
+        runLock.lock()
+        let generation = isRunActive ? activeRunGeneration : nil
+        runLock.unlock()
+        return generation
+    }
+
+    private func isActiveRunGeneration(_ generation: UInt64) -> Bool {
+        runLock.lock()
+        let isCurrent = isRunActive && activeRunGeneration == generation
+        runLock.unlock()
+        return isCurrent
+    }
+
+    /// `startRunning()` 可能阻塞，不能在持有 runLock 时调用（AVFoundation 可能同步回调通知）。
+    /// 若并发 stop 在调用期间失效了 generation，则在 session owner 上立即回收本次启动。
+    private func startSessionIfRunIsActive(generation: UInt64) -> Bool {
+        guard isActiveRunGeneration(generation) else { return false }
+        if !session.isRunning {
+            session.startRunning()
+        }
+        guard isActiveRunGeneration(generation) else {
+            if session.isRunning {
+                session.stopRunning()
+            }
+            return false
+        }
+        return true
+    }
+
+    private func consumeExpectedStopNotification() -> Bool {
+        runLock.lock()
+        guard expectedStopNotificationGeneration != nil else {
+            runLock.unlock()
+            return false
+        }
+        expectedStopNotificationGeneration = nil
+        let shouldRestart = completeTerminalHandoffIfReadyLocked()
+        runLock.unlock()
+        if shouldRestart {
+            start()
+        }
+        return true
+    }
+
+    private func markTerminalCallbackDelivered() {
+        runLock.lock()
+        didDeliverTerminalCallback = true
+        let shouldRestart = completeTerminalHandoffIfReadyLocked()
+        runLock.unlock()
+        if shouldRestart {
+            start()
+        }
+    }
+
+    private func completeTerminalHandoffIfReadyLocked() -> Bool {
+        guard isStopInProgress,
+              didDeliverTerminalCallback,
+              expectedStopNotificationGeneration == nil else { return false }
+        isStopInProgress = false
+        let shouldRestart = restartRequestedAfterStop
+        restartRequestedAfterStop = false
+        return shouldRestart
+    }
+
+    private func waitForActiveFrameDeliveries() {
+        frameDeliveryFence.lock()
+        frameDeliveryFence.unlock()
+    }
+
+    private func onSessionQueue(_ work: @escaping () -> Void) {
+        if DispatchQueue.getSpecific(key: sessionQueueKey) != nil {
+            work()
+        } else {
+            sessionQueue.async(execute: work)
+        }
+    }
+
+    private func onSessionQueueSync<T>(_ work: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: sessionQueueKey) != nil {
+            return work()
+        }
+        return sessionQueue.sync(execute: work)
     }
 
     private func startObservingNotifications() {
@@ -995,31 +1289,50 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         let center = NotificationCenter.default
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionDidStartRunning, object: session, queue: nil) { [weak self] _ in
-                self?.publish(.didStartRunning)
+                guard let self, let runGeneration = self.currentActiveRunGeneration() else { return }
+                self.onSessionQueue {
+                    guard self.isActiveRunGeneration(runGeneration) else { return }
+                    self.publish(.didStartRunning)
+                }
             }
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionDidStopRunning, object: session, queue: nil) { [weak self] _ in
                 guard let self else { return }
-                self.publish(.didStopRunning)
-                DispatchQueue.main.async {
-                    self.delegate?.mediaSourceDidFinish(self)
+                self.onSessionQueue {
+                    guard !self.consumeExpectedStopNotification() else { return }
+                    guard self.beginTerminalIfNeeded() != nil else { return }
+                    let terminalDelegates = self.mediaSourceDelegatesSnapshot()
+                    self.waitForActiveFrameDeliveries()
+                    self.publish(.didStopRunning)
+                    DispatchQueue.main.async {
+                        self.notifyDelegatesOfFinish(terminalDelegates)
+                        self.markTerminalCallbackDelivered()
+                    }
                 }
             }
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: nil) { [weak self] notification in
-                self?.handleRuntimeError(notification)
+                guard let self, let runGeneration = self.currentActiveRunGeneration() else { return }
+                self.onSessionQueue {
+                    guard self.isActiveRunGeneration(runGeneration) else { return }
+                    self.handleRuntimeError(notification)
+                }
             }
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil) { [weak self] _ in
-                self?.handleSessionInterruption(isRecordingActive: self?.isRecordingActiveProvider?() == true)
+                self?.onSessionQueue {
+                    self?.handleSessionInterruption(isRecordingActive: self?.isRecordingActiveProvider?() == true)
+                }
             }
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: session, queue: nil) { [weak self] _ in
-                self?.handleSessionInterruptionEnded()
+                self?.onSessionQueue {
+                    self?.handleSessionInterruptionEnded()
+                }
             }
         )
         notificationObservers.append(
@@ -1077,15 +1390,22 @@ public final class CameraSource: NSObject, MediaSource, MediaFrameSourceNode, Me
         let error = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
         let isRecoverable = error?.domain == AVFoundationErrorDomain && error?.code == AVError.mediaServicesWereReset.rawValue
         publish(.runtimeError(isRecoverable: isRecoverable, description: error?.localizedDescription))
-        if let error {
-            DispatchQueue.main.async {
-                self.delegate?.mediaSource(self, didFail: error)
-            }
+        if isRecoverable {
+            guard let runGeneration = currentActiveRunGeneration(),
+                  authorizationStatus == .authorized else { return }
+            _ = startSessionIfRunIsActive(generation: runGeneration)
+            return
         }
-        guard isRecoverable else { return }
-        sessionQueue.async {
-            guard !self.session.isRunning, self.authorizationStatus == .authorized else { return }
-            self.session.startRunning()
+        guard let error, let terminalGeneration = beginTerminalIfNeeded() else { return }
+        let terminalDelegates = mediaSourceDelegatesSnapshot()
+        waitForActiveFrameDeliveries()
+        if session.isRunning {
+            expectStopNotification(generation: terminalGeneration)
+            session.stopRunning()
+        }
+        DispatchQueue.main.async {
+            terminalDelegates.forEach { $0.mediaSource(self, didFail: error) }
+            self.markTerminalCallbackDelivered()
         }
     }
 
@@ -1188,7 +1508,7 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
     ) {
         if let error {
             DispatchQueue.main.async {
-                self.delegate?.mediaSource(self, didFail: error)
+                self.notifyDelegatesOfFailure(error)
             }
             return
         }

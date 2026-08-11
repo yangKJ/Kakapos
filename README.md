@@ -76,6 +76,7 @@ The board entry points above are the recommended path for new code.
 ### Camera Engine Highlights
 
 - `CameraEngine`: top-level camera orchestration entry that assembles source, preview, recording, and processor routing.
+- `CameraEngine` is the lifecycle owner when processed preview and recording share one `CameraSource`; both branches receive frames without competing to start or stop the capture session.
 - `CameraSource`: video, audio, photo, metadata-object, depth, and portrait-matte capture output.
 - `CameraDeviceController`: focus, exposure, white balance, zoom, torch, flash, frame-rate, and format control.
 - `CameraPreviewController`: raw preview-layer mode and processed preview mode through `FrameProcessor`.
@@ -116,6 +117,10 @@ let recordingPipeline = MediaPipeline(
 ```
 
 `PreviewPipeline` uses latest-only delivery, while `RecordingPipeline` uses a bounded real-time queue. `droppedSourceFrameCount` exposes pressure without changing offline pipelines into lossy pipelines.
+
+A `MediaPipeline` instance is single-run. It can pause and resume while running, but `finished`, `cancelled`, and `failed` are terminal states. Create a new pipeline, processor chain, and sinks for a new run; a restartable source does not make the whole pipeline reusable.
+
+`CameraSource` also applies bounded drop-newest admission before it creates any asynchronous frame delivery. The default ingress capacity is 6 frames, configurable through `CameraSourceConfiguration.maximumInFlightFrameCount`. Inspect `frameIngressSnapshot` for the current/high-water count and separate dropped video/audio totals.
 
 For reusable real-time routing, build a chain once and attach it anywhere a `MediaSink` is accepted:
 

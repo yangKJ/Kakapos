@@ -65,6 +65,8 @@ public final class MediaProcessorChain: MediaSink {
     }
 }
 
+/// 单次运行的媒体管线。`finished`、`cancelled` 和 `failed` 都是不可逆终态；
+/// 新一轮处理必须创建新的管线、处理链和 sink。
 public final class MediaPipeline: @unchecked Sendable {
 
     fileprivate struct UnsafeSendableBox<T>: @unchecked Sendable {
@@ -232,10 +234,11 @@ public final class MediaPipeline: @unchecked Sendable {
     }
 
     private let sourceAdapter: MediaSourceNodeAdapter
+    private let controlsSourceLifecycle: Bool
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-pipeline.state")
     private let lifecycleLock = NSLock()
     private var hasFinished = false
-    private var acceptsSourceCallbacks = true
+    private var acceptsSourceCallbacks = false
     private var pendingSourceFrameDeliveries = 0
     private var sourceFrameCompletionsInProgress = 0
     private var sourceDidFinish = false
@@ -248,11 +251,13 @@ public final class MediaPipeline: @unchecked Sendable {
         source: MediaSource,
         processors: [FrameProcessor] = [],
         sinks: [MediaSink] = [],
-        deliveryPolicy: MediaSourceDeliveryPolicy = .unbounded
+        deliveryPolicy: MediaSourceDeliveryPolicy = .unbounded,
+        controlsSourceLifecycle: Bool = true
     ) {
         self.source = source
         self.chain = MediaProcessorChain(processors: processors, sinks: sinks)
         self.sourceAdapter = MediaSourceNodeAdapter(source: source)
+        self.controlsSourceLifecycle = controlsSourceLifecycle
         self.sourceAdapter.deliveryPolicy = deliveryPolicy
         self.sourceAdapter.add(consumer: chain.node)
         self.sourceAdapter.shouldAcceptSourceCallbacks = { [weak self] in
@@ -265,8 +270,8 @@ public final class MediaPipeline: @unchecked Sendable {
             guard let self, self.canAcceptSourceCallbacks() else { return }
             self.storeLastFrameMetadata(frame.metadata)
         }
-        self.sourceAdapter.frameTransmissionStartedHandler = { [weak self] in
-            self?.beginSourceFrameDelivery()
+        self.sourceAdapter.sourceFrameAcceptanceHandler = { [weak self] in
+            self?.beginSourceFrameDeliveryIfAccepted() ?? false
         }
         self.sourceAdapter.frameTransmissionCompletedHandler = { [weak self] result in
             self?.completeSourceFrameDelivery(result)
@@ -286,20 +291,26 @@ public final class MediaPipeline: @unchecked Sendable {
 
     public func start() {
         guard canStart(), sourceAdapter.prepareForStartIfIdle() else { return }
-        guard transitionIfNeeded(from: [.idle, .finished, .cancelled, .failed], to: .running) else { return }
+        guard transitionIfNeeded(from: [.idle], to: .running) else { return }
         resetLifecycleState()
         resetSourceCallbacksAcceptance()
-        source.start()
+        if controlsSourceLifecycle {
+            source.start()
+        }
     }
 
     public func pause() {
-        source.pause()
+        if controlsSourceLifecycle {
+            source.pause()
+        }
         chain.pause()
         transitionIfNeeded(from: [.running], to: .paused)
     }
 
     public func resume() {
-        source.resume()
+        if controlsSourceLifecycle {
+            source.resume()
+        }
         chain.resume()
         transitionIfNeeded(from: [.paused], to: .running)
     }
@@ -307,14 +318,18 @@ public final class MediaPipeline: @unchecked Sendable {
     public func stop() {
         guard canStop() else { return }
         rejectFurtherSourceCallbacks()
-        source.stop()
+        if controlsSourceLifecycle {
+            source.stop()
+        }
         markSourceFinished()
     }
 
     public func cancel() {
         rejectFurtherSourceCallbacks()
         transitionIfNeeded(from: [.idle, .running, .paused], to: .cancelled)
-        source.cancel()
+        if controlsSourceLifecycle {
+            source.cancel()
+        }
         chain.cancel()
     }
 
@@ -324,16 +339,18 @@ public final class MediaPipeline: @unchecked Sendable {
 
     private func failChain(with error: Error, allowFromFinished: Bool = false, cancelChain: Bool = true) {
         let errorDescription = Self.errorDescription(for: error)
-        stateQueue.sync {
-            _lastErrorDescription = errorDescription
-        }
         var allowedStates: [State] = [.running, .paused, .idle]
         if allowFromFinished {
             allowedStates.append(.finished)
         }
         guard transitionIfNeeded(from: allowedStates, to: .failed) else { return }
+        stateQueue.sync {
+            _lastErrorDescription = errorDescription
+        }
         rejectFurtherSourceCallbacks()
-        source.cancel()
+        if controlsSourceLifecycle {
+            source.cancel()
+        }
         if cancelChain {
             chain.cancel()
         }
@@ -342,9 +359,11 @@ public final class MediaPipeline: @unchecked Sendable {
         }
     }
 
-    private func beginSourceFrameDelivery() {
+    private func beginSourceFrameDeliveryIfAccepted() -> Bool {
         stateQueue.sync {
+            guard _state == .running || _state == .paused else { return false }
             pendingSourceFrameDeliveries += 1
+            return true
         }
     }
 
@@ -425,8 +444,7 @@ public final class MediaPipeline: @unchecked Sendable {
 
     private func canStart() -> Bool {
         stateQueue.sync {
-            _state != .running
-                && _state != .paused
+            _state == .idle
                 && pendingSourceFrameDeliveries == 0
                 && sourceFrameCompletionsInProgress == 0
         }
@@ -452,9 +470,12 @@ public final class MediaPipeline: @unchecked Sendable {
 
     private func canAcceptSourceCallbacks() -> Bool {
         lifecycleLock.lock()
-        let result = acceptsSourceCallbacks
+        let acceptsCallbacks = acceptsSourceCallbacks
         lifecycleLock.unlock()
-        return result
+        guard acceptsCallbacks else { return false }
+        return stateQueue.sync {
+            _state == .running || _state == .paused
+        }
     }
 
     @discardableResult

@@ -212,6 +212,7 @@ public final class PreviewPipeline: @unchecked Sendable {
         source: MediaSource,
         processors: [FrameProcessor] = [],
         callbackQueue: DispatchQueue = .main,
+        controlsSourceLifecycle: Bool = true,
         handler: @escaping PreviewSink.Handler
     ) {
         self.source = source
@@ -220,7 +221,8 @@ public final class PreviewPipeline: @unchecked Sendable {
             source: source,
             processors: processors,
             sinks: [previewSink],
-            deliveryPolicy: .latestOnly
+            deliveryPolicy: .latestOnly,
+            controlsSourceLifecycle: controlsSourceLifecycle
         )
     }
 

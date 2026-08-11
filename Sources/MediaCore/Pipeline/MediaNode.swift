@@ -18,6 +18,7 @@ public protocol MediaFrameSourceNode: AnyObject {
 public protocol MediaFrameConsumerNode: AnyObject {
     func add(source: MediaFrameSourceNode)
     func remove(source: MediaFrameSourceNode)
+    /// 每个已接收帧必须且只能完成一次；未调用 completion 会持续占用上游背压槽位。
     func consume(_ frame: MediaFrame, from source: MediaFrameSourceNode, completion: @escaping (Result<Void, Error>) -> Void)
 }
 
@@ -253,7 +254,19 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     public init(source: MediaSource) {
         self.source = source
         super.init()
-        self.source.delegate = self
+        if let multiplexingSource = source as? MediaSourceDelegateMultiplexing {
+            multiplexingSource.addMediaSourceDelegate(self)
+        } else {
+            self.source.delegate = self
+        }
+    }
+
+    deinit {
+        if let multiplexingSource = source as? MediaSourceDelegateMultiplexing {
+            multiplexingSource.removeMediaSourceDelegate(self)
+        } else if source.delegate === self {
+            source.delegate = nil
+        }
     }
 
     @discardableResult

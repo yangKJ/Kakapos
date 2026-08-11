@@ -23,6 +23,13 @@ public enum CameraEngineError: Error, LocalizedError, Equatable {
 }
 
 public final class CameraEngine {
+    private struct PreviewRecipe {
+        let mode: CameraPreviewController.Mode
+        let processors: [FrameProcessor]
+        let callbackQueue: DispatchQueue
+        let handler: PreviewSink.Handler?
+    }
+
     public let source: CameraSource
     public let deviceController: CameraDeviceController
     public let advancedOutput: CameraAdvancedOutput
@@ -32,6 +39,7 @@ public final class CameraEngine {
     public private(set) var recentEvents: [String] = []
 
     private var recordingEventObserver: UUID?
+    private var previewRecipe: PreviewRecipe?
 
     public var previewLayer: AVCaptureVideoPreviewLayer {
         source.previewLayer
@@ -101,15 +109,38 @@ public final class CameraEngine {
         callbackQueue: DispatchQueue = .main,
         handler: PreviewSink.Handler? = nil
     ) -> CameraPreviewController {
-        let controller = CameraPreviewController(
-            source: source,
+        let recipe = PreviewRecipe(
             mode: mode,
             processors: processors,
             callbackQueue: callbackQueue,
             handler: handler
         )
+        previewRecipe = recipe
+        return installPreviewController(from: recipe)
+    }
+
+    private func installPreviewController(from recipe: PreviewRecipe) -> CameraPreviewController {
+        let controller = CameraPreviewController(
+            source: source,
+            mode: recipe.mode,
+            processors: recipe.processors,
+            callbackQueue: recipe.callbackQueue,
+            controlsSourceLifecycle: false,
+            handler: recipe.handler
+        )
         previewController = controller
         return controller
+    }
+
+    private func previewControllerForStart() -> CameraPreviewController? {
+        guard let previewController else {
+            guard let previewRecipe else { return nil }
+            return installPreviewController(from: previewRecipe)
+        }
+        guard [.stopped, .failed].contains(previewController.state), let previewRecipe else {
+            return previewController
+        }
+        return installPreviewController(from: previewRecipe)
     }
 
     public func makeRecordingController(
@@ -122,7 +153,8 @@ public final class CameraEngine {
             source: source,
             outputURL: outputURL,
             fileType: fileType,
-            processors: processors
+            processors: processors,
+            controlsSourceLifecycle: false
         )
         source.isRecordingActiveProvider = { [weak controller] in
             controller?.isRecordingActive ?? false
@@ -134,8 +166,8 @@ public final class CameraEngine {
 
     public func start() {
         audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
+        previewControllerForStart()?.start()
         source.start()
-        previewController?.start()
     }
 
     public func startPreview(
@@ -144,15 +176,21 @@ public final class CameraEngine {
         callbackQueue: DispatchQueue = .main,
         handler: PreviewSink.Handler? = nil
     ) -> CameraPreviewController {
-        let controller = previewController ?? makePreviewController(
-            mode: mode,
-            processors: processors,
-            callbackQueue: callbackQueue,
-            handler: handler
-        )
+        let controller: CameraPreviewController
+        if let previewController,
+           ![CameraPreviewController.State.stopped, .failed].contains(previewController.state) {
+            controller = previewController
+        } else {
+            controller = makePreviewController(
+                mode: mode,
+                processors: processors,
+                callbackQueue: callbackQueue,
+                handler: handler
+            )
+        }
         audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
-        source.start()
         controller.start()
+        source.start()
         return controller
     }
 
@@ -200,9 +238,9 @@ public final class CameraEngine {
                 processors: processors
             )
             audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
-            source.start()
-            previewController?.start()
+            previewControllerForStart()?.start()
             controller.start()
+            source.start()
         }
         return controller
     }
