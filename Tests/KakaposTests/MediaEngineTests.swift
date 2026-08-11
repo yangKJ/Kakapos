@@ -4299,6 +4299,81 @@ final class MediaEngineTests: XCTestCase {
     #endif
 
     #if canImport(UIKit) || os(macOS)
+    func testPlayerFrameOutputPreservesSourceTransformWithoutVideoComposition() {
+        let item = AVPlayerItem(asset: AVMutableComposition())
+        let sourceTransform = CGAffineTransform(
+            a: -1,
+            b: 0,
+            c: 0,
+            d: -1,
+            tx: 1_920,
+            ty: 1_080
+        )
+
+        XCTAssertEqual(
+            PlayerFrameOutputDriver.resolvedTrackTransform(for: item, sourceTrackID: 41, sourceTrackTransform: sourceTransform),
+            sourceTransform
+        )
+    }
+
+    func testPlayerFrameOutputPreservesSourceTransformForGeometryNeutralVideoComposition() throws {
+        let asset = AVMutableComposition()
+        let sourceTrack = try XCTUnwrap(asset.addMutableTrack(withMediaType: .video, preferredTrackID: 42))
+        let item = AVPlayerItem(asset: asset)
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = CGSize(width: 1_920, height: 1_080)
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        let sourceTransform = CGAffineTransform(
+            a: -1,
+            b: 0,
+            c: 0,
+            d: -1,
+            tx: 1_920,
+            ty: 1_080
+        )
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600))
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: sourceTrack)
+        layerInstruction.setTransform(.identity, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        videoComposition.instructions = [instruction]
+        item.videoComposition = videoComposition
+
+        XCTAssertEqual(
+            PlayerFrameOutputDriver.resolvedTrackTransform(for: item, sourceTrackID: sourceTrack.trackID, sourceTrackTransform: sourceTransform),
+            sourceTransform
+        )
+    }
+
+    func testPlayerFrameOutputDoesNotReapplyTransformOwnedByVideoComposition() throws {
+        let asset = AVMutableComposition()
+        let sourceTrack = try XCTUnwrap(asset.addMutableTrack(withMediaType: .video, preferredTrackID: 43))
+        let item = AVPlayerItem(asset: asset)
+        let sourceTransform = CGAffineTransform(
+            a: -1,
+            b: 0,
+            c: 0,
+            d: -1,
+            tx: 1_920,
+            ty: 1_080
+        )
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = CGSize(width: 1_920, height: 1_080)
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600))
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: sourceTrack)
+        layerInstruction.setTransform(sourceTransform, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        videoComposition.instructions = [instruction]
+        item.videoComposition = videoComposition
+
+        XCTAssertEqual(
+            PlayerFrameOutputDriver.resolvedTrackTransform(for: item, sourceTrackID: sourceTrack.trackID, sourceTrackTransform: sourceTransform),
+            .identity
+        )
+    }
+
     func testPlayerFrameSourceSummaryReflectsPlaybackAndFrameProgress() throws {
         let player = AVPlayer(playerItem: AVPlayerItem(asset: AVAsset(url: try makeSampleAssetURL())))
         let driver = FakePlayerFrameDriver()

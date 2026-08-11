@@ -220,7 +220,7 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
         guard let videoTrack = playerItem.asset.tracks(withMediaType: .video).first else {
             return
         }
-        preferredVideoTransform = videoTrack.preferredTransform
+        preferredVideoTransform = Self.resolvedTrackTransform(for: playerItem, sourceTrackID: videoTrack.trackID, sourceTrackTransform: videoTrack.preferredTransform)
 
         let output = AVPlayerItemVideoOutput(pixelBufferAttributes: configuration.sourcePixelBufferAttributes)
         output.suppressesPlayerRendering = configuration.suppressesPlayerRendering
@@ -228,6 +228,33 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
         playerItem.add(output)
         playerItemOutput = output
         setupTicker()
+    }
+
+    /// 只有合成指令明确接管轨道几何时，输出帧才不应再次应用源轨道方向。
+    /// PhotoKit 可能附带不改变几何的 video composition，不能仅凭其存在就丢弃方向。
+    static func resolvedTrackTransform(for playerItem: AVPlayerItem, sourceTrackID: CMPersistentTrackID, sourceTrackTransform: CGAffineTransform) -> CGAffineTransform {
+        guard let videoComposition = playerItem.videoComposition,
+              videoCompositionAppliesTrackTransform(videoComposition, sourceTrackID: sourceTrackID) else {
+            return sourceTrackTransform
+        }
+        return .identity
+    }
+
+    private static func videoCompositionAppliesTrackTransform(_ videoComposition: AVVideoComposition, sourceTrackID: CMPersistentTrackID) -> Bool {
+        for case let instruction as AVVideoCompositionInstruction in videoComposition.instructions {
+            for layerInstruction in instruction.layerInstructions where layerInstruction.trackID == sourceTrackID {
+                var startTransform = CGAffineTransform.identity
+                var endTransform = CGAffineTransform.identity
+                var timeRange = CMTimeRange.invalid
+                guard layerInstruction.getTransformRamp(for: instruction.timeRange.start, start: &startTransform, end: &endTransform, timeRange: &timeRange) else {
+                    continue
+                }
+                if !startTransform.isIdentity || !endTransform.isIdentity {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     private func setupTicker() {
