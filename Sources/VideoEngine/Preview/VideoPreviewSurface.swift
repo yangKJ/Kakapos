@@ -203,7 +203,9 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
             sourceImage = nil
         }
         guard let sourceImage else { return nil }
-        let transformed = sourceImage.transformed(by: submission.metadata.trackTransform)
+        let transformed = sourceImage.transformed(
+            by: Self.coreImageDisplayTransform(for: submission.metadata.trackTransform)
+        )
         let extent = transformed.extent.integral
         guard !extent.isInfinite, !extent.isEmpty else { return nil }
         let normalized = transformed.transformed(by: CGAffineTransform(
@@ -222,6 +224,20 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
         return centered
             .composited(over: CIImage(color: .black).cropped(to: bounds))
             .cropped(to: bounds)
+    }
+
+    /// `AVAssetTrack.preferredTransform` 以视频的左上原点坐标描述，
+    /// Core Image 则以左下原点绘制。先转换线性部分再归一化 extent，
+    /// 才不会把带 90° 旋转的屏幕录制显示成相反方向。
+    static func coreImageDisplayTransform(for trackTransform: CGAffineTransform) -> CGAffineTransform {
+        CGAffineTransform(
+            a: trackTransform.a,
+            b: -trackTransform.b,
+            c: -trackTransform.c,
+            d: trackTransform.d,
+            tx: 0,
+            ty: 0
+        )
     }
 
     private func clear(drawable: CAMetalDrawable, commandBuffer: MTLCommandBuffer) {
