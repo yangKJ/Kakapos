@@ -4316,6 +4316,26 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    #if canImport(UIKit)
+    func testPreviewSurfaceConvertsTrackTransformForCoreImageCoordinates() {
+        let rotatedClockwiseInDisplayCoordinates = CGAffineTransform(
+            a: 0,
+            b: -1,
+            c: 1,
+            d: 0,
+            tx: 0,
+            ty: 1_180
+        )
+
+        XCTAssertEqual(
+            VideoPreviewSurface.coreImageDisplayTransform(
+                for: rotatedClockwiseInDisplayCoordinates
+            ),
+            CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0)
+        )
+    }
+    #endif
+
     func testPlayerFrameOutputPreservesSourceTransformForGeometryNeutralVideoComposition() throws {
         let asset = AVMutableComposition()
         let sourceTrack = try XCTUnwrap(asset.addMutableTrack(withMediaType: .video, preferredTrackID: 42))
