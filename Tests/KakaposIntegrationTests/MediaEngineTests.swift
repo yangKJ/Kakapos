@@ -3379,7 +3379,7 @@ final class MediaEngineTests: XCTestCase {
                 start: .zero,
                 duration: CMTime(seconds: 1, preferredTimescale: 600)
             ),
-            videoProcessors: [PassthroughFrameProcessor(), PassthroughFrameProcessor()],
+            videoProcessors: [StandardDynamicRangeFrameProcessor(), PassthroughFrameProcessor()],
             exportProfile: .standardDelivery
         )
 
@@ -4997,6 +4997,8 @@ final class MediaEngineTests: XCTestCase {
             }
         )
         let pixelBuffer = try makePixelBuffer(width: 18, height: 12)
+        CVBufferSetAttachment(pixelBuffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_2020, .shouldPropagate)
+        CVBufferSetAttachment(pixelBuffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_2100_HLG, .shouldPropagate)
         var receivedFrame: MediaFrame?
 
         source.frameHandler = { frame in
@@ -5018,6 +5020,7 @@ final class MediaEngineTests: XCTestCase {
         wait(for: [expectation], timeout: 1)
         XCTAssertEqual(source.lastFrame?.metadata.frameIndex, 1)
         XCTAssertEqual(CVPixelBufferGetWidth(try XCTUnwrap(source.lastFrame?.pixelBuffer)), 18)
+        XCTAssertEqual(receivedFrame?.metadata.format?.dynamicRange, .hdr(.hlg))
         XCTAssertEqual(receivedFrame?.metadata.userInfo[PlayerFrameSource.MetadataKey.frameRequestReason] as? String, "manual")
     }
 
@@ -6993,6 +6996,8 @@ final class MediaEngineTests: XCTestCase {
     func testFrameFormatMapsKnownPixelFormatsAndProcessorCapabilities() {
         XCTAssertEqual(FramePixelFormat(ostype: kCVPixelFormatType_32BGRA), .bgra8)
         XCTAssertEqual(FramePixelFormat(ostype: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange), .yuv420BiPlanarFullRange)
+        XCTAssertEqual(FramePixelFormat(ostype: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange), .yuv420BiPlanar10BitVideoRange)
+        XCTAssertEqual(FramePixelFormat(ostype: kCVPixelFormatType_420YpCbCr10BiPlanarFullRange), .yuv420BiPlanar10BitFullRange)
 
         let format = FrameFormat(
             pixelFormat: .bgra8,
@@ -7009,6 +7014,73 @@ final class MediaEngineTests: XCTestCase {
             colorInfo: format.colorInfo,
             dynamicRange: .standard
         )))
+    }
+
+    func testFrameFormatReadsHDRColorAttachmentsFromDecodedPixelBuffer() throws {
+        let buffer = try makePixelBuffer(width: 8, height: 8)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_2020, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_2100_HLG, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_2020, .shouldPropagate)
+
+        let format = FrameFormat(pixelBuffer: buffer)
+
+        XCTAssertEqual(format.pixelFormat, .bgra8)
+        XCTAssertEqual(format.colorInfo.primaries, .bt2020)
+        XCTAssertEqual(format.colorInfo.transferFunction, .hlg)
+        XCTAssertEqual(format.colorInfo.yCbCrMatrix, .bt2020)
+        XCTAssertEqual(format.dynamicRange, .hdr(.hlg))
+
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ, .shouldPropagate)
+        XCTAssertEqual(FrameFormat(pixelBuffer: buffer).dynamicRange, .hdr(.pq))
+    }
+
+    func testFrameFormatDoesNotAssumeUnrecognizedTenBitTransferIsSDR() throws {
+        let buffer = try makePixelBuffer(
+            width: 8,
+            height: 8,
+            pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+        )
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, "UnrecognizedTransfer" as CFString, .shouldPropagate)
+
+        XCTAssertEqual(FrameFormat(pixelBuffer: buffer).dynamicRange, .unknown)
+    }
+
+    func testStandardDynamicRangeProcessorToneMapsHDRAndPublishesActualFormat() throws {
+        let buffer = try makePixelBuffer(width: 8, height: 8)
+        fillPixelBuffer(buffer, red: 196, green: 132, blue: 64, alpha: 255)
+        let sourceChecksum = pixelBufferChecksum(buffer)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_2020, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_2100_HLG, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_2020, .shouldPropagate)
+        let input = PixelBufferFrame(
+            pixelBuffer: buffer,
+            metadata: FrameMetadata(presentationTime: .zero, format: FrameFormat(pixelBuffer: buffer))
+        )
+        let completion = expectation(description: "HDR tone-map")
+
+        StandardDynamicRangeFrameProcessor().process(input) { result in
+            guard case let .success(frame) = result,
+                  let output = extractPixelBuffer(frame) else {
+                XCTFail("Expected a tone-mapped pixel buffer")
+                completion.fulfill()
+                return
+            }
+            XCTAssertFalse(output === buffer)
+            XCTAssertEqual(CVPixelBufferGetPixelFormatType(output), kCVPixelFormatType_32BGRA)
+            XCTAssertNotEqual(pixelBufferChecksum(output), sourceChecksum)
+            XCTAssertEqual(frame.metadata.format?.dynamicRange, .standard)
+            XCTAssertEqual(frame.metadata.format?.colorInfo.primaries, .bt709)
+            XCTAssertEqual(frame.metadata.format?.colorInfo.transferFunction, .sdr)
+            XCTAssertEqual(
+                CVBufferCopyAttachment(output, kCVImageBufferTransferFunctionKey, nil) as? String,
+                kCVImageBufferTransferFunction_sRGB as String
+            )
+            XCTAssertNil(CVBufferCopyAttachment(output, kCVImageBufferYCbCrMatrixKey, nil))
+            XCTAssertFalse(StandardDynamicRangeFrameProcessor().capabilities.preservesColorInformation)
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 2)
     }
 
     func testCancellableFrameProcessorReturnsUnderlyingCancellation() {
@@ -7745,13 +7817,17 @@ private final class FakePlayerFrameDriver: PlayerFrameDriving {
 }
 #endif
 
-private func makePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
+private func makePixelBuffer(
+    width: Int,
+    height: Int,
+    pixelFormat: OSType = kCVPixelFormatType_32BGRA
+) throws -> CVPixelBuffer {
     var pixelBuffer: CVPixelBuffer?
     let status = CVPixelBufferCreate(
         kCFAllocatorDefault,
         width,
         height,
-        kCVPixelFormatType_32BGRA,
+        pixelFormat,
         nil,
         &pixelBuffer
     )

@@ -679,12 +679,12 @@ final class VideoAssetExportSession: @unchecked Sendable {
     }
 
     private func makeVideoFrame(from sampleBuffer: CMSampleBuffer) -> MediaFrame? {
-        guard CMSampleBufferGetImageBuffer(sampleBuffer) != nil else { return nil }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
         let metadata = FrameMetadata(
             presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
             duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
             sourceTime: CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer),
-            format: .sdrBGRA8
+            format: FrameFormat(pixelBuffer: pixelBuffer)
         )
         return SampleBufferFrame(sampleBuffer: sampleBuffer, metadata: metadata)
     }
