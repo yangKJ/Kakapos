@@ -106,7 +106,7 @@ private final class DispatchTicker: PlayerFrameTicking {
 
 final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
 
-    struct Configuration {
+    struct Configuration: @unchecked Sendable {
         var sourcePixelBufferAttributes: [String: Any]?
         var preferredFramesPerSecond: Int = 30
         var suppressesPlayerRendering = false

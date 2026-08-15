@@ -9,7 +9,7 @@ import Foundation
 import KakaposMediaCore
 import AVFoundation
 
-public final class AssetSource: MediaSource {
+public final class AssetSource: MediaSource, @unchecked Sendable {
     public enum State: Equatable {
         case idle
         case reading

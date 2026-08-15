@@ -105,7 +105,7 @@ final class DirectoryBoundaryTests: XCTestCase {
         }
     }
 
-    func testDistributionManifestsAgreeOnIOS13Minimum() throws {
+    func testPackageUsesSwift6WhileLegacyDistributionMetadataKeepsExistingBaseline() throws {
         let root = repositoryRoot()
         let packageManifest = try String(
             contentsOf: root.appendingPathComponent("Package.swift"),
@@ -121,7 +121,7 @@ final class DirectoryBoundaryTests: XCTestCase {
         ).trimmingCharacters(in: .whitespacesAndNewlines)
 
         XCTAssertTrue(packageManifest.contains(".iOS(.v13)"))
-        XCTAssertTrue(packageManifest.contains("swiftLanguageModes: [.v5]"))
+        XCTAssertTrue(packageManifest.contains("swiftLanguageModes: [.v6]"))
         XCTAssertTrue(podspec.contains("s.ios.deployment_target = '13.0'"))
         XCTAssertTrue(podspec.contains("s.swift_version    = '5.0'"))
         XCTAssertTrue(podspec.contains("'SWIFT_VERSION' => '5.0'"))

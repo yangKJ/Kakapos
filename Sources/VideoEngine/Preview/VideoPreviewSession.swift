@@ -10,6 +10,12 @@ import AVFoundation
 import Foundation
 import KakaposMediaCore
 
+private struct VideoPreviewSurfaceSubmission: @unchecked Sendable {
+    let frame: MediaFrame
+    let generation: VideoPreviewGeneration
+    let identity: VideoPreviewModeIdentity
+}
+
 /// 单 AVPlayer、单 PlayerFrameSource、单 Metal Surface 的视频预览会话。
 /// 播放、暂停、Seek、音量与 currentItem 的 authority 始终属于宿主。
 public final class VideoPreviewSession: @unchecked Sendable {
@@ -19,6 +25,7 @@ public final class VideoPreviewSession: @unchecked Sendable {
     public var errorHandler: ((Error) -> Void)?
 
     private let source: PlayerFrameSource
+    private let adaptivePolicy: VideoPreviewAdaptivePolicy?
     private let stateLock = NSLock()
     private let modeSwitchLock = NSLock()
     private var generationRawValue: UInt64 = 0
@@ -26,6 +33,15 @@ public final class VideoPreviewSession: @unchecked Sendable {
     private var reportedReadyGeneration: VideoPreviewGeneration?
     private var isCancelled = false
     private var isStarted = false
+    private var adaptiveFramesPerSecond: Int
+    private var consecutiveUnderBudgetSamples = 0
+    private var lastPerformanceSnapshot: VideoPreviewPerformanceSnapshot?
+
+    public var performanceSnapshot: VideoPreviewPerformanceSnapshot? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return lane?.performanceSnapshot ?? lastPerformanceSnapshot
+    }
 
     public init(
         player: AVPlayer,
@@ -34,6 +50,8 @@ public final class VideoPreviewSession: @unchecked Sendable {
     ) {
         self.player = player
         self.surface = surface
+        adaptivePolicy = configuration.adaptivePolicy
+        adaptiveFramesPerSecond = configuration.preferredFramesPerSecond
         source = PlayerFrameSource(
             player: player,
             preferredFramesPerSecond: configuration.preferredFramesPerSecond,
@@ -92,12 +110,12 @@ public final class VideoPreviewSession: @unchecked Sendable {
             generation: generation,
             mode: mode
         ) { [weak self] frame, generation, identity in
-            guard let self, self.accepts(generation: generation, identity: identity) else { return }
-            self.surface.submit(
-                frame: frame,
-                generation: generation,
-                identity: identity
-            )
+            let submission = VideoPreviewSurfaceSubmission(frame: frame, generation: generation, identity: identity)
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.accepts(generation: submission.generation, identity: submission.identity) else { return }
+                self.surface.submit(frame: submission.frame, generation: submission.generation, identity: submission.identity)
+            }
         }
         nextLane.errorHandler = { [weak self, weak nextLane] error in
             guard let self, let nextLane,
@@ -107,6 +125,10 @@ public final class VideoPreviewSession: @unchecked Sendable {
                 identity: nextLane.identity
             ))
             self.errorHandler?(error)
+        }
+        nextLane.frameCompleted = { [weak self, weak nextLane] duration in
+            guard let nextLane else { return }
+            self?.adaptPreviewFrameRate(after: duration, generation: nextLane.generation, identity: nextLane.identity)
         }
 
         stateLock.lock()
@@ -122,6 +144,11 @@ public final class VideoPreviewSession: @unchecked Sendable {
         let isStarted = self.isStarted
         stateLock.unlock()
         previousLane?.cancel()
+        if let previousLane {
+            stateLock.lock()
+            lastPerformanceSnapshot = previousLane.performanceSnapshot
+            stateLock.unlock()
+        }
         surface.awaitFirstFrame(generation: generation, identity: mode.identity)
         readinessHandler?(.awaitingFirstFrame(generation: generation, identity: mode.identity))
         if let lastFrame = source.lastFrame {
@@ -163,6 +190,11 @@ public final class VideoPreviewSession: @unchecked Sendable {
         reportedReadyGeneration = nil
         stateLock.unlock()
         lane?.cancel()
+        if let lane {
+            stateLock.lock()
+            lastPerformanceSnapshot = lane.performanceSnapshot
+            stateLock.unlock()
+        }
         source.cancel()
         surface.cancelPresentation()
         readinessHandler?(.cancelled)
@@ -197,6 +229,41 @@ public final class VideoPreviewSession: @unchecked Sendable {
               reportedReadyGeneration != generation else { return false }
         reportedReadyGeneration = generation
         return true
+    }
+
+    private func adaptPreviewFrameRate(after processingDuration: TimeInterval, generation: VideoPreviewGeneration, identity: VideoPreviewModeIdentity) {
+        guard let adaptivePolicy else { return }
+        let recommendation: Int
+        stateLock.lock()
+        guard !isCancelled,
+              lane?.generation == generation,
+              lane?.identity == identity else {
+            stateLock.unlock()
+            return
+        }
+        let budget = adaptivePolicy.overloadBudgetRatio / Double(max(adaptiveFramesPerSecond, 1))
+        if processingDuration <= budget {
+            consecutiveUnderBudgetSamples += 1
+        } else {
+            consecutiveUnderBudgetSamples = 0
+        }
+        recommendation = adaptivePolicy.recommendation(
+            currentFramesPerSecond: adaptiveFramesPerSecond,
+            processingDuration: processingDuration,
+            consecutiveUnderBudgetSamples: consecutiveUnderBudgetSamples
+        )
+        if recommendation > adaptiveFramesPerSecond {
+            consecutiveUnderBudgetSamples = 0
+        }
+        let didChange = recommendation != adaptiveFramesPerSecond
+        adaptiveFramesPerSecond = recommendation
+        stateLock.unlock()
+        guard didChange else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.accepts(generation: generation, identity: identity) else { return }
+            self.source.preferredFramesPerSecond = recommendation
+        }
     }
 }
 #endif

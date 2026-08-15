@@ -13,15 +13,24 @@ public struct VideoArtifactValidationExpectation: @unchecked Sendable {
     public let sourceDuration: CMTime
     public let expectsAudio: Bool
     public let durationTolerance: CMTime
+    public let expectedVideoCodec: VideoAssetCodec?
+    public let expectedDynamicRange: FrameDynamicRange?
+    public let maximumAudioVideoDurationDrift: CMTime
 
     public init(
         sourceDuration: CMTime,
         expectsAudio: Bool,
-        durationTolerance: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600)
+        durationTolerance: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600),
+        expectedVideoCodec: VideoAssetCodec? = nil,
+        expectedDynamicRange: FrameDynamicRange? = nil,
+        maximumAudioVideoDurationDrift: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600)
     ) {
         self.sourceDuration = sourceDuration
         self.expectsAudio = expectsAudio
         self.durationTolerance = durationTolerance
+        self.expectedVideoCodec = expectedVideoCodec
+        self.expectedDynamicRange = expectedDynamicRange
+        self.maximumAudioVideoDurationDrift = maximumAudioVideoDurationDrift
     }
 }
 
@@ -32,6 +41,10 @@ public struct VideoArtifactValidationReport: @unchecked Sendable {
     public let audioTrackCount: Int
     public let naturalSize: CGSize
     public let preferredTransform: CGAffineTransform
+    public let videoCodec: VideoAssetCodec
+    public let dynamicRange: FrameDynamicRange
+    public let nominalFramesPerSecond: Double
+    public let audioVideoDurationDrift: CMTime?
 
     public var hasAudio: Bool { audioTrackCount > 0 }
 }
@@ -44,6 +57,10 @@ public enum VideoArtifactValidationError: Error, Equatable {
     case invalidDuration
     case durationMismatch
     case invalidDimensions
+    case unexpectedVideoCodec
+    case unexpectedDynamicRange
+    case invalidFrameRate
+    case audioVideoDurationDrift
 }
 
 public enum VideoArtifactValidator {
@@ -86,13 +103,41 @@ public enum VideoArtifactValidator {
             throw VideoArtifactValidationError.invalidDimensions
         }
 
+        let profile = try VideoAssetProfileInspector().inspect(asset)
+        if let expectedVideoCodec = expectation.expectedVideoCodec,
+           profile.videoCodec != expectedVideoCodec {
+            throw VideoArtifactValidationError.unexpectedVideoCodec
+        }
+        if let expectedDynamicRange = expectation.expectedDynamicRange,
+           profile.frameFormat.dynamicRange != expectedDynamicRange {
+            throw VideoArtifactValidationError.unexpectedDynamicRange
+        }
+        guard profile.nominalFramesPerSecond.isFinite, profile.nominalFramesPerSecond > 0 else {
+            throw VideoArtifactValidationError.invalidFrameRate
+        }
+
+        let audioVideoDurationDrift: CMTime?
+        if let audioTrack = audioTracks.first {
+            let drift = abs(videoTrack.timeRange.duration.seconds - audioTrack.timeRange.duration.seconds)
+            audioVideoDurationDrift = CMTime(seconds: drift, preferredTimescale: 600)
+            guard drift <= max(0, expectation.maximumAudioVideoDurationDrift.seconds) else {
+                throw VideoArtifactValidationError.audioVideoDurationDrift
+            }
+        } else {
+            audioVideoDurationDrift = nil
+        }
+
         return VideoArtifactValidationReport(
             url: url,
             duration: duration,
             videoTrackCount: videoTracks.count,
             audioTrackCount: audioTracks.count,
             naturalSize: videoTrack.naturalSize,
-            preferredTransform: videoTrack.preferredTransform
+            preferredTransform: videoTrack.preferredTransform,
+            videoCodec: profile.videoCodec,
+            dynamicRange: profile.frameFormat.dynamicRange,
+            nominalFramesPerSecond: profile.nominalFramesPerSecond,
+            audioVideoDurationDrift: audioVideoDurationDrift
         )
     }
 }

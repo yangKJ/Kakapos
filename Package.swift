@@ -63,10 +63,15 @@ let package = Package(
             path: "Sources/Core"
         ),
         .testTarget(
-            name: "KakaposTests",
+            name: "KakaposIntegrationTests",
             dependencies: ["Kakapos", "KakaposMediaCore", "KakaposVideo", "KakaposTimeline", "KakaposCamera"],
-            path: "Tests/KakaposTests"
+            path: "Tests/KakaposIntegrationTests"
+        ),
+        .testTarget(
+            name: "KakaposCameraTests",
+            dependencies: ["Kakapos", "KakaposMediaCore", "KakaposVideo", "KakaposTimeline", "KakaposCamera"],
+            path: "Tests/KakaposCameraTests"
         ),
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )

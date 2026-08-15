@@ -187,6 +187,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         super.init()
     }
 
+    @MainActor
     public convenience init?(
         recordedClip: RecordedClip,
         preferredFramesPerSecond: Int = 30
@@ -358,6 +359,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             sourceTime: playerItemTime,
             trackTransform: frame.preferredTrackTransform,
             frameIndex: frameIndex,
+            format: .sdrBGRA8,
             userInfo: userInfo
         )
         let mediaFrame = PixelBufferFrame(pixelBuffer: frame.pixelBuffer, metadata: metadata)

@@ -23,6 +23,7 @@ public struct FrameMetadata: @unchecked Sendable {
     public var sourceTime: CMTime?
     public var trackTransform: CGAffineTransform
     public var frameIndex: Int64?
+    public var format: FrameFormat?
     public var userInfo: [String: Any]
 
     public init(
@@ -31,6 +32,7 @@ public struct FrameMetadata: @unchecked Sendable {
         sourceTime: CMTime? = nil,
         trackTransform: CGAffineTransform = .identity,
         frameIndex: Int64? = nil,
+        format: FrameFormat? = nil,
         userInfo: [String: Any] = [:]
     ) {
         self.presentationTime = presentationTime
@@ -38,6 +40,7 @@ public struct FrameMetadata: @unchecked Sendable {
         self.sourceTime = sourceTime
         self.trackTransform = trackTransform
         self.frameIndex = frameIndex
+        self.format = format
         self.userInfo = userInfo
     }
 }

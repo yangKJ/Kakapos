@@ -16,6 +16,7 @@ public struct VideoTranscodeConfiguration: @unchecked Sendable {
     public let shouldOptimizeForNetworkUse: Bool
     public let videoFrameProcessingTimeout: TimeInterval?
     public let durationTolerance: CMTime
+    public let exportProfile: VideoExportProfile
 
     public init(
         outputURL: URL,
@@ -23,7 +24,8 @@ public struct VideoTranscodeConfiguration: @unchecked Sendable {
         timeRange: CMTimeRange? = nil,
         shouldOptimizeForNetworkUse: Bool = true,
         videoFrameProcessingTimeout: TimeInterval? = nil,
-        durationTolerance: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600)
+        durationTolerance: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600),
+        exportProfile: VideoExportProfile = .legacyCompatible
     ) {
         self.outputURL = outputURL
         self.fileType = fileType
@@ -31,6 +33,7 @@ public struct VideoTranscodeConfiguration: @unchecked Sendable {
         self.shouldOptimizeForNetworkUse = shouldOptimizeForNetworkUse
         self.videoFrameProcessingTimeout = videoFrameProcessingTimeout.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         self.durationTolerance = durationTolerance
+        self.exportProfile = exportProfile
     }
 }
 
@@ -80,7 +83,9 @@ public final class TranscodeSession: @unchecked Sendable {
             let expectation = VideoArtifactValidationExpectation(
                 sourceDuration: sourceDuration,
                 expectsAudio: request.asset.tracks(withMediaType: .audio).isEmpty == false,
-                durationTolerance: request.configuration.durationTolerance
+                durationTolerance: request.configuration.durationTolerance,
+                expectedVideoCodec: request.configuration.exportProfile.resolvedAssetCodec(fileType: request.configuration.fileType),
+                expectedDynamicRange: request.configuration.exportProfile.colorPolicy == .standardBT709 ? .standard : nil
             )
             let job = ReaderWriterExportJob(
                 asset: request.asset,
@@ -89,6 +94,7 @@ public final class TranscodeSession: @unchecked Sendable {
                 timeRange: request.configuration.timeRange,
                 videoProcessors: processors,
                 videoFrameProcessingTimeout: request.configuration.videoFrameProcessingTimeout,
+                exportProfile: request.configuration.exportProfile,
                 shouldOptimizeForNetworkUse: request.configuration.shouldOptimizeForNetworkUse,
                 artifactValidationExpectation: expectation
             )

@@ -2406,18 +2406,14 @@ final class MediaEngineTests: XCTestCase {
         let callersReady = expectation(description: "concurrent callers ready")
         callersReady.expectedFulfillmentCount = 2
         let startGate = DispatchSemaphore(value: 0)
-        let lock = NSLock()
-        var factoryCallCount = 0
-        var results: [Result<URL, Error>] = []
+        let concurrentState = ConcurrentExportStartState()
         let job = ReaderWriterExportJob(
             asset: AVAsset(url: try makeSampleAssetURL()),
             outputURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString)
                 .appendingPathExtension("mp4"),
             sessionFactory: { _, _, _ in
-                lock.lock()
-                factoryCallCount += 1
-                lock.unlock()
+                concurrentState.incrementFactoryCallCount()
                 return session
             }
         )
@@ -2427,9 +2423,7 @@ final class MediaEngineTests: XCTestCase {
                 callersReady.fulfill()
                 startGate.wait()
                 job.export { result in
-                    lock.lock()
-                    results.append(result)
-                    lock.unlock()
+                    concurrentState.append(result)
                     resultsDelivered.fulfill()
                 }
             }
@@ -2442,10 +2436,7 @@ final class MediaEngineTests: XCTestCase {
         session.finish(with: nil)
         wait(for: [resultsDelivered], timeout: 1)
 
-        lock.lock()
-        let capturedFactoryCallCount = factoryCallCount
-        let capturedResults = results
-        lock.unlock()
+        let (capturedFactoryCallCount, capturedResults) = concurrentState.snapshot
         XCTAssertEqual(capturedFactoryCallCount, 1)
         XCTAssertEqual(session.exportCallCount, 1)
         XCTAssertEqual(capturedResults.filter { if case .success = $0 { return true }; return false }.count, 1)
@@ -3035,6 +3026,35 @@ final class MediaEngineTests: XCTestCase {
         wait(for: [unexpectedOutput], timeout: 0.2)
     }
 
+    func testVideoPreviewLanePropagatesCancellationAndFinalizesMetrics() throws {
+        let processorStarted = expectation(description: "preview cancellable processor started")
+        let processor = TestCancellableFrameProcessor {
+            processorStarted.fulfill()
+        }
+        let plan = FrameProcessingPlan(identity: .init(identifier: "cancel", revision: "1")) {
+            [processor]
+        }
+        let lane = try VideoPreviewProcessingLane(
+            generation: .init(rawValue: 1),
+            mode: .processed(plan)
+        ) { _, _, _ in
+            XCTFail("Cancelled preview lane must not output a frame.")
+        }
+        lane.consume(PixelBufferFrame(
+            pixelBuffer: try makePixelBuffer(width: 8, height: 8),
+            metadata: FrameMetadata(presentationTime: .zero, frameIndex: 1)
+        ))
+
+        wait(for: [processorStarted], timeout: 1)
+        lane.cancel()
+
+        XCTAssertEqual(processor.cancelCount, 1)
+        XCTAssertEqual(lane.performanceSnapshot.submittedFrameCount, 1)
+        XCTAssertEqual(lane.performanceSnapshot.cancelledFrameCount, 1)
+        XCTAssertEqual(lane.performanceSnapshot.peakPendingFrameCount, 0)
+        XCTAssertTrue(lane.performanceSnapshot.isFinal)
+    }
+
     func testVideoTranscodeConfigurationNormalizesFrameProcessingTimeout() {
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 
@@ -3059,18 +3079,36 @@ final class MediaEngineTests: XCTestCase {
         )
         var pendingProcessing: [PendingProcessing] = []
         var outputFrameIndices: [Int64] = []
+        let stateLock = NSLock()
+        let firstProcessingStarted = expectation(description: "first preview processing started")
+        let latestProcessingStarted = expectation(description: "latest preview processing started")
+        let outputsDelivered = expectation(description: "preview outputs delivered")
+        outputsDelivered.expectedFulfillmentCount = 2
+        var processingInvocationCount = 0
         let plan = FrameProcessingPlan(
             identity: .init(identifier: "latest-pending", revision: "1")
         ) {
             [ClosureFrameProcessor { frame, completion in
+                stateLock.lock()
                 pendingProcessing.append((frame, completion))
+                processingInvocationCount += 1
+                let invocationCount = processingInvocationCount
+                stateLock.unlock()
+                if invocationCount == 1 {
+                    firstProcessingStarted.fulfill()
+                } else {
+                    latestProcessingStarted.fulfill()
+                }
             }]
         }
         let lane = try VideoPreviewProcessingLane(
             generation: .init(rawValue: 1),
             mode: .processed(plan)
         ) { frame, _, _ in
+            stateLock.lock()
             outputFrameIndices.append(frame.metadata.frameIndex ?? -1)
+            stateLock.unlock()
+            outputsDelivered.fulfill()
         }
 
         for index in 1...3 {
@@ -3083,17 +3121,34 @@ final class MediaEngineTests: XCTestCase {
             ))
         }
 
+        wait(for: [firstProcessingStarted], timeout: 1)
+        stateLock.lock()
         XCTAssertEqual(pendingProcessing.count, 1)
         let first = pendingProcessing.removeFirst()
+        stateLock.unlock()
         first.completion(.success(first.frame))
 
+        wait(for: [latestProcessingStarted], timeout: 1)
+        stateLock.lock()
         XCTAssertEqual(outputFrameIndices, [1])
         XCTAssertEqual(pendingProcessing.count, 1)
         let latest = pendingProcessing.removeFirst()
+        stateLock.unlock()
         latest.completion(.success(latest.frame))
 
+        wait(for: [outputsDelivered], timeout: 1)
+        stateLock.lock()
         XCTAssertEqual(outputFrameIndices, [1, 3])
         XCTAssertTrue(pendingProcessing.isEmpty)
+        stateLock.unlock()
+        let snapshot = lane.performanceSnapshot
+        XCTAssertEqual(snapshot.submittedFrameCount, 3)
+        XCTAssertEqual(snapshot.startedFrameCount, 2)
+        XCTAssertEqual(snapshot.completedFrameCount, 2)
+        XCTAssertEqual(snapshot.coalescedFrameCount, 1)
+        XCTAssertEqual(snapshot.peakPendingFrameCount, 1)
+        XCTAssertEqual(snapshot.lastFrameIndex, 3)
+        XCTAssertFalse(snapshot.isFinal)
     }
 
     #if canImport(Metal)
@@ -3324,7 +3379,8 @@ final class MediaEngineTests: XCTestCase {
                 start: .zero,
                 duration: CMTime(seconds: 1, preferredTimescale: 600)
             ),
-            videoProcessors: [PassthroughFrameProcessor(), PassthroughFrameProcessor()]
+            videoProcessors: [PassthroughFrameProcessor(), PassthroughFrameProcessor()],
+            exportProfile: .standardDelivery
         )
 
         job.export { result in
@@ -3339,7 +3395,9 @@ final class MediaEngineTests: XCTestCase {
             url: exportedURL,
             expectation: VideoArtifactValidationExpectation(
                 sourceDuration: CMTime(seconds: 1, preferredTimescale: 600),
-                expectsAudio: sourceAsset.tracks(withMediaType: .audio).isEmpty == false
+                expectsAudio: sourceAsset.tracks(withMediaType: .audio).isEmpty == false,
+                expectedVideoCodec: .h264,
+                expectedDynamicRange: .standard
             )
         )
         let outputAsset = AVAsset(url: exportedURL)
@@ -4343,6 +4401,7 @@ final class MediaEngineTests: XCTestCase {
     }
     #endif
 
+    @MainActor
     func testPlayerFrameOutputPreservesSourceTransformForGeometryNeutralVideoComposition() throws {
         let asset = AVMutableComposition()
         let sourceTrack = try XCTUnwrap(asset.addMutableTrack(withMediaType: .video, preferredTrackID: 42))
@@ -4372,6 +4431,7 @@ final class MediaEngineTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testPlayerFrameOutputDoesNotReapplyTransformOwnedByVideoComposition() throws {
         let asset = AVMutableComposition()
         let sourceTrack = try XCTUnwrap(asset.addMutableTrack(withMediaType: .video, preferredTrackID: 43))
@@ -5740,6 +5800,7 @@ final class MediaEngineTests: XCTestCase {
     }
 
     #if canImport(UIKit) || os(macOS)
+    @MainActor
     func testRecordedClipCanBuildPlayerAndPreviewBridges() throws {
         let outputURL = try makeSampleAssetURL()
         let duration = CMTime(value: 30, timescale: 30)
@@ -6927,6 +6988,127 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.summary.recordedVideoSegmentCount, 2)
         XCTAssertEqual(sink.summary.recordedAudioSegmentCount, 0)
         XCTAssertEqual(recordedClip?.segments.count, 2)
+    }
+
+    func testFrameFormatMapsKnownPixelFormatsAndProcessorCapabilities() {
+        XCTAssertEqual(FramePixelFormat(ostype: kCVPixelFormatType_32BGRA), .bgra8)
+        XCTAssertEqual(FramePixelFormat(ostype: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange), .yuv420BiPlanarFullRange)
+
+        let format = FrameFormat(
+            pixelFormat: .bgra8,
+            colorInfo: FrameColorInfo(primaries: .bt709, transferFunction: .sdr, yCbCrMatrix: .bt709),
+            dynamicRange: .standard
+        )
+        let capabilities = FrameProcessorCapabilities(
+            acceptedPixelFormats: [.bgra8],
+            supportedDynamicRanges: [.standard]
+        )
+        XCTAssertTrue(capabilities.accepts(format))
+        XCTAssertFalse(capabilities.accepts(FrameFormat(
+            pixelFormat: .yuv420BiPlanarVideoRange,
+            colorInfo: format.colorInfo,
+            dynamicRange: .standard
+        )))
+    }
+
+    func testCancellableFrameProcessorReturnsUnderlyingCancellation() {
+        let processor = TestCancellableFrameProcessor()
+        let frame = MetadataOnlyFrame(metadata: FrameMetadata(presentationTime: .zero))
+        let operation = processFrame(using: processor, frame: frame) { _ in
+            XCTFail("Cancelled processor must not complete in this test.")
+        }
+
+        operation?.cancel()
+
+        XCTAssertEqual(processor.cancelCount, 1)
+    }
+
+    func testVideoAssetProfileCodecMappingCoversKnownAndUnknownCodecs() {
+        XCTAssertEqual(VideoAssetProfileInspector.videoCodec(fourCC: kCMVideoCodecType_H264), .h264)
+        XCTAssertEqual(VideoAssetProfileInspector.videoCodec(fourCC: kCMVideoCodecType_HEVC), .hevc)
+        XCTAssertEqual(VideoAssetProfileInspector.audioCodec(fourCC: kAudioFormatMPEG4AAC), .aac)
+        XCTAssertEqual(VideoAssetProfileInspector.videoCodec(fourCC: 0x1234_5678), .other(fourCC: 0x1234_5678))
+    }
+
+    func testAdaptivePreviewPolicyUsesHysteresisAndBounds() {
+        let policy = VideoPreviewAdaptivePolicy(
+            minimumFramesPerSecond: 15,
+            maximumFramesPerSecond: 30,
+            recoverySampleCount: 3
+        )
+
+        XCTAssertEqual(policy.recommendation(
+            currentFramesPerSecond: 30,
+            processingDuration: 0.05,
+            consecutiveUnderBudgetSamples: 0
+        ), 25)
+        XCTAssertEqual(policy.recommendation(
+            currentFramesPerSecond: 20,
+            processingDuration: 0.005,
+            consecutiveUnderBudgetSamples: 2
+        ), 20)
+        XCTAssertEqual(policy.recommendation(
+            currentFramesPerSecond: 20,
+            processingDuration: 0.005,
+            consecutiveUnderBudgetSamples: 3
+        ), 25)
+    }
+}
+
+private final class TestCancellableFrameProcessor: CancellableFrameProcessor, @unchecked Sendable {
+    private let lock = NSLock()
+    private let onProcess: (() -> Void)?
+    private var storedCancelCount = 0
+
+    var cancelCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedCancelCount
+    }
+
+    init(onProcess: (() -> Void)? = nil) {
+        self.onProcess = onProcess
+    }
+
+    func process(_ frame: MediaFrame, completion: @escaping (Result<MediaFrame, Error>) -> Void) {
+        _ = processCancellable(frame, completion: completion)
+    }
+
+    func processCancellable(
+        _ frame: MediaFrame,
+        completion: @escaping (Result<MediaFrame, Error>) -> Void
+    ) -> FrameProcessingOperation {
+        onProcess?()
+        return FrameProcessingCancellation { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            self.storedCancelCount += 1
+            self.lock.unlock()
+        }
+    }
+}
+
+private final class ConcurrentExportStartState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var factoryCallCount = 0
+    private var results: [Result<URL, Error>] = []
+
+    var snapshot: (Int, [Result<URL, Error>]) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (factoryCallCount, results)
+    }
+
+    func incrementFactoryCallCount() {
+        lock.lock()
+        factoryCallCount += 1
+        lock.unlock()
+    }
+
+    func append(_ result: Result<URL, Error>) {
+        lock.lock()
+        results.append(result)
+        lock.unlock()
     }
 }
 
