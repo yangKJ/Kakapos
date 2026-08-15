@@ -3304,8 +3304,11 @@ final class MediaEngineTests: XCTestCase {
 
     func testProcessedReaderWriterSessionExportsARealEncodedArtifact() throws {
         let sourceURL = try makeSampleAssetURL()
+        XCTAssertEqual(sourceURL.lastPathComponent, "IMG_3156.MOV")
         let sourceAsset = AVAsset(url: sourceURL)
         let sourceTrack = try XCTUnwrap(sourceAsset.tracks(withMediaType: .video).first)
+        let sourceFormat = try XCTUnwrap(sourceTrack.formatDescriptions.first) as! CMFormatDescription
+        XCTAssertEqual(CMFormatDescriptionGetMediaSubType(sourceFormat), kCMVideoCodecType_HEVC)
         let sourcePresentationSize = sourceTrack.naturalSize.applying(sourceTrack.preferredTransform)
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -3339,6 +3342,10 @@ final class MediaEngineTests: XCTestCase {
                 expectsAudio: sourceAsset.tracks(withMediaType: .audio).isEmpty == false
             )
         )
+        let outputAsset = AVAsset(url: exportedURL)
+        let outputTrack = try XCTUnwrap(outputAsset.tracks(withMediaType: .video).first)
+        let outputFormat = try XCTUnwrap(outputTrack.formatDescriptions.first) as! CMFormatDescription
+        XCTAssertEqual(CMFormatDescriptionGetMediaSubType(outputFormat), kCMVideoCodecType_H264)
         let outputPresentationSize = report.naturalSize.applying(report.preferredTransform)
         XCTAssertEqual(abs(outputPresentationSize.width), abs(sourcePresentationSize.width), accuracy: 1)
         XCTAssertEqual(abs(outputPresentationSize.height), abs(sourcePresentationSize.height), accuracy: 1)
