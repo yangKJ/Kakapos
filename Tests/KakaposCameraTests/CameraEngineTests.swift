@@ -189,6 +189,7 @@ final class CameraEngineTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testCameraRecordingControllerStopsAndFinishesGenericSource() throws {
         let frame = PixelBufferFrame(
             pixelBuffer: try makeCameraTestPixelBuffer(width: 16, height: 16),

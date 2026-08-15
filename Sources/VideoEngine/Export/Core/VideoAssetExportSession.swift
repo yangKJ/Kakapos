@@ -126,6 +126,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         label: "com.condy.kakapos.video-asset-export.processing",
         qos: .userInitiated
     )
+    private let videoProcessingOperationLock = NSLock()
     private let duration: CMTime
 
     private struct PendingProcessedVideoFrame {
@@ -155,6 +156,8 @@ final class VideoAssetExportSession: @unchecked Sendable {
     private var videoProcessingInFlight = false
     private var videoProcessingGeneration: UInt64 = 0
     private var videoProcessingTimeoutTimer: DispatchSourceTimer?
+    private var videoProcessingOperation: FrameProcessingOperation?
+    private var videoProcessingOperationToken: UInt64 = 0
     private var pendingProcessedVideoFrame: PendingProcessedVideoFrame?
     private var didBeginFinishing = false
     private var didDeliverCallback = false
@@ -430,6 +433,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             self.cancelled = true
             self.status = .cancelled
             self.videoProcessingInFlight = false
+            self.cancelVideoProcessingOperation()
             self.cancelVideoProcessingTimeout()
             self.dispatchStatus(.cancelled)
             if self.reader.status == .reading {
@@ -679,7 +683,8 @@ final class VideoAssetExportSession: @unchecked Sendable {
         let metadata = FrameMetadata(
             presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
             duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
-            sourceTime: CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
+            sourceTime: CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer),
+            format: .sdrBGRA8
         )
         return SampleBufferFrame(sampleBuffer: sampleBuffer, metadata: metadata)
     }
@@ -748,6 +753,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
                   self.didBeginFinishing == false else { return }
             self.cancelVideoProcessingTimeout()
             self.videoProcessingInFlight = false
+            self.cancelVideoProcessingOperation()
             self.configuration.performanceAccumulator.recordProcessorTimedOut()
             self.failExport(SessionError.videoFrameProcessingTimedOut(seconds: timeout))
         }
@@ -781,6 +787,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         }
 
         let processor = configuration.videoProcessors[index]
+        let operationToken = beginVideoProcessingOperation()
         let frameBox = UnsafeSendableBox(value: frame)
         let completionBox = UnsafeSendableBox(value: completion)
         let stageSubmittedAt = configuration.performanceAccumulator.now()
@@ -796,7 +803,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 return
             }
             let stageStartedAt = self.configuration.performanceAccumulator.now()
-            processor.process(frameBox.value) { [weak self] result in
+            let operation = processFrame(using: processor, frame: frameBox.value) { [weak self] result in
                 guard let self else {
                     let completedAt = DispatchTime.now().uptimeNanoseconds
                     completionBox.value(.failure(SessionError.invalidStatus), VideoProcessingTiming(
@@ -807,6 +814,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
                     ))
                     return
                 }
+                self.clearVideoProcessingOperation(token: operationToken)
                 let stageCompletedAt = self.configuration.performanceAccumulator.now()
                 let queueDelayNanoseconds = Self.addingClamped(
                     accumulatedQueueDelayNanoseconds,
@@ -835,7 +843,45 @@ final class VideoAssetExportSession: @unchecked Sendable {
                     ))
                 }
             }
+            self.installVideoProcessingOperation(operation, token: operationToken)
         }
+    }
+
+    private func beginVideoProcessingOperation() -> UInt64 {
+        videoProcessingOperationLock.lock()
+        videoProcessingOperationToken &+= 1
+        let token = videoProcessingOperationToken
+        videoProcessingOperation = nil
+        videoProcessingOperationLock.unlock()
+        return token
+    }
+
+    private func installVideoProcessingOperation(_ operation: FrameProcessingOperation?, token: UInt64) {
+        videoProcessingOperationLock.lock()
+        if videoProcessingOperationToken == token {
+            videoProcessingOperation = operation
+            videoProcessingOperationLock.unlock()
+        } else {
+            videoProcessingOperationLock.unlock()
+            operation?.cancel()
+        }
+    }
+
+    private func clearVideoProcessingOperation(token: UInt64) {
+        videoProcessingOperationLock.lock()
+        if videoProcessingOperationToken == token {
+            videoProcessingOperation = nil
+        }
+        videoProcessingOperationLock.unlock()
+    }
+
+    private func cancelVideoProcessingOperation() {
+        videoProcessingOperationLock.lock()
+        videoProcessingOperationToken &+= 1
+        let operation = videoProcessingOperation
+        videoProcessingOperation = nil
+        videoProcessingOperationLock.unlock()
+        operation?.cancel()
     }
 
     private static func elapsedNanoseconds(from start: UInt64, to end: UInt64) -> UInt64 {

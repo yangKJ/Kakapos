@@ -303,6 +303,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
     private let audioMix: AVAudioMix?
     private let videoProcessors: [FrameProcessor]
     private let videoFrameProcessingTimeout: TimeInterval?
+    private let exportProfile: VideoExportProfile
     private let shouldOptimizeForNetworkUse: Bool
     private let metadata: [AVMetadataItem]
     private let artifactValidationExpectation: VideoArtifactValidationExpectation?
@@ -326,6 +327,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         audioMix: AVAudioMix? = nil,
         videoProcessors: [FrameProcessor] = [],
         videoFrameProcessingTimeout: TimeInterval? = nil,
+        exportProfile: VideoExportProfile = .legacyCompatible,
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
         artifactValidationExpectation: VideoArtifactValidationExpectation? = nil,
@@ -340,6 +342,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             audioMix: audioMix,
             videoProcessors: videoProcessors,
             videoFrameProcessingTimeout: videoFrameProcessingTimeout,
+            exportProfile: exportProfile,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
             artifactValidationExpectation: artifactValidationExpectation,
@@ -357,6 +360,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         audioMix: AVAudioMix? = nil,
         videoProcessors: [FrameProcessor] = [],
         videoFrameProcessingTimeout: TimeInterval? = nil,
+        exportProfile: VideoExportProfile = .legacyCompatible,
         shouldOptimizeForNetworkUse: Bool = true,
         metadata: [AVMetadataItem] = [],
         artifactValidationExpectation: VideoArtifactValidationExpectation? = nil,
@@ -371,6 +375,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         self.audioMix = audioMix
         self.videoProcessors = videoProcessors
         self.videoFrameProcessingTimeout = videoFrameProcessingTimeout.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        self.exportProfile = exportProfile
         self.shouldOptimizeForNetworkUse = shouldOptimizeForNetworkUse
         self.metadata = metadata
         self.artifactValidationExpectation = artifactValidationExpectation
@@ -533,25 +538,46 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         }
         let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
         return [
-            AVVideoCodecKey: Self.preferredVideoCodec(for: fileType),
+            AVVideoCodecKey: preferredVideoCodec(),
             AVVideoWidthKey: abs(size.width),
             AVVideoHeightKey: abs(size.height)
-        ]
+        ].merging(videoCompressionAndColorSettings()) { _, new in new }
     }
 
-    private static func preferredVideoCodec(for fileType: AVFileType) -> AVVideoCodecType {
-        if fileType == .mov {
+    private func preferredVideoCodec() -> AVVideoCodecType {
+        switch exportProfile.videoCodec {
+        case .automatic:
+            return fileType == .mov ? .jpeg : .h264
+        case .h264:
+            return .h264
+        case .hevc:
+            return .hevc
+        case .jpeg:
             return .jpeg
         }
-        return .h264
+    }
+
+    private func videoCompressionAndColorSettings() -> [String: Any] {
+        var settings: [String: Any] = [:]
+        if let bitRate = exportProfile.averageVideoBitRate {
+            settings[AVVideoCompressionPropertiesKey] = [AVVideoAverageBitRateKey: bitRate]
+        }
+        if exportProfile.colorPolicy == .standardBT709 {
+            settings[AVVideoColorPropertiesKey] = [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
+            ]
+        }
+        return settings
     }
 
     private func makeAudioSettings() -> [String: Any] {
         [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVNumberOfChannelsKey: 2,
-            AVSampleRateKey: 44_100,
-            AVEncoderBitRateKey: 128_000
+            AVNumberOfChannelsKey: exportProfile.audioChannelCount,
+            AVSampleRateKey: exportProfile.audioSampleRate,
+            AVEncoderBitRateKey: exportProfile.audioBitRate
         ]
     }
 

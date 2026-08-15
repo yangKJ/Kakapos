@@ -36,7 +36,7 @@ public struct StillImageFrame {
     }
 }
 
-public final class ImageSource: MediaSource, MediaFrameSourceNode {
+public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Sendable {
     public enum MetadataKey {
         public static let imageIndex = "kakapos.image-source.index"
         public static let imageCount = "kakapos.image-source.count"

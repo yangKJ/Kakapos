@@ -64,11 +64,13 @@ public extension MediaPipeline {
 }
 
 public extension RecordedClip {
+    @MainActor
     func makePlayerItem() -> AVPlayerItem? {
         guard let asset else { return nil }
         return AVPlayerItem(asset: asset)
     }
 
+    @MainActor
     func makePlayerFrameSource(preferredFramesPerSecond: Int = 30) -> PlayerFrameSource? {
         PlayerFrameSource(recordedClip: self, preferredFramesPerSecond: preferredFramesPerSecond)
     }
