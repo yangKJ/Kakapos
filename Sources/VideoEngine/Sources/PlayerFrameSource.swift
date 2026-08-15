@@ -359,7 +359,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             sourceTime: playerItemTime,
             trackTransform: frame.preferredTrackTransform,
             frameIndex: frameIndex,
-            format: .sdrBGRA8,
+            format: FrameFormat(pixelBuffer: frame.pixelBuffer),
             userInfo: userInfo
         )
         let mediaFrame = PixelBufferFrame(pixelBuffer: frame.pixelBuffer, metadata: metadata)
