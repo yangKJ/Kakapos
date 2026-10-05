@@ -57,7 +57,9 @@ private final class WeakMediaSourceDelegateBox {
     }
 }
 
-public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMultiplexing, MediaFrameSourceNode, MediaSourceSnapshotProviding {
+// 会话 mutation 在 sessionQueue，帧与 delegate 分支由 fence、准入 gate 和 delegateLock 约束。
+// 跨队列只传递持有生命周期的回调载荷；调用者不得跨执行域直接修改配置。
+public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMultiplexing, MediaFrameSourceNode, MediaSourceSnapshotProviding, @unchecked Sendable {
     public struct Snapshot: Equatable {
         public let state: CameraSessionState
         public let position: CameraPosition
@@ -304,6 +306,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private let videoOutput = AVCaptureVideoDataOutput()
     private let audioOutput = AVCaptureAudioDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
+    private var nativePhotoRequests: [Int64: NativePhotoRequestDelegate] = [:]
     private var metadataOutput: AVCaptureMetadataOutput?
     private var depthDataOutput: AVCaptureDepthDataOutput?
     private var outputSynchronizer: AVCaptureDataOutputSynchronizer?
@@ -452,7 +455,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     public func stop() {
         guard let terminalGeneration = beginTerminalIfNeeded() else { return }
-        let terminalDelegates = mediaSourceDelegatesSnapshot()
+        let terminalDelegates = CameraCallbackTransfer(mediaSourceDelegatesSnapshot())
         waitForActiveFrameDeliveries()
         sessionQueue.async {
             self.lastVideoSampleBuffer = nil
@@ -463,7 +466,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             }
             self.publish(.didStopRunning)
             DispatchQueue.main.async {
-                self.notifyDelegatesOfFinish(terminalDelegates)
+                self.notifyDelegatesOfFinish(terminalDelegates.value)
                 self.markTerminalCallbackDelivered()
             }
         }
@@ -539,6 +542,98 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
     }
 
+    /// 只查询已配置输出的能力，不以硬件型号猜测支持范围。
+    public func photoCaptureCapabilities() async -> CameraPhotoCaptureCapabilities {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async {
+                let device = self.videoInput?.device
+                let dimensions: [CGSize]
+                if #available(iOS 16.0, *) {
+                    dimensions = device?.activeFormat.supportedMaxPhotoDimensions.map {
+                        CGSize(width: Int($0.width), height: Int($0.height))
+                    } ?? []
+                } else { dimensions = [] }
+                let proRaw: Bool
+                if #available(iOS 14.3, *) { proRaw = self.photoOutput.isAppleProRAWSupported }
+                else { proRaw = false }
+                continuation.resume(returning: CameraPhotoCaptureCapabilities(
+                    supportsLivePhoto: self.photoOutput.isLivePhotoCaptureSupported,
+                    supportsBayerRAW: self.photoOutput.availableRawPhotoPixelFormatTypes.contains {
+                        if #available(iOS 14.3, *) { return AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
+                        return !proRaw
+                    }, supportsAppleProRAW: proRaw, supportedDimensions: dimensions,
+                    supportsHEIC: self.photoOutput.availablePhotoCodecTypes.contains(.hevc)))
+            }
+        }
+    }
+
+    /// 新请求路径没有当前视频帧回退；高质量捕获失败必须显式返回。
+    public func capturePhoto(request: CameraPhotoCaptureRequest) async throws -> CameraPhotoCaptureArtifact {
+        try await withCheckedThrowingContinuation { continuation in
+            sessionQueue.async {
+                do {
+                    guard self.isSessionConfigured, self.session.isRunning else { throw CameraPhotoCaptureError.sessionUnavailable }
+                    guard self.nativePhotoRequests.count < 2 else { throw CameraPhotoCaptureError.tooManyRequests }
+                    let expectsRaw = request.format == .bayerRAW || request.format == .appleProRAW
+                    guard !(expectsRaw && request.includesLivePhoto) else { throw CameraPhotoCaptureError.incompatibleCombination }
+                    if request.format == .appleProRAW {
+                        if #available(iOS 14.3, *), self.photoOutput.isAppleProRAWSupported {
+                            self.photoOutput.isAppleProRAWEnabled = true
+                        } else { throw CameraPhotoCaptureError.unsupportedFormat }
+                    }
+                    let codec: AVVideoCodecType = request.format == .heic ? .hevc : .jpeg
+                    guard self.photoOutput.availablePhotoCodecTypes.contains(codec) else { throw CameraPhotoCaptureError.unsupportedFormat }
+                    let settings: AVCapturePhotoSettings
+                    if expectsRaw {
+                        guard let rawType = self.photoOutput.availableRawPhotoPixelFormatTypes.first(where: {
+                            if #available(iOS 14.3, *) {
+                                return request.format == .appleProRAW ? AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) : AVCapturePhotoOutput.isBayerRAWPixelFormat($0)
+                            }
+                            return request.format == .bayerRAW
+                        }) else { throw CameraPhotoCaptureError.unsupportedFormat }
+                        settings = AVCapturePhotoSettings(rawPixelFormatType: rawType, processedFormat: [AVVideoCodecKey: codec])
+                    } else { settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec]) }
+                    if #available(iOS 16.0, *) {
+                        let supported = self.videoInput?.device.activeFormat.supportedMaxPhotoDimensions.sorted {
+                            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+                        } ?? []
+                        guard let maximum = supported.last, let standard = supported.first else {
+                            if request.maximumDimensions { throw CameraPhotoCaptureError.unsupportedFormat }
+                            throw CameraPhotoCaptureError.sessionUnavailable
+                        }
+                        if self.photoOutput.maxPhotoDimensions.width != maximum.width || self.photoOutput.maxPhotoDimensions.height != maximum.height { self.photoOutput.maxPhotoDimensions = maximum }
+                        settings.maxPhotoDimensions = request.maximumDimensions ? maximum : standard
+                    }
+                    guard request.flashMode == .off || self.photoOutput.supportedFlashModes.contains(request.flashMode) else {
+                        throw CameraPhotoCaptureError.incompatibleCombination
+                    }
+                    settings.flashMode = request.flashMode
+                    if #available(iOS 18.0, *), request.suppressesShutterSound, self.photoOutput.isShutterSoundSuppressionSupported {
+                        settings.isShutterSoundSuppressionEnabled = true
+                    }
+                    if #available(iOS 13.0, *) { settings.photoQualityPrioritization = self.photoOutput.maxPhotoQualityPrioritization }
+                    if request.includesLivePhoto {
+                        guard self.photoOutput.isLivePhotoCaptureSupported else { throw CameraPhotoCaptureError.livePhotoUnavailable }
+                        self.photoOutput.isLivePhotoCaptureEnabled = true
+                        guard !self.photoOutput.isLivePhotoCaptureSuspended else { throw CameraPhotoCaptureError.livePhotoUnavailable }
+                        try FileManager.default.createDirectory(at: request.outputDirectory, withIntermediateDirectories: true)
+                        settings.livePhotoMovieFileURL = request.outputDirectory.appendingPathComponent(request.id.uuidString + ".mov")
+                    }
+                    let uniqueID = settings.uniqueID
+                    let delegate = NativePhotoRequestDelegate(request: request) { result in
+                        self.sessionQueue.async { self.nativePhotoRequests.removeValue(forKey: uniqueID) }
+                        continuation.resume(with: result.mapError { $0 as Error })
+                    }
+                    self.nativePhotoRequests[uniqueID] = delegate
+                    self.sessionQueue.asyncAfter(deadline: .now() + 45) { [weak delegate] in
+                        delegate?.terminate(.captureTimedOut)
+                    }
+                    self.photoOutput.capturePhoto(with: settings, delegate: delegate)
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
     public func capturePhotoFromCurrentFrame() {
         photoQueue.async {
             guard let pixelBuffer = self.lastVideoPixelBuffer else {
@@ -552,8 +647,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             let metadata = Self.attachmentsDictionary(from: self.lastVideoSampleBuffer)
             let data = self.ciContext.jpegRepresentation(of: image, colorSpace: colorSpace, options: [:])
             let result = CameraPhotoCaptureResult(data: data, metadata: metadata, isFromCurrentFrame: true)
+            let resultTransfer = CameraCallbackTransfer(result)
             DispatchQueue.main.async {
-                self.photoCaptureHandler?(result)
+                self.photoCaptureHandler?(resultTransfer.value)
             }
         }
     }
@@ -981,8 +1077,10 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard let ingressToken = frameIngressGate.admit(mediaKind: mediaKind, branchCount: 2) else {
             return
         }
+        let frameTransfer = CameraCallbackTransfer(frame)
         DispatchQueue.main.async {
             self.frameDeliveryFence.lock()
+            let frame = frameTransfer.value
             defer {
                 self.frameDeliveryFence.unlock()
                 self.frameIngressGate.completeBranch(for: ingressToken)
@@ -996,8 +1094,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             }
         }
         processingQueue.async {
-            self.frameDeliveryFence.lock()
-            defer { self.frameDeliveryFence.unlock() }
+            let fence = self.frameDeliveryFence
+            fence.lock()
+            defer { fence.unlock() }
             guard self.frameIngressGate.isActive(ingressToken) else {
                 self.frameIngressGate.completeBranch(for: ingressToken)
                 return
@@ -1013,10 +1112,12 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     private func publish(_ action: CameraLifecycleAction) {
         guard let event = lifecycle.handle(action) else { return }
+        let eventTransfer = CameraCallbackTransfer(event)
         state = lifecycle.state
         currentPosition = lifecycle.position
         authorizationStatus = lifecycle.authorizationStatus
         DispatchQueue.main.async {
+            let event = eventTransfer.value
             self.sessionEventHandler?(event)
             self.sessionEventDispatcher.emit(event)
             if case .authorizationChanged(let status) = event {
@@ -1302,11 +1403,11 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                 self.onSessionQueue {
                     guard !self.consumeExpectedStopNotification() else { return }
                     guard self.beginTerminalIfNeeded() != nil else { return }
-                    let terminalDelegates = self.mediaSourceDelegatesSnapshot()
+                    let terminalDelegates = CameraCallbackTransfer(self.mediaSourceDelegatesSnapshot())
                     self.waitForActiveFrameDeliveries()
                     self.publish(.didStopRunning)
                     DispatchQueue.main.async {
-                        self.notifyDelegatesOfFinish(terminalDelegates)
+                        self.notifyDelegatesOfFinish(terminalDelegates.value)
                         self.markTerminalCallbackDelivered()
                     }
                 }
@@ -1397,14 +1498,14 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             return
         }
         guard let error, let terminalGeneration = beginTerminalIfNeeded() else { return }
-        let terminalDelegates = mediaSourceDelegatesSnapshot()
+        let terminalDelegates = CameraCallbackTransfer(mediaSourceDelegatesSnapshot())
         waitForActiveFrameDeliveries()
         if session.isRunning {
             expectStopNotification(generation: terminalGeneration)
             session.stopRunning()
         }
         DispatchQueue.main.async {
-            terminalDelegates.forEach { $0.mediaSource(self, didFail: error) }
+            terminalDelegates.value.forEach { $0.mediaSource(self, didFail: error) }
             self.markTerminalCallbackDelivered()
         }
     }
@@ -1549,8 +1650,9 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
             depthDataDelivered: deliveredDepthData,
             portraitEffectsMatteDelivered: deliveredPortraitEffectsMatte
         )
+        let resultTransfer = CameraCallbackTransfer(result)
         DispatchQueue.main.async {
-            self.photoCaptureHandler?(result)
+            self.photoCaptureHandler?(resultTransfer.value)
         }
     }
 }
@@ -1594,3 +1696,9 @@ extension CameraSource: AVCaptureDataOutputSynchronizerDelegate {
     }
 }
 #endif
+
+// 主队列回调持有不可变载荷；delegate 的调用仍只在既有主队列执行。
+private struct CameraCallbackTransfer<Value>: @unchecked Sendable {
+    let value: Value
+    init(_ value: Value) { self.value = value }
+}
