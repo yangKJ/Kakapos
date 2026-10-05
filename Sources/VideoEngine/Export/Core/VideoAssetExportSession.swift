@@ -1003,15 +1003,15 @@ final class VideoAssetExportSession: @unchecked Sendable {
     }
 
     private static func prepareOutputURL(_ outputURL: URL) throws {
-        guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            return
-        }
-        do {
-            try FileManager.default.removeItem(at: outputURL)
-        } catch {
+        // 文件存在性查询与删除不是事务；期间已经被移除等价于准备成功。
+        do { try FileManager.default.removeItem(at: outputURL) }
+        catch {
+            let value = error as NSError
+            if value.domain == NSCocoaErrorDomain && value.code == NSFileNoSuchFileError { return }
             throw error
         }
     }
+
 }
 
 extension VideoAssetExportSession: ReaderWriterExportSession {}
