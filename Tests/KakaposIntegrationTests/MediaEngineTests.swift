@@ -342,6 +342,9 @@ final class MediaEngineTests: XCTestCase {
         let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [sink])
 
         pipeline.start()
+        let drained = expectation(description: "后台处理已排空")
+        pipeline.stop { _ in drained.fulfill() }
+        wait(for: [drained], timeout: 2)
 
         XCTAssertEqual(sink.frames.count, 1)
         XCTAssertEqual(sink.frames.first?.metadata.frameIndex, 2)
@@ -373,8 +376,16 @@ final class MediaEngineTests: XCTestCase {
         let source = ManualSource()
         let sink = TestSink()
         var pendingProcessing: [PendingProcessing] = []
+        let pendingLock = NSLock()
+        let firstStarted = expectation(description: "首帧处理已启动")
+        let latestStarted = expectation(description: "最新帧处理已启动")
+        let finished = expectation(description: "最新帧完成后结束")
         let processor = ClosureFrameProcessor { frame, completion in
+            pendingLock.lock()
             pendingProcessing.append((frame, completion))
+            pendingLock.unlock()
+            if frame.metadata.frameIndex == 1 { firstStarted.fulfill() }
+            if frame.metadata.frameIndex == 3 { latestStarted.fulfill() }
         }
         let pipeline = MediaPipeline(
             source: source,
@@ -384,6 +395,7 @@ final class MediaEngineTests: XCTestCase {
         )
         let pixelBuffer = try makePixelBuffer(width: 8, height: 8)
 
+        pipeline.completionHandler = { finished.fulfill() }
         pipeline.start()
         for index in 1...3 {
             source.emit(PixelBufferFrame(
@@ -396,15 +408,22 @@ final class MediaEngineTests: XCTestCase {
         }
         source.finish()
 
+        wait(for: [firstStarted], timeout: 2)
         XCTAssertEqual(pendingProcessing.count, 1)
         XCTAssertEqual(pipeline.droppedSourceFrameCount, 1)
         XCTAssertEqual(pipeline.state, .running)
 
+        pendingLock.lock()
         let first = pendingProcessing.removeFirst()
+        pendingLock.unlock()
         first.completion(.success(first.frame))
+        wait(for: [latestStarted], timeout: 2)
         XCTAssertEqual(pendingProcessing.count, 1)
+        pendingLock.lock()
         let latest = pendingProcessing.removeFirst()
+        pendingLock.unlock()
         latest.completion(.success(latest.frame))
+        wait(for: [finished], timeout: 2)
 
         XCTAssertEqual(sink.frames.compactMap { $0.metadata.frameIndex }, [1, 3])
         XCTAssertEqual(pipeline.state, .finished)
@@ -514,6 +533,10 @@ final class MediaEngineTests: XCTestCase {
         let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [sink])
 
         pipeline.start()
+
+        let manifestReady = expectation(description: "manifest finished")
+        DispatchQueue.main.async { manifestReady.fulfill() }
+        wait(for: [manifestReady], timeout: 1)
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -772,6 +795,12 @@ final class MediaEngineTests: XCTestCase {
         let graph = MediaGraph(source: source, branches: [firstBranch, secondBranch])
 
         graph.start()
+        let graphReady = expectation(description: "graph ready")
+        DispatchQueue.main.async { graphReady.fulfill() }
+        wait(for: [graphReady], timeout: 1)
+        let graphDelivery = expectation(description: "graph delivery")
+        DispatchQueue.main.async { graphDelivery.fulfill() }
+        wait(for: [graphDelivery], timeout: 1)
 
         XCTAssertEqual(firstSink.frames.first?.metadata.frameIndex, 11)
         XCTAssertEqual(secondSink.frames.first?.metadata.frameIndex, 21)
@@ -807,6 +836,10 @@ final class MediaEngineTests: XCTestCase {
         let graph = MediaGraph(source: source, branches: [parentBranch])
 
         graph.start()
+
+        let graphReady = expectation(description: "nested graph ready")
+        DispatchQueue.main.async { graphReady.fulfill() }
+        wait(for: [graphReady], timeout: 1)
 
         XCTAssertEqual(parentSink.frames.first?.metadata.frameIndex, 30)
         XCTAssertEqual(childSink.frames.first?.metadata.frameIndex, 31)
@@ -2985,14 +3018,14 @@ final class MediaEngineTests: XCTestCase {
                 return
             }
             XCTAssertEqual(
-                CVBufferCopyAttachment(output, kCVImageBufferColorPrimariesKey, nil) as? String,
+                testCopyAttachment(output, kCVImageBufferColorPrimariesKey, nil) as? String,
                 kCVImageBufferColorPrimaries_ITU_R_709_2 as String
             )
             XCTAssertEqual(
-                CVBufferCopyAttachment(output, kCVImageBufferTransferFunctionKey, nil) as? String,
+                testCopyAttachment(output, kCVImageBufferTransferFunctionKey, nil) as? String,
                 kCVImageBufferTransferFunction_sRGB as String
             )
-            XCTAssertNil(CVBufferCopyAttachment(output, kCVImageBufferYCbCrMatrixKey, nil))
+            XCTAssertNil(testCopyAttachment(output, kCVImageBufferYCbCrMatrixKey, nil))
             completion.fulfill()
         }
 
@@ -4552,6 +4585,10 @@ final class MediaEngineTests: XCTestCase {
 
         graph.start()
 
+        let graphDelivery = expectation(description: "graph branches delivered")
+        DispatchQueue.main.async { graphDelivery.fulfill() }
+        wait(for: [graphDelivery], timeout: 1)
+
         XCTAssertEqual(firstSink.frames.first?.metadata.frameIndex, 10)
         XCTAssertEqual(secondSink.frames.first?.metadata.frameIndex, 20)
     }
@@ -4615,10 +4652,11 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testMediaPipelinePauseResumeAndCancelPropagateToSinks() {
-        let source = TestSource(frames: [])
+        let source = ManualSource()
         let sink = LifecycleAwareSink()
         let pipeline = MediaPipeline(source: source, processors: [], sinks: [sink])
 
+        pipeline.start()
         pipeline.pause()
         pipeline.resume()
         pipeline.cancel()
@@ -4632,7 +4670,7 @@ final class MediaEngineTests: XCTestCase {
         let successSource = TestSource(frames: [])
         let successPipeline = MediaPipeline(source: successSource, processors: [], sinks: [])
         let successExpectation = expectation(description: "success state callbacks")
-        successExpectation.expectedFulfillmentCount = 2
+        successExpectation.expectedFulfillmentCount = 3
         var successStates: [MediaPipeline.State] = []
         successPipeline.stateHandler = { state in
             successStates.append(state)
@@ -4642,7 +4680,7 @@ final class MediaEngineTests: XCTestCase {
         successPipeline.start()
         wait(for: [successExpectation], timeout: 1)
 
-        XCTAssertEqual(successStates, [.running, .finished])
+        XCTAssertEqual(successStates, [.running, .finishing, .finished])
         XCTAssertEqual(successPipeline.state, .finished)
 
         let failureSource = FailingSource(error: NSError(domain: "MediaPipelineTests", code: 11))
@@ -4764,7 +4802,7 @@ final class MediaEngineTests: XCTestCase {
 
         wait(for: [stateExpectation, errorExpectation], timeout: 1)
 
-        XCTAssertEqual(states, [.running, .finished, .failed])
+        XCTAssertEqual(states, [.running, .finishing, .failed])
         XCTAssertEqual(receivedError?.domain, "MediaPipelineTests")
         XCTAssertEqual(receivedError?.code, 29)
         XCTAssertEqual(pipeline.state, .failed)
@@ -7072,10 +7110,10 @@ final class MediaEngineTests: XCTestCase {
             XCTAssertEqual(frame.metadata.format?.colorInfo.primaries, .bt709)
             XCTAssertEqual(frame.metadata.format?.colorInfo.transferFunction, .sdr)
             XCTAssertEqual(
-                CVBufferCopyAttachment(output, kCVImageBufferTransferFunctionKey, nil) as? String,
+                testCopyAttachment(output, kCVImageBufferTransferFunctionKey, nil) as? String,
                 kCVImageBufferTransferFunction_sRGB as String
             )
-            XCTAssertNil(CVBufferCopyAttachment(output, kCVImageBufferYCbCrMatrixKey, nil))
+            XCTAssertNil(testCopyAttachment(output, kCVImageBufferYCbCrMatrixKey, nil))
             XCTAssertFalse(StandardDynamicRangeFrameProcessor().capabilities.preservesColorInformation)
             completion.fulfill()
         }
@@ -8004,4 +8042,11 @@ private func makeSampleAssetURL() throws -> URL {
     }
     XCTFail("Expected a sample asset under KakaposExamples.")
     return baseURL.appendingPathComponent("IMG_3156.MOV")
+}
+
+private func testCopyAttachment(_ buffer: CVBuffer, _ key: CFString, _ mode: UnsafeMutablePointer<CVAttachmentMode>?) -> CFTypeRef? {
+    if #available(iOS 15, tvOS 15, macOS 12, watchOS 8, *) {
+        return CVBufferCopyAttachment(buffer, key, mode)
+    }
+    return CVBufferGetAttachment(buffer, key, mode)?.takeUnretainedValue()
 }

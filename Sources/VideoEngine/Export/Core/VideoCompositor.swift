@@ -9,14 +9,15 @@ import Foundation
 import KakaposMediaCore
 import AVFoundation
 import CoreVideo
-import VideoToolbox
+import CoreImage
 
 final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     
     let renderQueue = DispatchQueue(label: "com.condy.exporter.rendering.queue")
     
     var renderContext: AVVideoCompositionRenderContext?
-    var shouldCancelAllRequests = false
+    private let imageContext = CIContext(options: [.cacheIntermediates: false])
+    private var requests: [UUID: (AVAsynchronousVideoCompositionRequest, FrameProcessingOperation?)] = [:]
     #if os(macOS)
     var sourcePixelBufferAttributes: [String : Sendable]? = [
         String(kCVPixelBufferPixelFormatTypeKey): [kCVPixelFormatType_32BGRA]
@@ -35,39 +36,36 @@ final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     ]
     #endif
     
+    private struct Transfer<Value>: @unchecked Sendable { let value: Value }
+
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
-        autoreleasepool {
-            self.renderQueue.async {
-                if self.shouldCancelAllRequests {
-                    request.finishCancelledRequest()
-                } else {
-                    guard let instruction = request.videoCompositionInstruction as? CompositionInstruction,
-                          let renderContext = self.renderContext else {
-                        request.finish(with: VideoX.Error.newRenderedPixelBufferForRequestFailure)
-                        return
-                    }
-                    let renderSize = renderContext.size
-                    
-                    let callback = { buffer in
-                        request.finish(withComposedVideoFrame: buffer)
-                    }
-                    
-                    // 只处理单轨道
-                    if let trackID = instruction.trackID, let pixelBuffer = request.sourceFrame(byTrackID: trackID) {
-                        let transformedBuffer = self.applyTransform(to: pixelBuffer, renderSize: renderSize, instruction: instruction)
-                        if let transformedBuffer = transformedBuffer {
-                            instruction.operationPixelBuffer(transformedBuffer, block: callback, for: request)
-                        } else {
-                            instruction.operationPixelBuffer(pixelBuffer, block: callback, for: request)
-                        }
-                    } else {
-                        request.finish(with: VideoX.Error.newRenderedPixelBufferForRequestFailure)
+        let transfer = Transfer(value: request)
+        renderQueue.async {
+            let request = transfer.value
+            guard let instruction = request.videoCompositionInstruction as? CompositionInstruction,
+                  let renderContext = self.renderContext,
+                  let trackID = instruction.trackID,
+                  let buffer = request.sourceFrame(byTrackID: trackID) else {
+                request.finish(with: VideoX.Error.newRenderedPixelBufferForRequestFailure)
+                return
+            }
+            let id = UUID()
+            self.requests[id] = (request, nil)
+            let transformed = self.applyTransform(to: buffer, renderSize: renderContext.size, instruction: instruction) ?? buffer
+            let operation = executeInstruction(instruction, buffer: transformed, request: request) { result in
+                let resultTransfer = Transfer(value: result)
+                self.renderQueue.async {
+                    guard self.requests.removeValue(forKey: id) != nil else { return }
+                    switch resultTransfer.value {
+                    case .success(let output): request.finish(withComposedVideoFrame: output)
+                    case .failure(let error): request.finish(with: error)
                     }
                 }
             }
+            self.requests[id] = (request, operation)
         }
     }
-    
+
     func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {
         self.renderQueue.sync {
             self.renderContext = newRenderContext
@@ -75,31 +73,19 @@ final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     }
     
     func cancelAllPendingVideoCompositionRequests() {
-        self.renderQueue.sync {
-            shouldCancelAllRequests = true
-        }
-        self.renderQueue.async {
-            self.shouldCancelAllRequests = false
+        renderQueue.async {
+            let pending = self.requests.values
+            self.requests.removeAll()
+            pending.forEach { request, operation in
+                operation?.cancel()
+                request.finishCancelledRequest()
+            }
         }
     }
+
 }
 
 extension VideoCompositor {
-    
-    private func toCGImage(pixelBuffer: CVPixelBuffer) -> CGImage? {
-        var cgImage: CGImage?
-        VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &cgImage)
-        return cgImage
-    }
-    
-    private func createBlankPixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
-        var pixelBuffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
-        if status != kCVReturnSuccess {
-            return nil
-        }
-        return pixelBuffer
-    }
     
     private func applyTransform(to pixelBuffer: CVPixelBuffer, renderSize: CGSize, instruction: CompositionInstruction) -> CVPixelBuffer? {
         if let rotationAngle = getRotationAngle(from: instruction) {
@@ -125,45 +111,13 @@ extension VideoCompositor {
     }
     
     private func processRotation(_ pixelBuffer: CVPixelBuffer, rotationAngle: RotationAngle, renderSize: CGSize, isMovVideo: Bool) -> CVPixelBuffer? {
-        guard let cgImage = toCGImage(pixelBuffer: pixelBuffer) else {
-            return nil
+        guard let output = renderContext?.newPixelBuffer() else { return nil }
+        var transform = CGAffineTransform.identity
+        if let (x, y, angle) = rotationAngle.rotation(isMovVideo: isMovVideo, renderSize: renderSize) {
+            transform = transform.translatedBy(x: x, y: y).rotated(by: angle)
         }
-        let outputWidth  = Int(renderSize.width)
-        let outputHeight = Int(renderSize.height)
-        guard let outputPixelBuffer = createBlankPixelBuffer(width: outputWidth, height: outputHeight) else {
-            return nil
-        }
-        
-        CVPixelBufferLockBaseAddress(outputPixelBuffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(outputPixelBuffer, []) }
-        
-        guard let pixelData = CVPixelBufferGetBaseAddress(outputPixelBuffer) else {
-            return nil
-        }
-        
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(outputPixelBuffer)
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        guard let context = CGContext(data: pixelData,
-                                      width: outputWidth,
-                                      height: outputHeight,
-                                      bitsPerComponent: 8,
-                                      bytesPerRow: bytesPerRow,
-                                      space: colorSpace,
-                                      bitmapInfo: bitmapInfo) else {
-            return nil
-        }
-        
-        context.clear(CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight))
-        
-        if let (transX, transY, rotate) = rotationAngle.rotation(isMovVideo: isMovVideo, renderSize: renderSize) {
-            context.translateBy(x: transX, y: transY)
-            context.rotate(by: rotate)
-        }
-        
-        let imageRect = CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height)
-        context.draw(cgImage, in: imageRect)
-        
-        return outputPixelBuffer
+        let image = CIImage(cvPixelBuffer: pixelBuffer).transformed(by: transform)
+        imageContext.render(image, to: output, bounds: CGRect(origin: .zero, size: renderSize), colorSpace: CGColorSpaceCreateDeviceRGB())
+        return output
     }
 }

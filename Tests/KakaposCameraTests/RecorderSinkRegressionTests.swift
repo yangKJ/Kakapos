@@ -155,7 +155,12 @@ final class RecorderSinkRegressionTests: XCTestCase {
         await fulfillment(of: [finished], timeout: 5)
 
         XCTAssertEqual(sink.state, .finished)
-        let audioTracks = try await AVAsset(url: outputURL).loadTracks(withMediaType: .audio)
+        let audioTracks: [AVAssetTrack]
+        if #available(iOS 15, tvOS 15, macOS 12, watchOS 8, *) {
+            audioTracks = try await AVAsset(url: outputURL).loadTracks(withMediaType: .audio)
+        } else {
+            audioTracks = AVAsset(url: outputURL).tracks(withMediaType: .audio)
+        }
         XCTAssertFalse(audioTracks.isEmpty)
     }
 
@@ -195,6 +200,7 @@ final class RecorderSinkRegressionTests: XCTestCase {
         ) { _ in firstFrame.fulfill() }
         wait(for: [firstFrame], timeout: 2)
 
+        sink._willFinishWritingForTesting = { [weak sink] in sink?.cancel() }
         let finishCallbacks = expectation(description: "finish callers cancelled exactly once")
         finishCallbacks.expectedFulfillmentCount = 2
         for _ in 0..<2 {
@@ -205,7 +211,6 @@ final class RecorderSinkRegressionTests: XCTestCase {
                 finishCallbacks.fulfill()
             }
         }
-        sink.cancel()
 
         wait(for: [finishCallbacks], timeout: 5)
         XCTAssertEqual(sink.state, .cancelled)

@@ -56,6 +56,15 @@ public final class FilterInstruction: CompositionInstruction, @unchecked Sendabl
     }
     
     public func operationPixelBuffer(_ buffer: CVPixelBuffer, block: @escaping BufferBlock, for request: AVAsynchronousVideoCompositionRequest) {
+        if processor != nil {
+            _ = executeInstruction(self, buffer: buffer, request: request) { result in
+                switch result {
+                case .success(let output): block(output)
+                case .failure(let error): request.finish(with: error)
+                }
+            }
+            return
+        }
         let compositionTime = request.compositionTime
         let time = compositionTime.value/Int64(compositionTime.timescale) - Int64(minTime)
         self.callback(buffer, time, block)

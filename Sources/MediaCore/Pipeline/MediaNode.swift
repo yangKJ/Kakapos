@@ -103,10 +103,11 @@ open class MediaOutputNode: MediaFrameSourceNode {
 
     public func transmit(
         _ frame: MediaFrame,
+        consumers selectedConsumers: [MediaFrameConsumerNode]? = nil,
         shouldContinue: () -> Bool = { true },
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        let consumers = self.consumers
+        let consumers = selectedConsumers ?? self.consumers
         guard !consumers.isEmpty else {
             completion(.success(()))
             return
@@ -173,48 +174,137 @@ open class MediaOutputNode: MediaFrameSourceNode {
     }
 }
 
-public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode {
-    public var processors: [FrameProcessor]
+public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, @unchecked Sendable {
+    private final class Work: @unchecked Sendable {
+        let id = UUID()
+        let processors: [FrameProcessor]
+        let consumers: [MediaFrameConsumerNode]
+        let completion: (Result<Void, Error>) -> Void
+        let lock = NSLock()
+        var operation: FrameProcessingOperation?
+        var stage: UInt64 = 0
+        var completed = false
+
+        init(processors: [FrameProcessor], consumers: [MediaFrameConsumerNode], completion: @escaping (Result<Void, Error>) -> Void) {
+            self.processors = processors
+            self.consumers = consumers
+            self.completion = completion
+        }
+
+        var isActive: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return !completed
+        }
+
+        func finish(_ result: Result<Void, Error>) {
+            lock.lock()
+            guard !completed else { lock.unlock(); return }
+            completed = true
+            let operation = self.operation
+            self.operation = nil
+            lock.unlock()
+            if case .failure = result { operation?.cancel() }
+            completion(result)
+        }
+    }
+
+    private let processingQueue = DispatchQueue(label: "com.condy.kakapos.processor-node", qos: .userInitiated)
+    private let configurationLock = NSLock()
+    private var processorStorage: [FrameProcessor]
+    private var works: [UUID: Work] = [:]
+    private var cancelled = false
     public var errorHandler: ((Error) -> Void)?
+    public var processesAudioFrames = true
+
+    public var processors: [FrameProcessor] {
+        get { configurationLock.withKakaposLock { processorStorage } }
+        set { configurationLock.withKakaposLock { processorStorage = newValue } }
+    }
 
     public init(processors: [FrameProcessor] = []) {
-        self.processors = processors
+        processorStorage = processors
         super.init()
     }
 
     public func consume(_ frame: MediaFrame, from source: MediaFrameSourceNode, completion: @escaping (Result<Void, Error>) -> Void) {
-        process(frame, at: 0, completion: completion)
+        consume(frame, processors: processors, consumers: consumers, completion: completion)
     }
 
-    private func process(_ frame: MediaFrame, at index: Int, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard index < processors.count else {
-            transmit(frame, completion: completion)
+    func consume(_ frame: MediaFrame, processors: [FrameProcessor], consumers: [MediaFrameConsumerNode], completion: @escaping (Result<Void, Error>) -> Void) {
+        let activeProcessors = !processesAudioFrames && isAudioMediaFrame(frame) ? [] : processors
+        let work = Work(processors: activeProcessors, consumers: consumers, completion: completion)
+        let accepted = configurationLock.withKakaposLock { () -> Bool in
+            guard !cancelled else { return false }
+            works[work.id] = work
+            return true
+        }
+        guard accepted else { work.finish(.failure(MediaCoreError.processingCancelled)); return }
+        // 无处理器的直通路径不增加排队；有处理器时只在专用队列执行。
+        if activeProcessors.isEmpty {
+            process(frame, at: 0, work: work)
+        } else {
+            let frameBox = ProcessingTransfer(value: frame)
+            processingQueue.async { self.process(frameBox.value, at: 0, work: work) }
+        }
+    }
+
+    func cancelProcessing() -> [MediaSink] {
+        let pending = configurationLock.withKakaposLock { () -> [Work] in
+            cancelled = true
+            let pending = Array(works.values)
+            works.removeAll()
+            return pending
+        }
+        let sinks = pending.flatMap { $0.consumers.compactMap { ($0 as? MediaSinkNode)?.sink } }
+        pending.forEach { $0.finish(.failure(MediaCoreError.processingCancelled)) }
+        return sinks
+    }
+
+    private func complete(_ work: Work, result: Result<Void, Error>) {
+        configurationLock.withKakaposLock { _ = works.removeValue(forKey: work.id) }
+        work.finish(result)
+        if case .failure(let error) = result { errorHandler?(error) }
+    }
+
+    private func process(_ frame: MediaFrame, at index: Int, work: Work) {
+        guard work.isActive else { return }
+        guard index < work.processors.count else {
+            transmit(frame, consumers: work.consumers, shouldContinue: { work.isActive }) { result in
+                self.complete(work, result: result)
+            }
             return
         }
-
-        let stageCompletionLock = NSLock()
-        var stageDidComplete = false
-        processors[index].process(frame) { [weak self] result in
-            stageCompletionLock.lock()
-            guard stageDidComplete == false else {
-                stageCompletionLock.unlock()
-                return
-            }
-            stageDidComplete = true
-            stageCompletionLock.unlock()
-            guard let self else {
-                completion(.failure(MediaCoreError.processingNodeUnavailable))
-                return
-            }
+        work.lock.lock()
+        work.stage &+= 1
+        let stage = work.stage
+        work.lock.unlock()
+        let operation = processFrame(using: work.processors[index], frame: frame) { [weak self, weak work] result in
+            guard let self, let work else { return }
+            work.lock.lock()
+            guard !work.completed, work.stage == stage else { work.lock.unlock(); return }
+            work.stage &+= 1
+            work.operation = nil
+            work.lock.unlock()
             switch result {
-            case .success(let processedFrame):
-                self.process(processedFrame, at: index + 1, completion: completion)
+            case .success(let output):
+                let outputBox = ProcessingTransfer(value: output)
+                self.processingQueue.async { self.process(outputBox.value, at: index + 1, work: work) }
             case .failure(let error):
-                self.errorHandler?(error)
-                completion(.failure(error))
+                self.complete(work, result: .failure(error))
             }
         }
+        work.lock.lock()
+        let shouldInstall = !work.completed && work.stage == stage
+        if shouldInstall { work.operation = operation }
+        let wasCancelled = work.completed
+        work.lock.unlock()
+        if wasCancelled { operation?.cancel() }
     }
+}
+
+private struct ProcessingTransfer<Value>: @unchecked Sendable {
+    let value: Value
 }
 
 public final class MediaSinkNode: MediaFrameConsumerNode {
@@ -248,6 +338,9 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     private let deliveryLock = NSLock()
     private var inFlightDeliveryCount = 0
     private var pendingLatestFrame: MediaFrame?
+    private var pendingLatestCompletion: ((Result<Void, Error>) -> Void)?
+    public var maximumInFlightAudioFrameCount: Int?
+    private var inFlightAudioCount = 0
     private var sourceDidFinishDelivery = false
     private var didDeliverFinish = false
 
@@ -255,7 +348,7 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
         self.source = source
         super.init()
         if let multiplexingSource = source as? MediaSourceDelegateMultiplexing {
-            multiplexingSource.addMediaSourceDelegate(self)
+            multiplexingSource.addMediaSourceDelegate(self, delivery: .processing)
         } else {
             self.source.delegate = self
         }
@@ -287,32 +380,57 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     }
 
     public func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame) {
-        guard shouldAcceptSourceCallbacks?() ?? true else { return }
-        let decision = enqueue(frame)
-        if let droppedFrame = decision.droppedFrame {
-            droppedFrameHandler?(droppedFrame)
-        }
-        guard decision.shouldTransmit else { return }
-        transmitAcceptedFrame(frame)
+        mediaSource(source, didOutput: frame, completion: { _ in })
     }
 
-    private func transmitAcceptedFrame(_ frame: MediaFrame) {
+    public func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard shouldAcceptSourceCallbacks?() ?? true else { completion(.success(())); return }
+        if isAudioMediaFrame(frame), let audioCapacity = maximumInFlightAudioFrameCount {
+            let accepted = deliveryLock.withKakaposLock { () -> Bool in
+                guard inFlightAudioCount < audioCapacity else { return false }
+                inFlightAudioCount += 1
+                return true
+            }
+            guard accepted else {
+                let error = MediaCoreError.audioDeliveryOverflow
+                errorHandler?(error)
+                completion(.failure(error))
+                return
+            }
+            transmitAcceptedFrame(frame, audio: true, completion: completion)
+            return
+        }
+        let decision = enqueue(frame, completion: completion)
+        if let droppedFrame = decision.droppedFrame { droppedFrameHandler?(droppedFrame) }
+        decision.droppedCompletion?(.success(()))
+        guard decision.shouldTransmit else {
+            if case .latestOnly = deliveryPolicy {} else { completion(.success(())) }
+            return
+        }
+        transmitAcceptedFrame(frame, completion: completion)
+    }
+
+    private func transmitAcceptedFrame(_ frame: MediaFrame, audio: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
         let acceptsFrame = sourceFrameAcceptanceHandler?() ?? (shouldAcceptSourceCallbacks?() ?? true)
         guard acceptsFrame else {
-            completeDelivery()
+            completion(.success(()))
+            completeDelivery(audio: audio)
             return
         }
         frameTransmissionStartedHandler?()
         frameHandler?(frame)
         outputNode.transmit(frame) { [weak self] result in
-            guard let self else { return }
-            if let frameTransmissionCompletedHandler = self.frameTransmissionCompletedHandler {
-                frameTransmissionCompletedHandler(result)
-            } else if case .failure(let error) = result {
-                self.errorHandler?(error)
-            }
-            self.completeDelivery()
+            guard let self else { completion(result); return }
+            if let handler = self.frameTransmissionCompletedHandler { handler(result) }
+            else if case .failure(let error) = result { self.errorHandler?(error) }
+            completion(result)
+            self.completeDelivery(audio: audio)
         }
+    }
+
+    public func mediaSource(_ source: MediaSource, audioDeliveryFailed error: Error) {
+        guard shouldAcceptSourceCallbacks?() ?? true else { return }
+        if maximumInFlightAudioFrameCount != nil { errorHandler?(error) }
     }
 
     public func mediaSource(_ source: MediaSource, didFail error: Error) {
@@ -324,7 +442,7 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
         guard shouldAcceptSourceCallbacks?() ?? true else { return }
         let shouldFinish = deliveryLock.withKakaposLock { () -> Bool in
             sourceDidFinishDelivery = true
-            guard inFlightDeliveryCount == 0, pendingLatestFrame == nil, didDeliverFinish == false else {
+            guard inFlightDeliveryCount == 0, inFlightAudioCount == 0, pendingLatestFrame == nil, didDeliverFinish == false else {
                 return false
             }
             didDeliverFinish = true
@@ -337,7 +455,7 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
 
     func prepareForStartIfIdle() -> Bool {
         deliveryLock.withKakaposLock {
-            guard inFlightDeliveryCount == 0, pendingLatestFrame == nil else { return false }
+            guard inFlightDeliveryCount == 0, inFlightAudioCount == 0, pendingLatestFrame == nil else { return false }
             pendingLatestFrame = nil
             sourceDidFinishDelivery = false
             didDeliverFinish = false
@@ -345,47 +463,52 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
         }
     }
 
-    private func enqueue(_ frame: MediaFrame) -> (shouldTransmit: Bool, droppedFrame: MediaFrame?) {
+    private func enqueue(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) -> (shouldTransmit: Bool, droppedFrame: MediaFrame?, droppedCompletion: ((Result<Void, Error>) -> Void)?) {
         deliveryLock.withKakaposLock {
             switch deliveryPolicy {
             case .unbounded:
                 inFlightDeliveryCount += 1
-                return (true, nil)
+                return (true, nil, nil)
             case .latestOnly:
                 guard inFlightDeliveryCount > 0 else {
                     inFlightDeliveryCount = 1
-                    return (true, nil)
+                    return (true, nil, nil)
                 }
                 let replacedFrame = pendingLatestFrame
+                let replacedCompletion = pendingLatestCompletion
                 pendingLatestFrame = frame
-                return (false, replacedFrame)
+                pendingLatestCompletion = completion
+                return (false, replacedFrame, replacedCompletion)
             case .boundedDropNewest:
                 let maximum = deliveryPolicy.normalizedMaximumInFlightFrames ?? 1
                 guard inFlightDeliveryCount < maximum else {
-                    return (false, frame)
+                    return (false, frame, nil)
                 }
                 inFlightDeliveryCount += 1
-                return (true, nil)
+                return (true, nil, nil)
             }
         }
     }
 
-    private func completeDelivery() {
-        let next = deliveryLock.withKakaposLock { () -> (frame: MediaFrame?, shouldFinish: Bool) in
-            inFlightDeliveryCount = max(0, inFlightDeliveryCount - 1)
-            if let pendingLatestFrame {
+    private func completeDelivery(audio: Bool = false) {
+        let next = deliveryLock.withKakaposLock { () -> (frame: MediaFrame?, completion: ((Result<Void, Error>) -> Void)?, shouldFinish: Bool) in
+            if audio { inFlightAudioCount = max(0, inFlightAudioCount - 1) }
+            else { inFlightDeliveryCount = max(0, inFlightDeliveryCount - 1) }
+            if !audio, let pendingLatestFrame {
                 self.pendingLatestFrame = nil
+                let completion = pendingLatestCompletion
+                pendingLatestCompletion = nil
                 inFlightDeliveryCount += 1
-                return (pendingLatestFrame, false)
+                return (pendingLatestFrame, completion, false)
             }
-            guard sourceDidFinishDelivery, inFlightDeliveryCount == 0, didDeliverFinish == false else {
-                return (nil, false)
+            guard sourceDidFinishDelivery, inFlightDeliveryCount == 0, inFlightAudioCount == 0, didDeliverFinish == false else {
+                return (nil, nil, false)
             }
             didDeliverFinish = true
-            return (nil, true)
+            return (nil, nil, true)
         }
         if let frame = next.frame {
-            transmitAcceptedFrame(frame)
+            transmitAcceptedFrame(frame, completion: next.completion ?? { _ in })
         } else if next.shouldFinish {
             finishHandler?()
         }
@@ -402,11 +525,13 @@ private extension NSLock {
 
 public final class MediaConsumerChainNode: MediaOutputNode, MediaFrameConsumerNode {
     public let processorNode: MediaProcessorNode
-    public private(set) var sinkNodes: [MediaSinkNode]
+    private let chainConfigurationLock = NSLock()
+    private var sinkStorage: [MediaSinkNode]
+    public var sinkNodes: [MediaSinkNode] { chainConfigurationLock.withKakaposLock { sinkStorage } }
 
     public var processors: [FrameProcessor] {
-        get { processorNode.processors }
-        set { processorNode.processors = newValue }
+        get { chainConfigurationLock.withKakaposLock { processorNode.processors } }
+        set { chainConfigurationLock.withKakaposLock { processorNode.processors = newValue } }
     }
 
     public var sinks: [MediaSink] {
@@ -422,7 +547,7 @@ public final class MediaConsumerChainNode: MediaOutputNode, MediaFrameConsumerNo
 
     public init(processors: [FrameProcessor] = [], sinks: [MediaSink] = []) {
         self.processorNode = MediaProcessorNode(processors: processors)
-        self.sinkNodes = []
+        self.sinkStorage = []
         super.init()
         processorNode.errorHandler = errorHandler
         add(consumer: processorNode)
@@ -430,7 +555,14 @@ public final class MediaConsumerChainNode: MediaOutputNode, MediaFrameConsumerNo
     }
 
     public func consume(_ frame: MediaFrame, from source: MediaFrameSourceNode, completion: @escaping (Result<Void, Error>) -> Void) {
-        transmit(frame, completion: completion)
+        let snapshot = chainConfigurationLock.withKakaposLock { (processorNode.processors, sinkStorage) }
+        let extra = consumers.filter { $0 !== processorNode }
+        if extra.isEmpty {
+            processorNode.consume(frame, processors: snapshot.0, consumers: snapshot.1, completion: completion)
+        } else {
+            let frozen = FrozenProcessorConsumer(node: processorNode, processors: snapshot.0, consumers: snapshot.1)
+            transmit(frame, consumers: [frozen] + extra, completion: completion)
+        }
     }
 
     public func pause() {
@@ -442,7 +574,11 @@ public final class MediaConsumerChainNode: MediaOutputNode, MediaFrameConsumerNo
     }
 
     public func cancel() {
-        sinkNodes.forEach { $0.sink.cancel() }
+        let pendingSinks = processorNode.cancelProcessing()
+        var cancelled: Set<ObjectIdentifier> = []
+        for sink in pendingSinks + sinks {
+            if cancelled.insert(ObjectIdentifier(sink)).inserted { sink.cancel() }
+        }
     }
 
     public func finish(completion: @escaping (Result<Void, Error>) -> Void) {
@@ -504,8 +640,26 @@ public final class MediaConsumerChainNode: MediaOutputNode, MediaFrameConsumerNo
     }
 
     private func configureSinks(_ sinks: [MediaSink]) {
-        processorNode.removeAllConsumers()
-        sinkNodes = sinks.map(MediaSinkNode.init(sink:))
-        sinkNodes.forEach { processorNode.add(consumer: $0) }
+        chainConfigurationLock.withKakaposLock {
+            processorNode.removeAllConsumers()
+            sinkStorage = sinks.map(MediaSinkNode.init(sink:))
+            sinkStorage.forEach { processorNode.add(consumer: $0) }
+        }
+    }
+}
+
+private final class FrozenProcessorConsumer: MediaFrameConsumerNode {
+    let node: MediaProcessorNode
+    let processors: [FrameProcessor]
+    let consumers: [MediaFrameConsumerNode]
+
+    init(node: MediaProcessorNode, processors: [FrameProcessor], consumers: [MediaFrameConsumerNode]) {
+        self.node = node
+        self.processors = processors
+        self.consumers = consumers
+    }
+
+    func consume(_ frame: MediaFrame, from source: MediaFrameSourceNode, completion: @escaping (Result<Void, Error>) -> Void) {
+        node.consume(frame, processors: processors, consumers: consumers, completion: completion)
     }
 }

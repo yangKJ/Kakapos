@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CoreMedia
 
 /// 控制实时 source 向异步 processor/sink 链路提交帧时的在途上限。
 /// 离线、不可丢帧的媒体处理应继续使用 `.unbounded`。
@@ -28,11 +29,18 @@ public enum MediaSourceDeliveryPolicy: Equatable, Sendable {
 
 public protocol MediaSourceDelegate: AnyObject {
     func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame)
+    func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void)
     func mediaSource(_ source: MediaSource, didFail error: Error)
     func mediaSourceDidFinish(_ source: MediaSource)
+    func mediaSource(_ source: MediaSource, audioDeliveryFailed error: Error)
 }
 
 public extension MediaSourceDelegate {
+    func mediaSource(_ source: MediaSource, audioDeliveryFailed error: Error) {}
+    func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
+        mediaSource(source, didOutput: frame)
+        completion(.success(()))
+    }
     func mediaSource(_ source: MediaSource, didFail error: Error) {}
     func mediaSourceDidFinish(_ source: MediaSource) {}
 }
@@ -41,8 +49,14 @@ public extension MediaSourceDelegate {
 ///
 /// 普通 source 仍可只实现 `MediaSource.delegate`；只有明确支持并行分支的
 /// source 才需要实现该合同，并应以弱引用保存注册的 delegate。
+public enum MediaSourceDelegateDelivery: Sendable {
+    case main
+    case processing
+}
+
 public protocol MediaSourceDelegateMultiplexing: AnyObject {
     func addMediaSourceDelegate(_ delegate: MediaSourceDelegate)
+    func addMediaSourceDelegate(_ delegate: MediaSourceDelegate, delivery: MediaSourceDelegateDelivery)
     func removeMediaSourceDelegate(_ delegate: MediaSourceDelegate)
 }
 
@@ -53,4 +67,15 @@ public protocol MediaSource: AnyObject {
     func resume()
     func stop()
     func cancel()
+}
+
+public extension MediaSourceDelegateMultiplexing {
+    func addMediaSourceDelegate(_ delegate: MediaSourceDelegate, delivery: MediaSourceDelegateDelivery) {
+        addMediaSourceDelegate(delegate)
+    }
+}
+
+public func isAudioMediaFrame(_ frame: MediaFrame) -> Bool {
+    guard let sample = extractSampleBuffer(frame), let description = CMSampleBufferGetFormatDescription(sample) else { return false }
+    return CMFormatDescriptionGetMediaType(description) == kCMMediaType_Audio
 }

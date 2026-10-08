@@ -77,20 +77,33 @@ public func processFrame(
     frame: MediaFrame,
     completion: @escaping (Result<MediaFrame, Error>) -> Void
 ) -> FrameProcessingOperation? {
+    let actualFormat = extractPixelBuffer(frame).map { FrameFormat(pixelBuffer: $0) } ?? frame.metadata.format
     if let provider = processor as? FrameProcessorCapabilityProviding,
-       let format = frame.metadata.format,
+       let format = actualFormat,
        !provider.capabilities.accepts(format) {
         completion(.failure(FrameProcessorCapabilityError.unsupportedFormat(format)))
         return nil
     }
-    if let processor = processor as? CancellableFrameProcessor {
-        return processor.processCancellable(frame, completion: completion)
+    let callbackLock = NSLock()
+    var didComplete = false
+    let once: (Result<MediaFrame, Error>) -> Void = { result in
+        callbackLock.lock()
+        guard !didComplete else { callbackLock.unlock(); return }
+        didComplete = true
+        callbackLock.unlock()
+        completion(result)
     }
-    processor.process(frame, completion: completion)
+    if let processor = processor as? CancellableFrameProcessor {
+        return processor.processCancellable(frame, completion: once)
+    }
+    processor.process(frame, completion: once)
     return nil
 }
 
-public struct PassthroughFrameProcessor: FrameProcessor {
+public struct PassthroughFrameProcessor: FrameProcessor, FrameProcessorCapabilityProviding {
+    public var capabilities: FrameProcessorCapabilities {
+        FrameProcessorCapabilities(supportedDynamicRanges: [.standard, .hdr(.hlg), .hdr(.pq)])
+    }
     public init() {}
 
     public func process(_ frame: MediaFrame, completion: @escaping (Result<MediaFrame, Error>) -> Void) {

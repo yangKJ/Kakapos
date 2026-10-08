@@ -9,7 +9,7 @@ import Foundation
 import KakaposMediaCore
 import AVFoundation
 
-public final class AssetSource: MediaSource, @unchecked Sendable {
+public final class AssetSource: MediaSource, MediaSourceSnapshotProviding, @unchecked Sendable {
     public enum State: Equatable {
         case idle
         case reading
@@ -45,6 +45,17 @@ public final class AssetSource: MediaSource, @unchecked Sendable {
         return value
     }
 
+    public var sourceSnapshot: MediaSourceSnapshot {
+        pauseCondition.lock()
+        defer { pauseCondition.unlock() }
+        return MediaSourceSnapshot(stateDescription: String(describing: _state), lastFrameIndex: frameIndex,
+            lastPresentationTime: lastPresentationTime, details: [
+                "maximumInFlightFrames": String(maximumInFlightFrameCount),
+                "inFlightFrames": String(inFlightFrames),
+                "peakInFlightFrames": String(peakInFlightFrames)
+            ])
+    }
+
     private let queue = DispatchQueue(label: "com.condy.kakapos.asset-source")
     private let deliveryQueue: DispatchQueue
     private let deliveryFence = NSRecursiveLock()
@@ -60,6 +71,10 @@ public final class AssetSource: MediaSource, @unchecked Sendable {
     private var pendingAudioBuffer: CMSampleBuffer?
     private var generation: UInt64 = 0
     private var didScheduleTerminalCallback = false
+    private var inFlightFrames = 0
+    private var peakInFlightFrames = 0
+    private var lastPresentationTime: CMTime?
+    public let maximumInFlightFrameCount: Int
 
     public init(
         asset: AVAsset,
@@ -69,8 +84,10 @@ public final class AssetSource: MediaSource, @unchecked Sendable {
         ],
         audioOutputSettings: [String: Any]? = nil,
         frameUserInfo: [String: Any] = [:],
-        callbackQueue: DispatchQueue = .main
+        callbackQueue: DispatchQueue = .main,
+        maximumInFlightFrameCount: Int = 2
     ) {
+        self.maximumInFlightFrameCount = max(1, maximumInFlightFrameCount)
         self.asset = asset
         self.timeRange = timeRange
         self.videoOutputSettings = videoOutputSettings
@@ -264,14 +281,21 @@ public final class AssetSource: MediaSource, @unchecked Sendable {
     }
 
     private func dispatch(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType, generation: UInt64) {
-        frameIndex += 1
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        pauseCondition.lock()
+        guard isActiveRun(generation) else { pauseCondition.unlock(); return }
+        frameIndex += 1
+        let currentFrameIndex = frameIndex
+        inFlightFrames += 1
+        peakInFlightFrames = max(peakInFlightFrames, inFlightFrames)
+        lastPresentationTime = presentationTime
+        pauseCondition.unlock()
         let metadata = FrameMetadata(
             presentationTime: presentationTime,
             duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
             sourceTime: presentationTime,
             trackTransform: trackTransform(for: mediaType),
-            frameIndex: frameIndex,
+            frameIndex: currentFrameIndex,
             userInfo: frameUserInfo.merging([
                 MetadataKey.mediaType: mediaType.rawValue,
                 MetadataKey.sourceTrackID: sourceTrackID(for: mediaType) as Any,
@@ -279,11 +303,19 @@ public final class AssetSource: MediaSource, @unchecked Sendable {
             ]) { _, new in new }
         )
         let frame = SampleBufferFrame(sampleBuffer: sampleBuffer, metadata: metadata)
+        let acknowledgement = FrameProcessingCancellation { [weak self] in
+            guard let self else { return }
+            self.pauseCondition.lock()
+            if self.generation == generation { self.inFlightFrames = max(0, self.inFlightFrames - 1) }
+            self.pauseCondition.broadcast()
+            self.pauseCondition.unlock()
+        }
         deliveryQueue.async {
             self.deliveryFence.lock()
             defer { self.deliveryFence.unlock() }
-            guard self.canDeliverFrame(for: generation) else { return }
-            self.delegate?.mediaSource(self, didOutput: frame)
+            guard self.canDeliverFrame(for: generation) else { acknowledgement.cancel(); return }
+            guard let delegate = self.delegate else { acknowledgement.cancel(); return }
+            delegate.mediaSource(self, didOutput: frame) { _ in acknowledgement.cancel() }
         }
     }
 
@@ -296,6 +328,11 @@ public final class AssetSource: MediaSource, @unchecked Sendable {
     }
 
     private func completeReading(expectedGeneration: UInt64) {
+        pauseCondition.lock()
+        while inFlightFrames > 0 && generation == expectedGeneration && !isCancelled && !shouldStop { pauseCondition.wait() }
+        let active = generation == expectedGeneration && !isCancelled && !shouldStop
+        pauseCondition.unlock()
+        guard active else { return }
         guard let reader else {
             finish(with: VideoX.Error.unknown, expectedGeneration: expectedGeneration)
             return
@@ -333,7 +370,7 @@ public final class AssetSource: MediaSource, @unchecked Sendable {
 
     private func waitUntilReady(for expectedGeneration: UInt64) -> Bool {
         pauseCondition.lock()
-        while _state == .paused && generation == expectedGeneration && !shouldStop && !isCancelled {
+        while (_state == .paused || inFlightFrames >= maximumInFlightFrameCount) && generation == expectedGeneration && !shouldStop && !isCancelled {
             pauseCondition.wait()
         }
         let isReady = isActiveRun(expectedGeneration)
@@ -363,6 +400,7 @@ public final class AssetSource: MediaSource, @unchecked Sendable {
             return
         }
         shouldStop = true
+        inFlightFrames = 0
         isCancelled = cancelled
         generation &+= 1
         _state = terminalState

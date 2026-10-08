@@ -155,8 +155,12 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     public var stateChangedHandler: ((State) -> Void)?
     public var droppedFrameHandler: ((FrameMetadata) -> Void)?
     public var runtimeErrorHandler: ((Error) -> Void)?
+    #if DEBUG
+    var _willFinishWritingForTesting: (() -> Void)?
+    #endif
     /// 编码器跟不上实时采集时，待处理帧数必须保持有界。
     public var maximumInFlightFrameCount = 6
+    public var maximumInFlightAudioFrameCount = 12
     public var snapshot: Snapshot {
         queue.sync {
             let recordingSnapshot = session.snapshot()
@@ -231,6 +235,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     private var acceptsFrames = true
     private var cancellationRequested = false
     private var inFlightFrameCount = 0
+    private var inFlightAudioFrameCount = 0
     public var maximumDuration: CMTime?
 
     public init(outputURL: URL, fileType: AVFileType = .mp4, configuration: Configuration = .init()) throws {
@@ -243,7 +248,11 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
         guard enqueueAcceptedFrame(frame, completion: completion) else {
             droppedFrameHandler?(frame.metadata)
-            completion(.success(()))
+            if isAudioMediaFrame(frame) && canAcceptFrames() {
+                let error = MediaCoreError.audioDeliveryOverflow
+                runtimeErrorHandler?(error)
+                completion(.failure(error))
+            } else { completion(.success(())) }
             return
         }
     }
@@ -290,6 +299,9 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             self.setState(.finishing)
             self.videoInput?.markAsFinished()
             self.audioInput?.markAsFinished()
+            #if DEBUG
+            self._willFinishWritingForTesting?()
+            #endif
             self.writer.finishWriting {
                 self.queue.async {
                     guard self.state == .finishing else { return }
@@ -441,8 +453,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         try setupAudioIfNeeded(sampleBuffer: sampleBuffer)
         guard hasWrittenFirstVideoFrame else {
             pendingLeadingAudioBuffers.append(sampleBuffer)
-            if pendingLeadingAudioBuffers.count > 3 {
-                pendingLeadingAudioBuffers.removeFirst(pendingLeadingAudioBuffers.count - 3)
+            if pendingLeadingAudioBuffers.count > maximumInFlightAudioFrameCount {
+                throw MediaCoreError.audioDeliveryOverflow
             }
             return
         }
@@ -631,15 +643,18 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         completion: @escaping (Result<Void, Error>) -> Void
     ) -> Bool {
         lifecycleLock.lock()
-        guard acceptsFrames, inFlightFrameCount < maximumInFlightFrameCount else {
+        let audio = isAudioMediaFrame(frame)
+        let count = audio ? inFlightAudioFrameCount : inFlightFrameCount
+        let capacity = audio ? maximumInFlightAudioFrameCount : maximumInFlightFrameCount
+        guard acceptsFrames, count < capacity else {
             lifecycleLock.unlock()
             return false
         }
-        inFlightFrameCount += 1
+        if audio { inFlightAudioFrameCount += 1 } else { inFlightFrameCount += 1 }
         // 入队动作与 acceptsFrames 的切换共用同一把锁，从而形成严格次序：
         // 已接受的帧一定排在 finish 请求之前，之后到达的帧一定被拒绝。
         queue.async {
-            defer { self.releaseFrameSlot() }
+            defer { self.releaseFrameSlot(audio: audio) }
             do {
                 try self.consumeOnQueue(frame)
                 completion(.success(()))
@@ -652,9 +667,10 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         return true
     }
 
-    private func releaseFrameSlot() {
+    private func releaseFrameSlot(audio: Bool) {
         lifecycleLock.lock()
-        inFlightFrameCount = max(0, inFlightFrameCount - 1)
+        if audio { inFlightAudioFrameCount = max(0, inFlightAudioFrameCount - 1) }
+        else { inFlightFrameCount = max(0, inFlightFrameCount - 1) }
         lifecycleLock.unlock()
     }
 

@@ -12,11 +12,17 @@ import CoreGraphics
 public enum MediaCoreError: LocalizedError {
     case pixelBufferUnavailable
     case processingNodeUnavailable
+    case processingCancelled
+    case audioDeliveryOverflow
 
     public var errorDescription: String? {
         switch self {
         case .pixelBufferUnavailable:
             return "A pixel buffer is required for this media operation."
+        case .audioDeliveryOverflow:
+            return "Audio delivery capacity was exceeded."
+        case .processingCancelled:
+            return "Media processing was cancelled."
         case .processingNodeUnavailable:
             return "The media processing node was released before processing completed."
         }

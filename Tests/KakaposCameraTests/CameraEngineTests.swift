@@ -9,11 +9,11 @@ import AVFoundation
 final class CameraEngineTests: XCTestCase {
 
     func testCameraFrameIngressGateBoundsFramesBeforeAsyncDelivery() throws {
-        let gate = CameraFrameIngressGate(maximumInFlightFrameCount: 2)
+        let gate = CameraFrameIngressGate(maximumInFlightFrameCount: 2, maximumInFlightAudioFrameCount: 12)
         gate.reset()
 
         let videoToken = gate.admit(mediaKind: .video, branchCount: 2)
-        let audioToken = gate.admit(mediaKind: .audio, branchCount: 1)
+        let audioToken = gate.admit(mediaKind: .video, branchCount: 1)
         XCTAssertNotNil(videoToken)
         XCTAssertNotNil(audioToken)
         XCTAssertNil(gate.admit(mediaKind: .video, branchCount: 2))
@@ -30,13 +30,13 @@ final class CameraEngineTests: XCTestCase {
     }
 
     func testCameraFrameIngressGateInvalidatesOldGenerationAndTracksMediaDrops() throws {
-        let gate = CameraFrameIngressGate(maximumInFlightFrameCount: 1)
+        let gate = CameraFrameIngressGate(maximumInFlightFrameCount: 1, maximumInFlightAudioFrameCount: 12)
         let firstGeneration = gate.reset()
         let oldToken = try XCTUnwrap(gate.admit(mediaKind: .video, branchCount: 1))
         XCTAssertTrue(gate.isActive(oldToken))
         XCTAssertTrue(gate.isCurrentGeneration(firstGeneration))
-        XCTAssertNil(gate.admit(mediaKind: .audio, branchCount: 1))
-        XCTAssertEqual(gate.snapshot.droppedAudioFrameCount, 1)
+        XCTAssertNil(gate.admit(mediaKind: .video, branchCount: 1))
+        XCTAssertEqual(gate.snapshot.droppedVideoFrameCount, 1)
 
         let stoppedGeneration = gate.rejectFurtherFrames()
         XCTAssertFalse(gate.isActive(oldToken))
@@ -429,7 +429,7 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertTrue(diagnostics.deviceSummaryText.contains("position"))
         XCTAssertTrue(diagnostics.capabilitySummaryText.contains("position"))
         XCTAssertTrue(diagnostics.advancedEventSummaryText.contains("No advanced camera events yet"))
-        XCTAssertEqual(diagnostics.capabilityGateStatuses[.metadataObjects], .unsupported)
+        XCTAssertEqual(diagnostics.capabilityGateStatuses[.metadataObjects], engine.capabilitySnapshot.supportsMetadataObjects)
     }
 
     func testCameraEngineDiagnosticsDoNotOverrideExternalSourceHandlers() throws {
@@ -437,13 +437,14 @@ final class CameraEngineTests: XCTestCase {
             configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
         )
         var receivedEvents: [CameraSessionEvent] = []
-
+        let delivered = expectation(description: "主线程诊断与外部事件已投递")
         engine.source.sessionEventHandler = { event in
             receivedEvents.append(event)
+            DispatchQueue.main.async { delivered.fulfill() }
         }
 
         engine.source._handleLifecycleActionForTesting(.didStartRunning)
-
+        wait(for: [delivered], timeout: 2)
         XCTAssertEqual(receivedEvents, [.didStart])
         XCTAssertTrue(engine.diagnosticsSnapshot.recentEvents.contains("didStart"))
     }

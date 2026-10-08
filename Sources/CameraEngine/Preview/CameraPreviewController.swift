@@ -76,7 +76,7 @@ public final class CameraPreviewController {
             return .running
         case .paused:
             return .paused
-        case .finished, .cancelled:
+        case .finishing, .finished, .cancelled:
             return .stopped
         case .failed:
             return .failed

@@ -9,6 +9,11 @@ import Foundation
 
 public struct CameraFrameIngressSnapshot: Equatable, Sendable {
     public let maximumInFlightFrameCount: Int
+    public let maximumInFlightAudioFrameCount: Int
+    public let inFlightVideoFrameCount: Int
+    public let inFlightAudioFrameCount: Int
+    public let videoHighWaterMark: Int
+    public let audioHighWaterMark: Int
     public let inFlightFrameCount: Int
     public let highWaterMark: Int
     public let droppedVideoFrameCount: Int
@@ -19,7 +24,7 @@ public struct CameraFrameIngressSnapshot: Equatable, Sendable {
     }
 }
 
-enum CameraFrameIngressMediaKind {
+enum CameraFrameIngressMediaKind: Equatable {
     case video
     case audio
 }
@@ -32,22 +37,32 @@ final class CameraFrameIngressGate {
 
     private let lock = NSLock()
     private let maximumInFlightFrameCount: Int
+    private let maximumInFlightAudioFrameCount: Int
+    private var mediaKinds: [Token: CameraFrameIngressMediaKind] = [:]
     private var acceptingFrames = false
     private var generation: UInt64 = 0
     private var nextIdentifier: UInt64 = 0
     private var remainingBranchesByToken: [Token: Int] = [:]
     private var highWaterMark = 0
+    private var videoHighWaterMark = 0
+    private var audioHighWaterMark = 0
     private var droppedVideoFrameCount = 0
     private var droppedAudioFrameCount = 0
 
-    init(maximumInFlightFrameCount: Int) {
+    init(maximumInFlightFrameCount: Int, maximumInFlightAudioFrameCount: Int = 12) {
         self.maximumInFlightFrameCount = max(1, maximumInFlightFrameCount)
+        self.maximumInFlightAudioFrameCount = max(1, maximumInFlightAudioFrameCount)
     }
 
     var snapshot: CameraFrameIngressSnapshot {
         lock.lock()
         let snapshot = CameraFrameIngressSnapshot(
             maximumInFlightFrameCount: maximumInFlightFrameCount,
+            maximumInFlightAudioFrameCount: maximumInFlightAudioFrameCount,
+            inFlightVideoFrameCount: mediaKinds.values.filter { $0 == .video }.count,
+            inFlightAudioFrameCount: mediaKinds.values.filter { $0 == .audio }.count,
+            videoHighWaterMark: videoHighWaterMark,
+            audioHighWaterMark: audioHighWaterMark,
             inFlightFrameCount: remainingBranchesByToken.count,
             highWaterMark: highWaterMark,
             droppedVideoFrameCount: droppedVideoFrameCount,
@@ -63,7 +78,10 @@ final class CameraFrameIngressGate {
         generation &+= 1
         acceptingFrames = true
         remainingBranchesByToken.removeAll(keepingCapacity: true)
+        mediaKinds.removeAll(keepingCapacity: true)
         highWaterMark = 0
+        videoHighWaterMark = 0
+        audioHighWaterMark = 0
         droppedVideoFrameCount = 0
         droppedAudioFrameCount = 0
         let generation = generation
@@ -77,6 +95,7 @@ final class CameraFrameIngressGate {
         generation &+= 1
         acceptingFrames = false
         remainingBranchesByToken.removeAll(keepingCapacity: true)
+        mediaKinds.removeAll(keepingCapacity: true)
         let generation = generation
         lock.unlock()
         return generation
@@ -84,7 +103,9 @@ final class CameraFrameIngressGate {
 
     func admit(mediaKind: CameraFrameIngressMediaKind, branchCount: Int) -> Token? {
         lock.lock()
-        guard acceptingFrames, remainingBranchesByToken.count < maximumInFlightFrameCount else {
+        let capacity = mediaKind == .audio ? maximumInFlightAudioFrameCount : maximumInFlightFrameCount
+        let count = mediaKinds.values.filter { $0 == mediaKind }.count
+        guard acceptingFrames, count < capacity else {
             switch mediaKind {
             case .video:
                 droppedVideoFrameCount += 1
@@ -97,6 +118,9 @@ final class CameraFrameIngressGate {
         nextIdentifier &+= 1
         let token = Token(generation: generation, identifier: nextIdentifier)
         remainingBranchesByToken[token] = max(1, branchCount)
+        mediaKinds[token] = mediaKind
+        if mediaKind == .audio { audioHighWaterMark = max(audioHighWaterMark, count + 1) }
+        else { videoHighWaterMark = max(videoHighWaterMark, count + 1) }
         highWaterMark = max(highWaterMark, remainingBranchesByToken.count)
         lock.unlock()
         return token
@@ -129,6 +153,7 @@ final class CameraFrameIngressGate {
             remainingBranchesByToken[token] = remainingBranches - 1
         } else {
             remainingBranchesByToken[token] = nil
+            mediaKinds[token] = nil
         }
         lock.unlock()
     }

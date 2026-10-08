@@ -118,6 +118,12 @@ let recordingPipeline = MediaPipeline(
 
 `PreviewPipeline` uses latest-only delivery, while `RecordingPipeline` uses a bounded real-time queue. `droppedSourceFrameCount` exposes pressure without changing offline pipelines into lossy pipelines.
 
+`MediaPipeline.stop(completion:)` closes admission, drains accepted frames, finishes sinks, and delivers one terminal result per registered callback on the main queue. Its state is `finishing` until all sinks have finished successfully. Cancellation rejects late processor results and propagates to cancellable processing operations. Processor work runs on the processing queue; configuration changes take effect on subsequent frames.
+
+`AssetSource` uses completion acknowledgements to bound lossless delivery to two outstanding samples by default, plus one video and one audio lookahead sample. Its source snapshot exposes outstanding and peak counts. Old source delegates remain compatible; their default acknowledgement means their synchronous callback has returned.
+
+Camera processing subscribers use a separate delivery route from public main-thread callbacks. Video and audio have independent ingress budgets (6 video frames and 12 audio samples). Recording bypasses video processors for audio, reports audio overflow as a failure, and waits for accepted video processing before finishing the writer.
+
 A `MediaPipeline` instance is single-run. It can pause and resume while running, but `finished`, `cancelled`, and `failed` are terminal states. Create a new pipeline, processor chain, and sinks for a new run; a restartable source does not make the whole pipeline reusable.
 
 `CameraSource` also applies bounded drop-newest admission before it creates any asynchronous frame delivery. The default ingress capacity is 6 frames, configurable through `CameraSourceConfiguration.maximumInFlightFrameCount`. Inspect `frameIngressSnapshot` for the current/high-water count and separate dropped video/audio totals.

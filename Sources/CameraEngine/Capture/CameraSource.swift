@@ -51,8 +51,10 @@ public enum CameraSourceError: Error, LocalizedError, Equatable {
 
 private final class WeakMediaSourceDelegateBox {
     weak var value: MediaSourceDelegate?
+    let delivery: MediaSourceDelegateDelivery
 
-    init(_ value: MediaSourceDelegate) {
+    init(_ value: MediaSourceDelegate, delivery: MediaSourceDelegateDelivery = .main) {
+        self.delivery = delivery
         self.value = value
     }
 }
@@ -193,9 +195,13 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     public func addMediaSourceDelegate(_ delegate: MediaSourceDelegate) {
+        addMediaSourceDelegate(delegate, delivery: .main)
+    }
+
+    public func addMediaSourceDelegate(_ delegate: MediaSourceDelegate, delivery: MediaSourceDelegateDelivery) {
         delegateLock.lock()
         additionalDelegates = additionalDelegates.filter { $0.value.value != nil }
-        additionalDelegates[ObjectIdentifier(delegate)] = WeakMediaSourceDelegateBox(delegate)
+        additionalDelegates[ObjectIdentifier(delegate)] = WeakMediaSourceDelegateBox(delegate, delivery: delivery)
         delegateLock.unlock()
     }
 
@@ -290,6 +296,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private let frameIngressGate: CameraFrameIngressGate
     private let runLock = NSLock()
     private let frameDeliveryFence = NSRecursiveLock()
+    private let observerIngressGate = CameraFrameIngressGate(maximumInFlightFrameCount: 6)
     private var isRunActive = false
     private var activeRunGeneration: UInt64?
     private var isStopInProgress = false
@@ -1013,11 +1020,11 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         return AVCaptureDevice.default(for: .video)
     }
 
-    private func mediaSourceDelegatesSnapshot() -> [MediaSourceDelegate] {
+    private func mediaSourceDelegatesSnapshot(delivery: MediaSourceDelegateDelivery? = nil) -> [MediaSourceDelegate] {
         delegateLock.lock()
         additionalDelegates = additionalDelegates.filter { $0.value.value != nil }
-        var delegates = additionalDelegates.values.compactMap(\.value)
-        if let primaryDelegate,
+        var delegates = additionalDelegates.values.filter { delivery == nil || $0.delivery == delivery }.compactMap(\.value)
+        if delivery != .processing, let primaryDelegate,
            delegates.contains(where: { $0 === primaryDelegate }) == false {
             delegates.append(primaryDelegate)
         }
@@ -1074,39 +1081,45 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             )
         )
         let mediaKind: CameraFrameIngressMediaKind = mediaType == .video ? .video : .audio
-        guard let ingressToken = frameIngressGate.admit(mediaKind: mediaKind, branchCount: 2) else {
+        let frameTransfer = CameraCallbackTransfer(frame)
+        if let observerToken = observerIngressGate.admit(mediaKind: mediaKind, branchCount: 1) {
+            DispatchQueue.main.async {
+                self.frameDeliveryFence.lock()
+                defer {
+                    self.frameDeliveryFence.unlock()
+                    self.observerIngressGate.completeBranch(for: observerToken)
+                }
+                guard self.observerIngressGate.isActive(observerToken) else { return }
+                self.frameHandler?(frameTransfer.value)
+                for delegate in self.mediaSourceDelegatesSnapshot(delivery: .main) {
+                    guard self.observerIngressGate.isActive(observerToken) else { break }
+                    delegate.mediaSource(self, didOutput: frameTransfer.value)
+                }
+            }
+        }
+        guard let ingressToken = frameIngressGate.admit(mediaKind: mediaKind, branchCount: 1) else {
+            let pressure = frameIngressGate.snapshot
+            if mediaKind == .audio, pressure.inFlightAudioFrameCount >= pressure.maximumInFlightAudioFrameCount {
+                self.mediaSourceDelegatesSnapshot(delivery: .processing).forEach {
+                    $0.mediaSource(self, audioDeliveryFailed: MediaCoreError.audioDeliveryOverflow)
+                }
+            }
             return
         }
-        let frameTransfer = CameraCallbackTransfer(frame)
-        DispatchQueue.main.async {
-            self.frameDeliveryFence.lock()
-            let frame = frameTransfer.value
-            defer {
-                self.frameDeliveryFence.unlock()
-                self.frameIngressGate.completeBranch(for: ingressToken)
-            }
-            guard self.frameIngressGate.isActive(ingressToken) else { return }
-            self.frameHandler?(frame)
-            guard self.frameIngressGate.isActive(ingressToken) else { return }
-            for delegate in self.mediaSourceDelegatesSnapshot() {
-                guard self.frameIngressGate.isActive(ingressToken) else { break }
-                delegate.mediaSource(self, didOutput: frame)
-            }
-        }
         processingQueue.async {
-            let fence = self.frameDeliveryFence
-            fence.lock()
-            defer { fence.unlock() }
-            guard self.frameIngressGate.isActive(ingressToken) else {
-                self.frameIngressGate.completeBranch(for: ingressToken)
-                return
+            guard self.frameIngressGate.isActive(ingressToken) else { return }
+            let group = DispatchGroup()
+            for delegate in self.mediaSourceDelegatesSnapshot(delivery: .processing) {
+                group.enter()
+                let acknowledge = FrameProcessingCancellation { group.leave() }
+                delegate.mediaSource(self, didOutput: frameTransfer.value) { _ in acknowledge.cancel() }
             }
-            self.outputNode.transmit(
-                frame,
-                shouldContinue: { self.frameIngressGate.isActive(ingressToken) }
-            ) { _ in
-                self.frameIngressGate.completeBranch(for: ingressToken)
+            group.enter()
+            let acknowledge = FrameProcessingCancellation { group.leave() }
+            self.outputNode.transmit(frameTransfer.value, shouldContinue: { self.frameIngressGate.isActive(ingressToken) }) { _ in
+                acknowledge.cancel()
             }
+            group.notify(queue: self.processingQueue) { self.frameIngressGate.completeBranch(for: ingressToken) }
         }
     }
 
@@ -1238,6 +1251,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard !isRunActive, !isStopInProgress else { return nil }
         isRunActive = true
         didDeliverTerminalCallback = false
+        observerIngressGate.reset()
         let generation = frameIngressGate.reset()
         activeRunGeneration = generation
         return generation
@@ -1249,6 +1263,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard !isRunActive, !isStopInProgress else { return nil }
         isRunActive = true
         didDeliverTerminalCallback = false
+        observerIngressGate.rejectFurtherFrames()
         let generation = frameIngressGate.rejectFurtherFrames()
         activeRunGeneration = generation
         return generation
@@ -1273,6 +1288,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         activeRunGeneration = nil
         isStopInProgress = true
         didDeliverTerminalCallback = false
+        observerIngressGate.rejectFurtherFrames()
         return frameIngressGate.rejectFurtherFrames()
     }
 
@@ -1281,6 +1297,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         defer { runLock.unlock() }
         isRunActive = false
         activeRunGeneration = nil
+        observerIngressGate.rejectFurtherFrames()
         return frameIngressGate.rejectFurtherFrames()
     }
 

@@ -322,7 +322,9 @@ public final class RecordingPipeline {
             processors: processors,
             sinks: [recorderSink],
             deliveryPolicy: .boundedDropNewest(maximumInFlightFrames: 6),
-            controlsSourceLifecycle: controlsSourceLifecycle
+            controlsSourceLifecycle: controlsSourceLifecycle,
+            maximumInFlightAudioFrameCount: 12,
+            processesAudioFrames: false
         )
     }
 
@@ -340,6 +342,10 @@ public final class RecordingPipeline {
 
     public func stop() {
         pipeline.stop()
+    }
+
+    public func stop(completion: @escaping (Result<Void, Error>) -> Void) {
+        pipeline.stop(completion: completion)
     }
 
     public func cancel() {

@@ -57,10 +57,10 @@ public final class MediaProcessorChain: MediaSink {
 
     public func finish(completion: @escaping (Result<Void, Error>) -> Void) {
         node.finish { [weak self] result in
+            completion(result)
             if case .success = result {
                 self?.completionHandler?()
             }
-            completion(result)
         }
     }
 }
@@ -76,6 +76,7 @@ public final class MediaPipeline: @unchecked Sendable {
         case idle
         case running
         case paused
+        case finishing
         case finished
         case cancelled
         case failed
@@ -218,9 +219,10 @@ public final class MediaPipeline: @unchecked Sendable {
         stateQueue.sync { _droppedSourceFrameCount }
     }
 
+    private var pipelineErrorHandler: ((Error) -> Void)?
     public var errorHandler: ((Error) -> Void)? {
-        get { chain.errorHandler }
-        set { chain.errorHandler = newValue }
+        get { stateQueue.sync { pipelineErrorHandler } }
+        set { stateQueue.sync { pipelineErrorHandler = newValue } }
     }
 
     public var completionHandler: (() -> Void)? {
@@ -238,6 +240,8 @@ public final class MediaPipeline: @unchecked Sendable {
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-pipeline.state")
     private let lifecycleLock = NSLock()
     private var hasFinished = false
+    private var terminalResult: Result<Void, Error>?
+    private var stopCompletions: [(Result<Void, Error>) -> Void] = []
     private var acceptsSourceCallbacks = false
     private var pendingSourceFrameDeliveries = 0
     private var sourceFrameCompletionsInProgress = 0
@@ -252,12 +256,16 @@ public final class MediaPipeline: @unchecked Sendable {
         processors: [FrameProcessor] = [],
         sinks: [MediaSink] = [],
         deliveryPolicy: MediaSourceDeliveryPolicy = .unbounded,
-        controlsSourceLifecycle: Bool = true
+        controlsSourceLifecycle: Bool = true,
+        maximumInFlightAudioFrameCount: Int? = nil,
+        processesAudioFrames: Bool = true
     ) {
         self.source = source
         self.chain = MediaProcessorChain(processors: processors, sinks: sinks)
         self.sourceAdapter = MediaSourceNodeAdapter(source: source)
         self.controlsSourceLifecycle = controlsSourceLifecycle
+        self.chain.node.processorNode.processesAudioFrames = processesAudioFrames
+        self.sourceAdapter.maximumInFlightAudioFrameCount = maximumInFlightAudioFrameCount.map { max(1, $0) }
         self.sourceAdapter.deliveryPolicy = deliveryPolicy
         self.sourceAdapter.add(consumer: chain.node)
         self.sourceAdapter.shouldAcceptSourceCallbacks = { [weak self] in
@@ -300,6 +308,7 @@ public final class MediaPipeline: @unchecked Sendable {
     }
 
     public func pause() {
+        guard state == .running else { return }
         if controlsSourceLifecycle {
             source.pause()
         }
@@ -308,6 +317,7 @@ public final class MediaPipeline: @unchecked Sendable {
     }
 
     public func resume() {
+        guard state == .paused else { return }
         if controlsSourceLifecycle {
             source.resume()
         }
@@ -316,33 +326,42 @@ public final class MediaPipeline: @unchecked Sendable {
     }
 
     public func stop() {
-        guard canStop() else { return }
+        guard transitionIfNeeded(from: [.idle, .running, .paused], to: .finishing) else { return }
         rejectFurtherSourceCallbacks()
-        if controlsSourceLifecycle {
-            source.stop()
-        }
+        if controlsSourceLifecycle { source.stop() }
         markSourceFinished()
     }
 
-    public func cancel() {
-        rejectFurtherSourceCallbacks()
-        transitionIfNeeded(from: [.idle, .running, .paused], to: .cancelled)
-        if controlsSourceLifecycle {
-            source.cancel()
+    /// 完成所有已接纳帧与 sink 收尾后，在主线程回传唯一终态结果。
+    public func stop(completion: @escaping (Result<Void, Error>) -> Void) {
+        let result = stateQueue.sync { () -> Result<Void, Error>? in
+            if let terminalResult { return terminalResult }
+            // 请求持有管线到终态，宿主释放引用也不能丢失已登记的完成回调。
+            stopCompletions.append { [self] result in withExtendedLifetime(self) { completion(result) } }
+            return nil
         }
+        if let result {
+            deliverStopCompletions([completion], result: result)
+        } else {
+            stop()
+        }
+    }
+
+    public func cancel() {
+        guard transitionIfNeeded(from: [.idle, .running, .paused, .finishing], to: .cancelled) else { return }
+        rejectFurtherSourceCallbacks()
+        if controlsSourceLifecycle { source.cancel() }
         chain.cancel()
+        completeTerminal(.failure(MediaCoreError.processingCancelled))
     }
 
     private func finishChain() {
         markSourceFinished()
     }
 
-    private func failChain(with error: Error, allowFromFinished: Bool = false, cancelChain: Bool = true) {
+    private func failChain(with error: Error, cancelChain: Bool = true) {
         let errorDescription = Self.errorDescription(for: error)
-        var allowedStates: [State] = [.running, .paused, .idle]
-        if allowFromFinished {
-            allowedStates.append(.finished)
-        }
+        let allowedStates: [State] = [.running, .paused, .idle, .finishing]
         guard transitionIfNeeded(from: allowedStates, to: .failed) else { return }
         stateQueue.sync {
             _lastErrorDescription = errorDescription
@@ -354,6 +373,7 @@ public final class MediaPipeline: @unchecked Sendable {
         if cancelChain {
             chain.cancel()
         }
+        completeTerminal(.failure(error))
         DispatchQueue.main.async {
             self.errorHandler?(error)
         }
@@ -402,20 +422,40 @@ public final class MediaPipeline: @unchecked Sendable {
     }
 
     private func finishChainIfPossible() {
-        guard transitionIfNeeded(from: [.running, .paused, .idle], to: .finished) else { return }
-        rejectFurtherSourceCallbacks()
         let shouldFinish = stateQueue.sync { () -> Bool in
-            guard !hasFinished else { return false }
+            guard [.idle, .running, .paused, .finishing].contains(_state), !hasFinished else { return false }
             hasFinished = true
             return true
         }
         guard shouldFinish else { return }
-
+        _ = transitionIfNeeded(from: [.idle, .running, .paused], to: .finishing)
+        rejectFurtherSourceCallbacks()
         chain.finish { [weak self] result in
-            if case .failure(let error) = result {
-                self?.failChain(with: error, allowFromFinished: true, cancelChain: false)
+            guard let self else { return }
+            switch result {
+            case .success:
+                guard self.transitionIfNeeded(from: [.finishing], to: .finished) else { return }
+                self.completeTerminal(.success(()))
+            case .failure(let error):
+                self.failChain(with: error, cancelChain: false)
             }
         }
+    }
+
+    private func completeTerminal(_ result: Result<Void, Error>) {
+        let completions = stateQueue.sync { () -> [(Result<Void, Error>) -> Void] in
+            guard terminalResult == nil else { return [] }
+            terminalResult = result
+            let completions = stopCompletions
+            stopCompletions.removeAll()
+            return completions
+        }
+        deliverStopCompletions(completions, result: result)
+    }
+
+    private func deliverStopCompletions(_ completions: [(Result<Void, Error>) -> Void], result: Result<Void, Error>) {
+        let transfer = UnsafeSendableBox(value: (completions, result))
+        DispatchQueue.main.async { transfer.value.0.forEach { $0(transfer.value.1) } }
     }
 
     private func storeLastFrameMetadata(_ metadata: FrameMetadata) {
@@ -447,12 +487,6 @@ public final class MediaPipeline: @unchecked Sendable {
             _state == .idle
                 && pendingSourceFrameDeliveries == 0
                 && sourceFrameCompletionsInProgress == 0
-        }
-    }
-
-    private func canStop() -> Bool {
-        stateQueue.sync {
-            _state != .finished && _state != .cancelled && _state != .failed
         }
     }
 
