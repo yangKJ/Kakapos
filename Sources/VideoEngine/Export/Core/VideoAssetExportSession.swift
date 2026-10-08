@@ -34,6 +34,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         var videoFrameProcessingTimeout: TimeInterval? = nil
         var videoEncodingStrategy: VideoEncodingStrategy = .automatic
         var performanceAccumulator = ReaderWriterExportPerformanceAccumulator()
+        var colorPolicy: VideoExportColorPolicy = .sourceCompatible
     }
 
     enum Status: Equatable {
@@ -197,7 +198,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             if let videoComposition = readerVideoComposition {
                 let compositionOutput = AVAssetReaderVideoCompositionOutput(
                     videoTracks: videoTracks,
-                    videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+                    videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: configuration.colorPolicy.pixelBufferFormat]
                 )
                 compositionOutput.alwaysCopiesSampleData = false
                 compositionOutput.videoComposition = videoComposition
@@ -209,13 +210,13 @@ final class VideoAssetExportSession: @unchecked Sendable {
                     outputSettings = [
                         kCVPixelBufferPixelFormatTypeKey as String: [
                             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-                            kCVPixelFormatType_32BGRA,
+                            configuration.colorPolicy.pixelBufferFormat,
                             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
                         ]
                     ]
                 } else {
                     outputSettings = [
-                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                        kCVPixelBufferPixelFormatTypeKey as String: configuration.colorPolicy.pixelBufferFormat
                     ]
                 }
                 let trackOutput = AVAssetReaderTrackOutput(
@@ -237,6 +238,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             let pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
             let usePassthrough = configuration.videoEncodingStrategy == .passthrough
                 || (configuration.videoEncodingStrategy == .automatic
+                    && !configuration.colorPolicy.isHDR
                     && !configuration.videoProcessors.isEmpty
                     && !writer.canApply(outputSettings: configuration.videoSettings, forMediaType: .video))
 
@@ -282,7 +284,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
                     assetWriterInput: input,
                     sourcePixelBufferAttributes: [
-                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                        kCVPixelBufferPixelFormatTypeKey as String: configuration.colorPolicy.pixelBufferFormat,
                         kCVPixelBufferWidthKey as String: processedPixelBufferSize.width,
                         kCVPixelBufferHeightKey as String: processedPixelBufferSize.height
                     ]
@@ -719,10 +721,17 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 return
             }
             let processedBox = UnsafeSendableBox(value: processedFrame)
-            let sampleBufferBox2 = UnsafeSendableBox(value: sourceSampleBuffer)
-            guard let processedPixelBuffer = extractPixelBuffer(processedBox.value) ?? CMSampleBufferGetImageBuffer(extractSampleBuffer(processedBox.value) ?? sampleBufferBox2.value) else {
+            guard let processedPixelBuffer = extractPixelBuffer(processedBox.value) else {
                 failExport(SessionError.processedVideoFrameUnavailable)
                 return
+            }
+            if configuration.colorPolicy.isHDR {
+                let actual = FrameFormat(pixelBuffer: processedPixelBuffer)
+                guard actual.dynamicRange == configuration.colorPolicy.requestedDynamicRange,
+                      actual.pixelFormat == .yuv420BiPlanar10BitVideoRange else {
+                    failExport(VideoExportProfileError.invalidHDROutput)
+                    return
+                }
             }
             let presentationTime = processedFrame.metadata.presentationTime
             pendingProcessedVideoFrame = PendingProcessedVideoFrame(
@@ -787,6 +796,17 @@ final class VideoAssetExportSession: @unchecked Sendable {
         }
 
         let processor = configuration.videoProcessors[index]
+        if configuration.colorPolicy.isHDR {
+            guard let capabilities = (processor as? FrameProcessorCapabilityProviding)?.capabilities,
+                  let expected = configuration.colorPolicy.requestedDynamicRange,
+                  capabilities.supportedDynamicRanges.contains(expected), capabilities.preservesColorInformation else {
+                completion(.failure(VideoExportProfileError.hdrProcessorNotAdmitted), VideoProcessingTiming(
+                    submittedAt: submittedAt, queueDelayNanoseconds: accumulatedQueueDelayNanoseconds,
+                    executionDurationNanoseconds: accumulatedExecutionDurationNanoseconds,
+                    callbackCompletedAt: configuration.performanceAccumulator.now()))
+                return
+            }
+        }
         let operationToken = beginVideoProcessingOperation()
         let frameBox = UnsafeSendableBox(value: frame)
         let completionBox = UnsafeSendableBox(value: completion)

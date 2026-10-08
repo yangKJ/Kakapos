@@ -29,6 +29,11 @@ struct KakaposLabRoutesView: View {
         List {
             Section("Labs") {
                 NavigationLink {
+                    HDRContractLabView()
+                } label: {
+                    LabRouteRow(title: "HDR 与时间段效果", subtitle: "核对 SDR、HLG、PQ 实际产物、区间执行和取消。", icon: "sparkles.tv")
+                }
+                NavigationLink {
                     CameraRecordView(mediaStore: mediaStore)
                 } label: {
                     LabRouteRow(

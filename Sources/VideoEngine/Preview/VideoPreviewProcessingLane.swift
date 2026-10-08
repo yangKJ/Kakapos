@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CoreVideo
 import KakaposMediaCore
 
 final class VideoPreviewProcessingLane: @unchecked Sendable {
@@ -20,6 +21,7 @@ final class VideoPreviewProcessingLane: @unchecked Sendable {
     var errorHandler: ((Error) -> Void)?
     var frameCompleted: ((TimeInterval) -> Void)?
 
+    private let colorPolicy: VideoExportColorPolicy
     private let processors: [FrameProcessor]
     private let output: Output
     private let lock = NSLock()
@@ -39,15 +41,24 @@ final class VideoPreviewProcessingLane: @unchecked Sendable {
     init(
         generation: VideoPreviewGeneration,
         mode: VideoPreviewMode,
+        colorPolicy: VideoExportColorPolicy = .sourceCompatible,
         output: @escaping Output
     ) throws {
+        self.colorPolicy = colorPolicy
         self.generation = generation
         identity = mode.identity
         switch mode {
         case .original:
-            processors = []
+            processors = colorPolicy.isHDR ? [VideoColorConversionProcessor(policy: colorPolicy)] : []
         case let .processed(plan):
-            processors = try plan.makeProcessors()
+            let configured = try plan.makeProcessors()
+            if colorPolicy.isHDR, let expected = colorPolicy.requestedDynamicRange {
+                guard configured.allSatisfy({ processor in
+                    guard let capabilities = (processor as? FrameProcessorCapabilityProviding)?.capabilities else { return false }
+                    return capabilities.supportedDynamicRanges.contains(expected) && capabilities.preservesColorInformation
+                }) else { throw VideoExportProfileError.hdrProcessorNotAdmitted }
+            }
+            processors = colorPolicy.isHDR ? [VideoColorConversionProcessor(policy: colorPolicy)] + configured : configured
         }
         self.output = output
     }
@@ -112,6 +123,18 @@ final class VideoPreviewProcessingLane: @unchecked Sendable {
             self.clearCurrentOperation(token: operationToken)
             switch result {
             case let .success(processedFrame):
+                if self.colorPolicy.isHDR {
+                    guard let input = extractPixelBuffer(frame), let output = extractPixelBuffer(processedFrame),
+                          FrameFormat(pixelBuffer: output).dynamicRange == self.colorPolicy.requestedDynamicRange,
+                          FrameFormat(pixelBuffer: output).pixelFormat == .yuv420BiPlanar10BitVideoRange,
+                          CVPixelBufferGetWidth(input) == CVPixelBufferGetWidth(output),
+                          CVPixelBufferGetHeight(input) == CVPixelBufferGetHeight(output) else {
+                        self.performanceAccumulator.recordFailure()
+                        self.errorHandler?(VideoExportProfileError.invalidHDROutput)
+                        self.finishCurrentWork()
+                        return
+                    }
+                }
                 self.processingQueue.async { [weak self] in
                     self?.process(processedFrame, at: index + 1)
                 }

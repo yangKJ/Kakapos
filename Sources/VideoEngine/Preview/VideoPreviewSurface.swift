@@ -39,6 +39,7 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
     private var context: CIContext!
     private var colorSpace: CGColorSpace!
     private var commandQueue: MTLCommandQueue?
+    private var displayMapsHDRToSDR = false
 
     public override init(frame frameRect: CGRect, device: MTLDevice?) {
         let resolvedDevice = device ?? MTLCreateSystemDefaultDevice()
@@ -136,6 +137,21 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
         commandBuffer.commit()
     }
 
+    func configureColorPolicy(_ policy: VideoExportColorPolicy) {
+        guard policy.isHDR else { return }
+        if #available(iOS 16, tvOS 16, *) {
+            colorPixelFormat = .rgba16Float
+            colorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
+            if let metalLayer = layer as? CAMetalLayer {
+                metalLayer.wantsExtendedDynamicRangeContent = true
+                metalLayer.colorspace = colorSpace
+            }
+            displayMapsHDRToSDR = UIScreen.main.currentEDRHeadroom <= 1
+        } else {
+            displayMapsHDRToSDR = true
+        }
+    }
+
     private func configure(device: MTLDevice?) {
         guard let device else { return }
         framebufferOnly = false
@@ -189,7 +205,11 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
     private func fittedImage(for submission: Submission, in bounds: CGRect) -> CIImage? {
         let sourceImage: CIImage?
         if let pixelBuffer = extractPixelBuffer(submission.frame) {
-            sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
+            if displayMapsHDRToSDR {
+                if #available(iOS 14.1, tvOS 14.2, *) {
+                    sourceImage = CIImage(cvPixelBuffer: pixelBuffer, options: [.toneMapHDRtoSDR: true])
+                } else { return nil }
+            } else { sourceImage = CIImage(cvPixelBuffer: pixelBuffer) }
         } else if let textureFrame = submission.frame as? TextureFrame,
                   let texture = extractTexture(textureFrame) {
             let textureImage = CIImage(

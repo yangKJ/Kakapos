@@ -73,6 +73,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
 
     public weak var delegate: MediaSourceDelegate?
     public let player: AVPlayer
+    private var colorPolicy: VideoExportColorPolicy = .sourceCompatible
     public let suppressesPlayerRendering: Bool
     public private(set) var state: State = .idle
     public private(set) var lastFrame: MediaFrame?
@@ -163,8 +164,10 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
     public init(
         player: AVPlayer,
         preferredFramesPerSecond: Int = 30,
-        suppressesPlayerRendering: Bool = false
+        suppressesPlayerRendering: Bool = false,
+        colorPolicy: VideoExportColorPolicy = .sourceCompatible
     ) {
+        self.colorPolicy = colorPolicy
         self.player = player
         self.preferredFramesPerSecond = preferredFramesPerSecond
         self.suppressesPlayerRendering = suppressesPlayerRendering
@@ -299,7 +302,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
         }
 
         let configuration = PlayerFrameOutputDriver.Configuration(
-            sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA],
+            sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: colorPolicy.pixelBufferFormat],
             preferredFramesPerSecond: preferredFramesPerSecond,
             suppressesPlayerRendering: suppressesPlayerRendering
         )

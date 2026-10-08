@@ -48,8 +48,10 @@ public final class TimelinePipeline {
         composition.frameDuration
     }
 
+    private var compiledSnapshot: CompiledTimelineComposition?
+
     public var summary: Summary {
-        let compiled = compile()
+        let compiled = currentCompilation()
         return Summary(
             renderSize: composition.renderSize,
             frameDuration: composition.frameDuration,
@@ -107,21 +109,36 @@ public final class TimelinePipeline {
 
     public func addLayer(_ layer: TimelineLayer) {
         composition.addLayer(layer)
+        compiledSnapshot = nil
     }
 
     public func addTransition(_ transition: Transition) {
         composition.addTransition(transition)
+        compiledSnapshot = nil
     }
 
-    public func compile() -> CompiledTimelineComposition {
-        composition.compile()
+    /// 每次调用显式生成新的编辑快照；已有任务继续消费其原快照。
+    public func compile(exportProfile: VideoExportProfile = .legacyCompatible) -> CompiledTimelineComposition {
+        var compiled = composition.compile()
+        compiled.exportProfile = exportProfile
+        if exportProfile.colorPolicy.isHDR {
+            compiled.videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
+            compiled.videoComposition.colorTransferFunction = exportProfile.colorPolicy == .hdrHLG ? AVVideoTransferFunction_ITU_R_2100_HLG : AVVideoTransferFunction_SMPTE_ST_2084_PQ
+            compiled.videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_2020
+        }
+        compiledSnapshot = compiled
+        return compiled
+    }
+
+    private func currentCompilation() -> CompiledTimelineComposition {
+        compiledSnapshot ?? compile()
     }
 
     public func makeAssetSources(
         callbackQueue: DispatchQueue = .main,
         audioOutputSettings: [String: Any]? = nil
     ) -> [AssetSource] {
-        compile().makeAssetSources(
+        currentCompilation().makeAssetSources(
             callbackQueue: callbackQueue,
             audioOutputSettings: audioOutputSettings
         )
@@ -130,16 +147,16 @@ public final class TimelinePipeline {
     public func makeImageSource(
         callbackQueue: DispatchQueue = .main
     ) -> ImageSource? {
-        compile().makeImageSource(callbackQueue: callbackQueue)
+        currentCompilation().makeImageSource(callbackQueue: callbackQueue)
     }
 
     public func makeProcessorChain() -> MediaProcessorChain {
-        compile().makeProcessorChain()
+        currentCompilation().makeProcessorChain()
     }
 
     @MainActor
     public func makePlayerItem() -> AVPlayerItem {
-        compile().makePlayerItem()
+        currentCompilation().makePlayerItem()
     }
 
     public func makeExportJob(
@@ -150,7 +167,7 @@ public final class TimelinePipeline {
         videoProcessors: [FrameProcessor] = [],
         videoFrameProcessingTimeout: TimeInterval? = nil
     ) -> ReaderWriterExportJob {
-        compile().makeExportJob(
+        currentCompilation().makeExportJob(
             outputURL: outputURL,
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
@@ -169,7 +186,7 @@ public final class TimelinePipeline {
         videoFrameProcessingTimeout: TimeInterval? = nil
     ) -> TimelineExportTask {
         TimelineExportTask(
-            compiledComposition: compile(),
+            compiledComposition: currentCompilation(),
             outputURL: outputURL,
             fileType: fileType,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
@@ -220,10 +237,26 @@ public extension TimelinePipeline {
         PreviewPipeline(
             player: AVPlayer(playerItem: makePlayerItem()),
             preferredFramesPerSecond: preferredFramesPerSecond,
-            processors: processors,
+            processors: processors.isEmpty ? currentCompilation().timelineProcessors : processors,
             callbackQueue: callbackQueue,
             handler: handler
         )
+    }
+}
+#endif
+
+#if canImport(UIKit)
+public extension CompiledTimelineComposition {
+    @MainActor
+    func makePreviewSession(surface: VideoPreviewSurface, preferredFramesPerSecond: Int = 30) throws -> VideoPreviewSession {
+        let session = VideoPreviewSession(player: AVPlayer(playerItem: makePlayerItem()), surface: surface,
+            configuration: VideoPreviewConfiguration(preferredFramesPerSecond: preferredFramesPerSecond, colorPolicy: exportProfile.colorPolicy))
+        if !renderPlan.processorSegments.isEmpty {
+            let snapshot = self
+            let plan = FrameProcessingPlan(identity: .init(identifier: "kakapos.timeline", revision: UUID().uuidString), makeProcessors: { snapshot.timelineProcessors })
+            _ = try session.setMode(.processed(plan))
+        }
+        return session
     }
 }
 #endif

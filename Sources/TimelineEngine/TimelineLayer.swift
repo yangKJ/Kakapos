@@ -332,19 +332,25 @@ public final class AudioLayer: TimelineLayer {
 }
 
 public final class EffectLayer: TimelineLayer {
-    public let effectSource: EffectSource
-    public var processor: FrameProcessor?
+    private var effectFactory: (() -> FrameProcessor)?
+    public var effectSource: EffectSource {
+        if let effectFactory { return EffectSource(makeProcessor: effectFactory, intensity: intensity) }
+        return EffectSource(processor: processor, intensity: intensity)
+    }
+    public var processor: FrameProcessor? {
+        didSet { effectFactory = nil }
+    }
     public var intensity: Float
 
     public init(timeRange: CMTimeRange, processor: FrameProcessor? = nil, intensity: Float = 1, layerLevel: Int = 0) {
-        self.effectSource = EffectSource(processor: processor, intensity: intensity)
+        self.effectFactory = nil
         self.processor = processor
         self.intensity = intensity
         super.init(timeRange: timeRange, layerLevel: layerLevel)
     }
 
     public init(timeRange: CMTimeRange, source: EffectSource, layerLevel: Int = 0) {
-        self.effectSource = source
+        self.effectFactory = source.processorFactory
         self.processor = source.processor
         self.intensity = source.intensity
         super.init(timeRange: timeRange, layerLevel: layerLevel)

@@ -25,6 +25,7 @@ public final class VideoPreviewSession: @unchecked Sendable {
     public var errorHandler: ((Error) -> Void)?
 
     private let source: PlayerFrameSource
+    private let colorPolicy: VideoExportColorPolicy
     private let adaptivePolicy: VideoPreviewAdaptivePolicy?
     private let stateLock = NSLock()
     private let modeSwitchLock = NSLock()
@@ -48,14 +49,17 @@ public final class VideoPreviewSession: @unchecked Sendable {
         surface: VideoPreviewSurface,
         configuration: VideoPreviewConfiguration = .init()
     ) {
+        self.colorPolicy = configuration.colorPolicy
         self.player = player
         self.surface = surface
+        surface.configureColorPolicy(configuration.colorPolicy)
         adaptivePolicy = configuration.adaptivePolicy
         adaptiveFramesPerSecond = configuration.preferredFramesPerSecond
         source = PlayerFrameSource(
             player: player,
             preferredFramesPerSecond: configuration.preferredFramesPerSecond,
-            suppressesPlayerRendering: true
+            suppressesPlayerRendering: true,
+            colorPolicy: configuration.colorPolicy
         )
         source.frameHandler = { [weak self] frame in
             self?.currentLane()?.consume(frame)
@@ -108,7 +112,8 @@ public final class VideoPreviewSession: @unchecked Sendable {
         let generation = VideoPreviewGeneration(rawValue: nextRawValue)
         let nextLane = try VideoPreviewProcessingLane(
             generation: generation,
-            mode: mode
+            mode: mode,
+            colorPolicy: colorPolicy
         ) { [weak self] frame, generation, identity in
             let submission = VideoPreviewSurfaceSubmission(frame: frame, generation: generation, identity: identity)
             DispatchQueue.main.async { [weak self] in

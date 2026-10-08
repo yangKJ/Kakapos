@@ -114,6 +114,7 @@ public struct StillImageSource: TimelineSourceDescriptor {
 public struct EffectSource: TimelineSourceDescriptor {
     public let processor: FrameProcessor?
     public let intensity: Float
+    let processorFactory: (() -> FrameProcessor)?
 
     public var kind: TimelineSourceKind { .effect }
     public var nominalDuration: CMTime? { nil }
@@ -121,7 +122,16 @@ public struct EffectSource: TimelineSourceDescriptor {
     public init(processor: FrameProcessor?, intensity: Float = 1) {
         self.processor = processor
         self.intensity = intensity
+        self.processorFactory = nil
     }
+
+    public init(makeProcessor: @escaping () -> FrameProcessor, intensity: Float = 1) {
+        self.processor = nil
+        self.intensity = intensity
+        self.processorFactory = makeProcessor
+    }
+
+    func makeProcessor() -> FrameProcessor? { processorFactory?() ?? processor }
 }
 
 public struct TextClipSource: TimelineSourceDescriptor {
@@ -617,20 +627,27 @@ struct TimelineRenderPlanBuilder {
 
 public extension CompiledTimelineComposition {
     var timelineProcessors: [FrameProcessor] {
-        renderPlan.processorSegments
+        renderPlan.processorSegments.enumerated()
             .sorted { lhs, rhs in
-                if lhs.destinationTimeRange.start == rhs.destinationTimeRange.start {
-                    return lhs.layerLevel < rhs.layerLevel
-                }
-                return lhs.destinationTimeRange.start < rhs.destinationTimeRange.start
+                lhs.element.layerLevel == rhs.element.layerLevel
+                    ? lhs.offset < rhs.offset
+                    : lhs.element.layerLevel < rhs.element.layerLevel
             }
-            .compactMap { $0.source.processor }
+            .compactMap { entry in
+                guard let processor = entry.element.source.makeProcessor() else { return nil }
+                return TimelineEffectProcessor(segment: entry.element, processor: processor)
+            }
     }
 
     @MainActor
     func makePlayerItem() -> AVPlayerItem {
         let compositionBox = TimelineSourceSendableBox(value: composition)
         let playerItem = AVPlayerItem(asset: compositionBox.value)
+        if exportProfile.colorPolicy.isHDR {
+            videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
+            videoComposition.colorTransferFunction = exportProfile.colorPolicy == .hdrHLG ? AVVideoTransferFunction_ITU_R_2100_HLG : AVVideoTransferFunction_SMPTE_ST_2084_PQ
+            videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_2020
+        }
         playerItem.videoComposition = videoComposition
         playerItem.audioMix = audioMix
         return playerItem
@@ -654,6 +671,7 @@ public extension CompiledTimelineComposition {
             audioMix: audioMix,
             videoProcessors: processors,
             videoFrameProcessingTimeout: videoFrameProcessingTimeout,
+            exportProfile: exportProfile,
             shouldOptimizeForNetworkUse: shouldOptimizeForNetworkUse,
             metadata: metadata,
             preflightError: diagnostics.isEmpty

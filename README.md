@@ -298,6 +298,16 @@ item.audioMix = compiled.audioMix
 
 Track insertion failures are retained in `CompiledTimelineComposition.diagnostics`. Export jobs created from an invalid compiled timeline fail closed instead of silently exporting a partial composition.
 
+### Timeline effects and HDR contracts
+
+Call `TimelinePipeline.compile(exportProfile:)` explicitly for an edit snapshot and reuse the compiled result for preview and export. Effect layers apply to the composed frame in `[start, end)`, ordered by ascending layer level and insertion order. Intensity and keyframes are evaluated in composition time; intermediate intensities blend in linear light. `EffectSource(makeProcessor:)` creates processors for independent runs. A nonempty explicit export processor array continues to override timeline effects.
+
+`VideoExportColorPolicy.hdrHLG` and `.hdrPQ` request HEVC Main10 and real 10-bit pixel buffers. HDR processors must explicitly declare the requested dynamic range and preserve color information. Unsupported codecs, missing output buffers, and HDR-to-SDR processor output fail explicitly. SDR delivery remains explicit through `.standardBT709` and the existing normalization processor.
+
+On supported iOS devices, `CompiledTimelineComposition.makePreviewSession(surface:)` routes the same effect plan through the HDR-capable Metal surface. Displays without EDR use a display-only mapping. The CGImage callback preview remains an SDR interface. The HDR contract covers HLG/PQ, not Dolby Vision dynamic metadata preservation.
+
+The Lab includes an HDR and time-range export validation page. Build/test results, decoded output validation, device playback, and performance comparisons are separate acceptance evidence.
+
 ### Commercial Boundary
 
 The open-source Kakapos package provides the media engine foundation: processor-neutral frame routing, offline export compatibility, processor integration contracts, player frame sourcing, recording primitives, and timeline models.

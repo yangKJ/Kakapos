@@ -7,6 +7,9 @@
 
 import AVFoundation
 import Foundation
+import CoreVideo
+import VideoToolbox
+import KakaposMediaCore
 
 public enum VideoExportCodec: Equatable, Sendable {
     case automatic
@@ -15,9 +18,34 @@ public enum VideoExportCodec: Equatable, Sendable {
     case jpeg
 }
 
-public enum VideoExportColorPolicy: Equatable, Sendable {
+public enum VideoExportColorPolicy: Equatable, Hashable, Sendable {
     case sourceCompatible
     case standardBT709
+    case hdrHLG
+    case hdrPQ
+
+    public var isHDR: Bool { self == .hdrHLG || self == .hdrPQ }
+
+    public var requestedDynamicRange: FrameDynamicRange? {
+        switch self {
+        case .hdrHLG: return .hdr(.hlg)
+        case .hdrPQ: return .hdr(.pq)
+        case .standardBT709: return .standard
+        case .sourceCompatible: return nil
+        }
+    }
+
+    var pixelBufferFormat: OSType { isHDR ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_32BGRA }
+
+    var colorProperties: [String: Any]? {
+        switch self {
+        case .sourceCompatible: return nil
+        case .standardBT709:
+            return [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2, AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2, AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2]
+        case .hdrHLG, .hdrPQ:
+            return [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_2020, AVVideoTransferFunctionKey: self == .hdrHLG ? AVVideoTransferFunction_ITU_R_2100_HLG : AVVideoTransferFunction_SMPTE_ST_2084_PQ, AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_2020]
+        }
+    }
 }
 
 public struct VideoExportProfile: Equatable, Sendable {
@@ -54,6 +82,7 @@ public struct VideoExportProfile: Equatable, Sendable {
     func resolvedAssetCodec(fileType: AVFileType) -> VideoAssetCodec {
         switch videoCodec {
         case .automatic:
+            if colorPolicy.isHDR { return .hevc }
             return fileType == .mov ? .jpeg : .h264
         case .h264:
             return .h264
@@ -63,4 +92,10 @@ public struct VideoExportProfile: Equatable, Sendable {
             return .jpeg
         }
     }
+}
+
+public enum VideoExportProfileError: Error {
+    case incompatibleHDRCodec
+    case hdrProcessorNotAdmitted
+    case invalidHDROutput
 }

@@ -85,7 +85,7 @@ public final class TranscodeSession: @unchecked Sendable {
                 expectsAudio: request.asset.tracks(withMediaType: .audio).isEmpty == false,
                 durationTolerance: request.configuration.durationTolerance,
                 expectedVideoCodec: request.configuration.exportProfile.resolvedAssetCodec(fileType: request.configuration.fileType),
-                expectedDynamicRange: request.configuration.exportProfile.colorPolicy == .standardBT709 ? .standard : nil
+                expectedDynamicRange: request.configuration.exportProfile.colorPolicy.requestedDynamicRange
             )
             let job = ReaderWriterExportJob(
                 asset: request.asset,

@@ -55,13 +55,16 @@ public enum VideoPreviewReadiness: Sendable {
 public struct VideoPreviewConfiguration: Sendable {
     public let preferredFramesPerSecond: Int
     public let adaptivePolicy: VideoPreviewAdaptivePolicy?
+    public let colorPolicy: VideoExportColorPolicy
 
     public init(
         preferredFramesPerSecond: Int = 30,
-        adaptivePolicy: VideoPreviewAdaptivePolicy? = nil
+        adaptivePolicy: VideoPreviewAdaptivePolicy? = nil,
+        colorPolicy: VideoExportColorPolicy = .sourceCompatible
     ) {
         self.preferredFramesPerSecond = min(max(preferredFramesPerSecond, 1), 60)
         self.adaptivePolicy = adaptivePolicy
+        self.colorPolicy = colorPolicy
     }
 }
 

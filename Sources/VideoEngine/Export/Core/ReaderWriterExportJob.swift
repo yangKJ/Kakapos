@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import VideoToolbox
 import KakaposMediaCore
 import AVFoundation
 
@@ -514,6 +515,9 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         if let preflightError {
             throw preflightError
         }
+        if exportProfile.colorPolicy.isHDR && ![VideoExportCodec.automatic, .hevc].contains(exportProfile.videoCodec) {
+            throw VideoExportProfileError.incompatibleHDRCodec
+        }
         let videoSettings = try makeVideoSettings()
         let audioSettings = makeAudioSettings()
         return VideoAssetExportSession.Configuration(
@@ -525,10 +529,11 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             metadata: metadata,
             videoComposition: videoComposition,
             audioMix: audioMix,
-            videoProcessors: videoProcessors,
+            videoProcessors: exportProfile.colorPolicy.isHDR ? [VideoColorConversionProcessor(policy: exportProfile.colorPolicy)] + videoProcessors : videoProcessors,
             videoFrameProcessingTimeout: videoFrameProcessingTimeout,
             videoEncodingStrategy: videoProcessors.isEmpty ? .automatic : .encoded,
-            performanceAccumulator: performanceAccumulator
+            performanceAccumulator: performanceAccumulator,
+            colorPolicy: exportProfile.colorPolicy
         )
     }
 
@@ -547,6 +552,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
     private func preferredVideoCodec() -> AVVideoCodecType {
         switch exportProfile.videoCodec {
         case .automatic:
+            if exportProfile.colorPolicy.isHDR { return .hevc }
             return fileType == .mov ? .jpeg : .h264
         case .h264:
             return .h264
@@ -562,12 +568,11 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         if let bitRate = exportProfile.averageVideoBitRate {
             settings[AVVideoCompressionPropertiesKey] = [AVVideoAverageBitRateKey: bitRate]
         }
-        if exportProfile.colorPolicy == .standardBT709 {
-            settings[AVVideoColorPropertiesKey] = [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
-            ]
+        if let colors = exportProfile.colorPolicy.colorProperties { settings[AVVideoColorPropertiesKey] = colors }
+        if exportProfile.colorPolicy.isHDR {
+            var compression = settings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
+            compression[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main10_AutoLevel as String
+            settings[AVVideoCompressionPropertiesKey] = compression
         }
         return settings
     }

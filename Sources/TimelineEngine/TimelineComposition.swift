@@ -84,6 +84,7 @@ public struct CompiledTimelineComposition {
     public let renderPlan: TimelineRenderPlan
     public let overlayLayer: CALayer?
     public let diagnostics: [TimelineCompilationDiagnostic]
+    public var exportProfile: VideoExportProfile = .legacyCompatible
 
     public var isValid: Bool {
         diagnostics.isEmpty
