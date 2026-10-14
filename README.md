@@ -81,6 +81,12 @@ The board entry points above are the recommended path for new code.
 - `CameraDeviceController`: focus, exposure, white balance, zoom, torch, flash, frame-rate, and format control.
 - `CameraPreviewController`: raw preview-layer mode and processed preview mode through `FrameProcessor`.
 - `CameraRecordingController`: recorder orchestration over `RecorderSink` and `RecordingSession`.
+
+`RecorderSink.Configuration.includesVideo` 默认为 `true`。独立音频副轨可显式使用
+`RecorderSink(outputURL: url, fileType: .m4a, configuration: .init(includesVideo: false, includesAudio: true))`，
+无需等待视频首帧。视频与音频分别维护单调时间戳，同一时刻的两路数据不会互相增加时长。
+编码器视频输入未就绪时报告丢帧；音频输入背压显式返回错误，不调用未就绪的写入 API。
+
 - `CameraAdvancedOutput`: metadata, depth, portrait matte, AR frame, and multicam event fan-out.
 
 ### 🔧 How It Works
