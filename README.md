@@ -18,6 +18,14 @@ Kakapos is not a filter-kernel library. It owns media lifecycle, frame sourcing,
 
 At the top level, Kakapos can also be understood as three public engines over one shared core: **Video Engine**, **Camera Engine**, and **Timeline Engine**. `Media Core` provides the shared frame, processor, source, sink, and pipeline contracts.
 
+### Architecture boundaries
+
+Kakapos is an independent media foundation. Its package currently has no external SwiftPM dependency; its products compose MediaCore, Video, Camera, and Timeline internally. Rendering backends are injected by consumers through `FrameProcessor` rather than imported into the media engine.
+
+The Harbeth family must not depend on Kakapos. Applications may use both image and media capabilities and own the adapter between them. If reusable higher-level media workflows are needed later, they can live in a separate `KakaposPackage` with capability-specific targets. That package is a future direction: it is not created or required by the current architecture, and no empty target is introduced in anticipation of it.
+
+The current products and dependency declarations are defined by `Package.swift`. Core media lifecycle stays here; app branding, commercial policies, and user completion semantics stay in each consumer. Source/contract tests and builds remain distinct from permission, device, audiovisual-sync, and long-session runtime acceptance.
+
 ### ✨ Key Features
 
 - **Processor-neutral frame pipeline**: Connect any processor that can transform `CVPixelBuffer`, `CMSampleBuffer`, or `MTLTexture` through `FrameProcessor`.
@@ -81,6 +89,12 @@ The board entry points above are the recommended path for new code.
 - `CameraDeviceController`: focus, exposure, white balance, zoom, torch, flash, frame-rate, and format control.
 - `CameraPreviewController`: raw preview-layer mode and processed preview mode through `FrameProcessor`.
 - `CameraRecordingController`: recorder orchestration over `RecorderSink` and `RecordingSession`.
+
+`RecorderSink.Configuration.includesVideo` 默认为 `true`。独立音频副轨可显式使用
+`RecorderSink(outputURL: url, fileType: .m4a, configuration: .init(includesVideo: false, includesAudio: true))`，
+无需等待视频首帧。视频与音频分别维护单调时间戳，同一时刻的两路数据不会互相增加时长。
+编码器视频输入未就绪时报告丢帧；音频输入背压显式返回错误，不调用未就绪的写入 API。
+
 - `CameraAdvancedOutput`: metadata, depth, portrait matte, AR frame, and multicam event fan-out.
 
 ### 🔧 How It Works

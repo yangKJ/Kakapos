@@ -36,6 +36,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         public var codec: AVVideoCodecType
         public var scalingMode: String
         public var transform: CGAffineTransform
+        public var includesVideo: Bool
         public var includesAudio: Bool
         public var audioBitRate: Int
         public var audioSampleRate: Double
@@ -47,6 +48,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             codec: AVVideoCodecType = .h264,
             scalingMode: String = AVVideoScalingModeResizeAspectFill,
             transform: CGAffineTransform = .identity,
+            includesVideo: Bool = true,
             includesAudio: Bool = false,
             audioBitRate: Int = 128_000,
             audioSampleRate: Double = 44_100,
@@ -57,6 +59,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             self.codec = codec
             self.scalingMode = scalingMode
             self.transform = transform
+            self.includesVideo = includesVideo
             self.includesAudio = includesAudio
             self.audioBitRate = audioBitRate
             self.audioSampleRate = audioSampleRate
@@ -222,6 +225,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var startTime: CMTime?
     private var lastPresentationTime: CMTime?
+    private var lastVideoPresentationTime: CMTime?
+    private var lastAudioPresentationTime: CMTime?
     private var pausedAt: CMTime?
     private var applyPaddingAfterResume = false
     private var hasWrittenFirstVideoFrame = false
@@ -390,20 +395,28 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             try appendAudio(sampleBuffer)
             return
         }
+        guard configuration.includesVideo else { throw RecorderError.writerCannotAddVideoInput }
         guard let pixelBuffer = extractPixelBuffer(frame) else { return }
         let normalizedTime = adjustedPresentationTime(
             normalizedPresentationTime(for: frame.metadata.presentationTime),
             sampleDuration: frame.metadata.duration,
-            applyPadding: applyPaddingAfterResume
+            applyPadding: applyPaddingAfterResume,
+            previousTime: lastVideoPresentationTime
         )
         try setupAudioIfNeeded()
         try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
         try startIfNeeded(at: normalizedTime)
-        guard let adaptor = pixelBufferAdaptor else { throw RecorderError.writerCannotAddVideoInput }
+        guard let adaptor = pixelBufferAdaptor, let videoInput else { throw RecorderError.writerCannotAddVideoInput }
+        // 实时编码器背压时不能调用 adaptor，否则 AVFoundation 会抛出不可捕获的异常。
+        guard videoInput.isReadyForMoreMediaData else {
+            droppedFrameHandler?(frame.metadata)
+            return
+        }
         guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
             droppedFrameHandler?(frame.metadata)
             return
         }
+        lastVideoPresentationTime = normalizedTime
         session.markVideoFrame(at: normalizedTime)
         if !hasWrittenFirstVideoFrame {
             hasWrittenFirstVideoFrame = true
@@ -451,7 +464,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             throw RecorderError.writerCannotAddAudioInput
         }
         try setupAudioIfNeeded(sampleBuffer: sampleBuffer)
-        guard hasWrittenFirstVideoFrame else {
+        guard hasWrittenFirstVideoFrame || !configuration.includesVideo else {
             pendingLeadingAudioBuffers.append(sampleBuffer)
             if pendingLeadingAudioBuffers.count > maximumInFlightAudioFrameCount {
                 throw MediaCoreError.audioDeliveryOverflow
@@ -466,7 +479,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         let normalizedTime = adjustedPresentationTime(
             normalizedPresentationTime(for: CMSampleBufferGetPresentationTimeStamp(sampleBuffer)),
             sampleDuration: CMSampleBufferGetDuration(sampleBuffer),
-            applyPadding: applyPaddingAfterResume
+            applyPadding: applyPaddingAfterResume,
+            previousTime: lastAudioPresentationTime
         )
         try startIfNeeded(at: normalizedTime)
         guard let input = audioInput else { throw RecorderError.writerCannotAddAudioInput }
@@ -492,10 +506,12 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             sampleTimingArray: &timingInfo,
             sampleBufferOut: &rebasedBuffer
         )
+        guard input.isReadyForMoreMediaData else { throw MediaCoreError.audioDeliveryOverflow }
         guard input.append(rebasedBuffer ?? sampleBuffer) else {
             droppedFrameHandler?(FrameMetadata(presentationTime: normalizedTime))
             return
         }
+        lastAudioPresentationTime = normalizedTime
         session.markAudioFrame(at: normalizedTime)
         updateLastPresentationTime(normalizedTime)
     }
@@ -554,7 +570,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     private func adjustedPresentationTime(
         _ time: CMTime,
         sampleDuration: CMTime?,
-        applyPadding: Bool
+        applyPadding: Bool,
+        previousTime: CMTime?
     ) -> CMTime {
         guard time.isValid else { return time }
         let minimumStep: CMTime
@@ -569,8 +586,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             return lastPresentationTime + minimumStep
         }
 
-        guard let lastPresentationTime, time <= lastPresentationTime else { return time }
-        return lastPresentationTime + minimumStep
+        guard let previousTime, time <= previousTime else { return time }
+        return previousTime + minimumStep
     }
 
     private func updateLastPresentationTime(_ time: CMTime) {

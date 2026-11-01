@@ -8,6 +8,64 @@ import CoreVideo
 
 final class RecorderSinkRegressionTests: XCTestCase {
 
+    func testAudioAndVideoWithEqualTimestampsDoNotPadEachOther() async throws {
+        let url = makeOutputURL()
+        let sink = try RecorderSink(outputURL: url, configuration: .init(includesAudio: true))
+        for index in 0..<6 {
+            let time = CMTime(value: Int64(index), timescale: 30)
+            let video = PixelBufferFrame(pixelBuffer: try makePixelBuffer(), metadata: FrameMetadata(presentationTime: time, duration: CMTime(value: 1, timescale: 30)))
+            let audio = SampleBufferFrame(sampleBuffer: try makeAudioSampleBuffer(at: time))
+            let delivered = expectation(description: "同时间音画完成")
+            delivered.expectedFulfillmentCount = 2
+            sink.consume(video) { result in
+                if case .failure(let error) = result { XCTFail("视频写入失败：\(error)") }
+                delivered.fulfill()
+            }
+            sink.consume(audio) { result in
+                if case .failure(let error) = result { XCTFail("音频写入失败：\(error)") }
+                delivered.fulfill()
+            }
+            await fulfillment(of: [delivered], timeout: 2)
+            try await Task.sleep(nanoseconds: 34_000_000)
+        }
+        XCTAssertEqual(sink.snapshot.lastPresentationTime?.seconds ?? -1, 5.0 / 30, accuracy: 0.0001)
+        let finished = expectation(description: "同时间录制完成")
+        sink.finishRecording { result in
+            if case .failure(let error) = result { XCTFail("录制收尾失败：\(error)") }
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 5)
+        let duration = try await AVURLAsset(url: url).load(.duration)
+        XCTAssertEqual(duration.seconds, 0.2, accuracy: 0.05)
+    }
+
+    func testAudioOnlyRecordingFinishesWithoutVideoFrames() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio-only-\(UUID().uuidString).m4a")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sink = try RecorderSink(
+            outputURL: url, fileType: .m4a,
+            configuration: .init(includesVideo: false, includesAudio: true)
+        )
+        let appended = expectation(description: "音频帧完成")
+        sink.consume(SampleBufferFrame(sampleBuffer: try makeAudioSampleBuffer(at: .zero))) { result in
+            if case .failure(let error) = result { XCTFail("纯音频写入失败：\(error)") }
+            appended.fulfill()
+        }
+        await fulfillment(of: [appended], timeout: 2)
+        let finished = expectation(description: "纯音频录制完成")
+        sink.finishRecording { result in
+            if case .failure(let error) = result { XCTFail("纯音频收尾失败：\(error)") }
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertEqual(sink.state, .finished)
+        let asset = AVURLAsset(url: url)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        let video = try await asset.loadTracks(withMediaType: .video)
+        XCTAssertEqual(audio.count, 1)
+        XCTAssertTrue(video.isEmpty)
+    }
+
     func testFirstVideoFrameRegistersInputBeforeStartingWriter() throws {
         let outputURL = makeOutputURL()
         let sink = try RecorderSink(outputURL: outputURL)
