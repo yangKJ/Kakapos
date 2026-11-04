@@ -635,6 +635,16 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                     self.sessionQueue.asyncAfter(deadline: .now() + 45) { [weak delegate] in
                         delegate?.terminate(.captureTimedOut)
                     }
+                    // 原生照片输出独立于预览连接；界面锁定方向时仍按当前握持方向保存。
+                    if let connection = self.photoOutput.connection(with: .video) {
+                        if connection.isVideoOrientationSupported {
+                            connection.videoOrientation = self.currentOrientation
+                        }
+                        if connection.isVideoMirroringSupported {
+                            connection.automaticallyAdjustsVideoMirroring = false
+                            connection.isVideoMirrored = false
+                        }
+                    }
                     self.photoOutput.capturePhoto(with: settings, delegate: delegate)
                 } catch { continuation.resume(throwing: error) }
             }
