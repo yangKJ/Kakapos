@@ -475,19 +475,20 @@ struct TimelineRenderPlanBuilder {
             transitionSegments: transitionSegments
         )
 
+        // 区间筛选保留稳定的层级顺序，顶层片段数组仍维持原顺序。
+        let orderedAssets = assetSegments.sorted { $0.layerLevel < $1.layerLevel }
+        let orderedImages = imageSegments.sorted { $0.layerLevel < $1.layerLevel }
+        let orderedTexts = textSegments.sorted { $0.layerLevel < $1.layerLevel }
+        let orderedProcessors = processorSegments.sorted { $0.layerLevel < $1.layerLevel }
         let visualIntervals = renderInstructions.map { instruction in
-            let assetSegmentsForInstruction = assetSegments
+            let assetSegmentsForInstruction = orderedAssets
                 .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
-                .sorted { $0.layerLevel < $1.layerLevel }
-            let imageSegmentsForInstruction = imageSegments
+            let imageSegmentsForInstruction = orderedImages
                 .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
-                .sorted { $0.layerLevel < $1.layerLevel }
-            let textSegmentsForInstruction = textSegments
+            let textSegmentsForInstruction = orderedTexts
                 .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
-                .sorted { $0.layerLevel < $1.layerLevel }
-            let processorSegmentsForInstruction = processorSegments
+            let processorSegmentsForInstruction = orderedProcessors
                 .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
-                .sorted { $0.layerLevel < $1.layerLevel }
 
             return TimelineRenderPlan.VisualInterval(
                 timeRange: instruction.timeRange,
@@ -518,15 +519,16 @@ struct TimelineRenderPlanBuilder {
         transitions: [Transition],
         assetSegments: [TimelineAssetSegment]
     ) -> [TimelineTransitionSegment] {
-        transitions.compactMap { transition in
-            let candidates = assetSegments
+        guard !transitions.isEmpty else { return [] }
+        let orderedAssets = assetSegments.sorted {
+            if $0.layerLevel == $1.layerLevel {
+                return $0.destinationTimeRange.start < $1.destinationTimeRange.start
+            }
+            return $0.layerLevel < $1.layerLevel
+        }
+        return transitions.compactMap { transition in
+            let candidates = orderedAssets
                 .filter { $0.destinationTimeRange.start < transition.timeRange.end && $0.destinationTimeRange.end > transition.timeRange.start }
-                .sorted {
-                    if $0.layerLevel == $1.layerLevel {
-                        return $0.destinationTimeRange.start < $1.destinationTimeRange.start
-                    }
-                    return $0.layerLevel < $1.layerLevel
-                }
 
             guard candidates.count >= 2 else { return nil }
 

@@ -49,6 +49,42 @@ final class MediaNodeResultState {
     }
 }
 
+/// 汇总一次分发或收尾：每个槽位只确认一次，保留首次错误，在最后确认的线程回调。
+final class MediaCompletionGroup {
+    private let lock = NSLock()
+    private var completed: [Bool]
+    private var remaining: Int
+    private var firstError: Error?
+    private var completion: ((Result<Void, Error>) -> Void)?
+
+    init(count: Int, completion: @escaping (Result<Void, Error>) -> Void) {
+        completed = Array(repeating: false, count: count)
+        remaining = count
+        self.completion = completion
+    }
+
+    func complete(at index: Int, with result: Result<Void, Error>) {
+        lock.lock()
+        guard !completed[index] else { lock.unlock(); return }
+        completed[index] = true
+        if case .failure(let error) = result, firstError == nil {
+            firstError = error
+        }
+        remaining -= 1
+        guard remaining == 0 else { lock.unlock(); return }
+        let callback = completion
+        completion = nil
+        let finalResult: Result<Void, Error>
+        if let firstError {
+            finalResult = .failure(firstError)
+        } else {
+            finalResult = .success(())
+        }
+        lock.unlock()
+        callback?(finalResult)
+    }
+}
+
 open class MediaOutputNode: MediaFrameSourceNode {
     private let lock = NSLock()
     private var consumersStorage: [MediaFrameConsumerNode] = []
@@ -113,62 +149,16 @@ open class MediaOutputNode: MediaFrameSourceNode {
             return
         }
 
-        let lock = NSLock()
-        var remainingConsumers = consumers.count
-        var capturedError: Error?
-        var didComplete = false
-
-        func finishIfNeeded() {
-            lock.lock()
-            guard !didComplete else {
-                lock.unlock()
-                return
-            }
-            let result: Result<Void, Error>
-            if let capturedError {
-                result = .failure(capturedError)
-            } else {
-                result = .success(())
-            }
-            didComplete = true
-            lock.unlock()
-            completion(result)
-        }
-
-        func recordCompletion(_ result: Result<Void, Error>) {
-            lock.lock()
-            if case .failure(let error) = result, capturedError == nil {
-                capturedError = error
-            }
-            if remainingConsumers > 0 {
-                remainingConsumers -= 1
-            }
-            let shouldComplete = remainingConsumers == 0
-            lock.unlock()
-
-            if shouldComplete {
-                finishIfNeeded()
-            }
-        }
-
+        let group = MediaCompletionGroup(count: consumers.count, completion: completion)
         for (index, consumer) in consumers.enumerated() {
             guard shouldContinue() else {
-                for _ in index..<consumers.count {
-                    recordCompletion(.success(()))
+                for skippedIndex in index..<consumers.count {
+                    group.complete(at: skippedIndex, with: .success(()))
                 }
                 break
             }
-            let consumerCompletionLock = NSLock()
-            var consumerDidComplete = false
             consumer.consume(frame, from: self) { result in
-                consumerCompletionLock.lock()
-                guard consumerDidComplete == false else {
-                    consumerCompletionLock.unlock()
-                    return
-                }
-                consumerDidComplete = true
-                consumerCompletionLock.unlock()
-                recordCompletion(result)
+                group.complete(at: index, with: result)
             }
         }
     }
@@ -588,53 +578,10 @@ public final class MediaConsumerChainNode: MediaOutputNode, MediaFrameConsumerNo
             return
         }
 
-        let lock = NSLock()
-        var remainingSinks = sinks.count
-        var capturedError: Error?
-        var didComplete = false
-
-        func finishIfNeeded() {
-            lock.lock()
-            guard !didComplete else {
-                lock.unlock()
-                return
-            }
-            let result: Result<Void, Error>
-            if let capturedError {
-                result = .failure(capturedError)
-            } else {
-                result = .success(())
-            }
-            didComplete = true
-            lock.unlock()
-            completion(result)
-        }
-
-        for sink in sinks {
-            let sinkCompletionLock = NSLock()
-            var sinkDidComplete = false
+        let group = MediaCompletionGroup(count: sinks.count, completion: completion)
+        for (index, sink) in sinks.enumerated() {
             sink.finish { result in
-                sinkCompletionLock.lock()
-                guard sinkDidComplete == false else {
-                    sinkCompletionLock.unlock()
-                    return
-                }
-                sinkDidComplete = true
-                sinkCompletionLock.unlock()
-
-                lock.lock()
-                if case .failure(let error) = result, capturedError == nil {
-                    capturedError = error
-                }
-                if remainingSinks > 0 {
-                    remainingSinks -= 1
-                }
-                let shouldComplete = remainingSinks == 0
-                lock.unlock()
-
-                if shouldComplete {
-                    finishIfNeeded()
-                }
+                group.complete(at: index, with: result)
             }
         }
     }

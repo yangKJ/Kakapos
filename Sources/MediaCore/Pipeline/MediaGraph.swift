@@ -15,7 +15,8 @@ public final class MediaGraphBranch {
     public var isEnabled: Bool
 
     private let stateQueue = DispatchQueue(label: "com.condy.kakapos.media-graph-branch.state")
-    private var branchNode: MediaGraphBranchNode?
+    // 图连接持有运行节点；分支仅缓存弱引用，避免节点与配置相互保留。
+    private weak var branchNode: MediaGraphBranchNode?
 
     public init(
         id: UUID = UUID(),
@@ -81,7 +82,8 @@ public final class MediaGraphBranch {
     }
 
     func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
-        materializeNode().consume(frame, from: materializeNode(), completion: completion)
+        let node = materializeNode()
+        node.consume(frame, from: node, completion: completion)
     }
 }
 
@@ -209,11 +211,13 @@ public final class MediaGraph {
     }
 
     private func rebuildConnections() {
-        sourceAdapter.removeAllConsumers()
-        branches.forEach { branch in
+        // 先保留原有节点，再断开连接，确保在途处理与取消状态跨重连保持不变。
+        let nodes = branches.map { branch in
             branch.attachErrorHandlerRecursively(branchErrorHandler)
-            sourceAdapter.add(consumer: branch.materializeNode(errorHandler: branchErrorHandler))
+            return branch.materializeNode(errorHandler: branchErrorHandler)
         }
+        sourceAdapter.removeAllConsumers()
+        nodes.forEach { sourceAdapter.add(consumer: $0) }
     }
 
     private var branchErrorHandler: ((Error) -> Void) {
@@ -299,47 +303,16 @@ public final class MediaGraph {
             return
         }
 
-        let lock = NSLock()
-        var remainingBranches = branches.count
-        var capturedError: Error?
-        var didComplete = false
-
-        func finishIfNeeded() {
-            lock.lock()
-            guard !didComplete else {
-                lock.unlock()
-                return
-            }
-            let result: Result<Void, Error>
-            if let capturedError {
-                result = .failure(capturedError)
-            } else {
-                result = .success(())
-            }
-            didComplete = true
-            lock.unlock()
+        let group = MediaCompletionGroup(count: branches.count) { result in
             if case .failure(let error) = result {
                 self.fail(with: error)
             } else {
                 self.completeSuccessfully()
             }
         }
-
-        for branch in branches {
+        for (index, branch) in branches.enumerated() {
             branch.finish { result in
-                lock.lock()
-                if case .failure(let error) = result, capturedError == nil {
-                    capturedError = error
-                }
-                if remainingBranches > 0 {
-                    remainingBranches -= 1
-                }
-                let shouldComplete = remainingBranches == 0
-                lock.unlock()
-
-                if shouldComplete {
-                    finishIfNeeded()
-                }
+                group.complete(at: index, with: result)
             }
         }
     }
@@ -387,9 +360,7 @@ final class MediaGraphBranchNode: MediaFrameConsumerNode, MediaFrameSourceNode {
         outputNode.add(consumer: chainNode)
 
         childNodes = branch.children.map { child in
-            let node = child.materializeNode(errorHandler: errorHandler)
-            node.rebuild()
-            return node
+            child.materializeNode(errorHandler: errorHandler)
         }
         childNodes.forEach { outputNode.add(consumer: $0) }
     }
@@ -445,59 +416,13 @@ final class MediaGraphBranchNode: MediaFrameConsumerNode, MediaFrameSourceNode {
             return
         }
 
-        let lock = NSLock()
-        var remainingChildren = childNodes.count + 1
-        var capturedError: Error?
-        var didComplete = false
-
-        func finishIfNeeded() {
-            lock.lock()
-            guard !didComplete else {
-                lock.unlock()
-                return
-            }
-            let result: Result<Void, Error>
-            if let capturedError {
-                result = .failure(capturedError)
-            } else {
-                result = .success(())
-            }
-            didComplete = true
-            lock.unlock()
-            completion(result)
-        }
-
+        let group = MediaCompletionGroup(count: childNodes.count + 1, completion: completion)
         chainNode.finish { result in
-            lock.lock()
-            if case .failure(let error) = result, capturedError == nil {
-                capturedError = error
-            }
-            if remainingChildren > 0 {
-                remainingChildren -= 1
-            }
-            let shouldComplete = remainingChildren == 0
-            lock.unlock()
-
-            if shouldComplete {
-                finishIfNeeded()
-            }
+            group.complete(at: 0, with: result)
         }
-
-        for child in childNodes {
+        for (index, child) in childNodes.enumerated() {
             child.finish { result in
-                lock.lock()
-                if case .failure(let error) = result, capturedError == nil {
-                    capturedError = error
-                }
-                if remainingChildren > 0 {
-                    remainingChildren -= 1
-                }
-                let shouldComplete = remainingChildren == 0
-                lock.unlock()
-
-                if shouldComplete {
-                    finishIfNeeded()
-                }
+                group.complete(at: index + 1, with: result)
             }
         }
     }

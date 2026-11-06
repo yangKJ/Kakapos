@@ -431,15 +431,15 @@ internal final class TimelineCompiler {
         let cutPoints = uniqueSortedTimes(activeLayers.flatMap { [$0.timeRange.start, $0.timeRange.end] })
         guard cutPoints.count >= 2 else { return [] }
 
+        // 切分点仍从原顺序产生，保留等值 CMTime 的原始 timescale；层级排序只做一次。
+        let orderedLayers = activeLayers.sorted { $0.layerLevel < $1.layerLevel }
         var instructions: [TimelineRenderInstruction] = []
 
         for index in 0..<(cutPoints.count - 1) {
             let start = cutPoints[index]
             let end = cutPoints[index + 1]
             let timeRange = CMTimeRange(start: start, end: end)
-            let intervalLayers = activeLayers
-                .filter { $0.timeRange.start < end && $0.timeRange.end > start }
-                .sorted { $0.layerLevel < $1.layerLevel }
+            let intervalLayers = orderedLayers.filter { $0.timeRange.start < end && $0.timeRange.end > start }
 
             guard !intervalLayers.isEmpty else { continue }
 
@@ -468,12 +468,18 @@ internal final class TimelineCompiler {
         videoLayers: [ClipLayer],
         allocation: [ObjectIdentifier: CMPersistentTrackID]
     ) -> [AVVideoCompositionInstructionProtocol] {
-        renderInstructions.compactMap { instruction in
+        let orderedVideoLayers = videoLayers.sorted { lhs, rhs in
+            if lhs.layerLevel == rhs.layerLevel {
+                return lhs.timeRange.start < rhs.timeRange.start
+            }
+            return lhs.layerLevel < rhs.layerLevel
+        }
+        return renderInstructions.compactMap { instruction in
             let mutableInstruction = AVMutableVideoCompositionInstruction()
             mutableInstruction.timeRange = instruction.timeRange
             let activeClipLayers = activeVideoLayerEntries(
                 for: instruction.timeRange,
-                from: videoLayers,
+                from: orderedVideoLayers,
                 allocation: allocation
             )
             let layerInstructions = instruction.sourceTrackIDs.compactMap { trackID -> AVMutableVideoCompositionLayerInstruction? in
@@ -507,18 +513,11 @@ internal final class TimelineCompiler {
 
     private func activeVideoLayerEntries(
         for timeRange: CMTimeRange,
-        from videoLayers: [ClipLayer],
+        from orderedVideoLayers: [ClipLayer],
         allocation: [ObjectIdentifier: CMPersistentTrackID]
     ) -> [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)] {
         var result: [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)] = [:]
-        let activeLayers = videoLayers
-            .filter { $0.timeRange.start < timeRange.end && $0.timeRange.end > timeRange.start }
-            .sorted { lhs, rhs in
-                if lhs.layerLevel == rhs.layerLevel {
-                    return lhs.timeRange.start < rhs.timeRange.start
-                }
-                return lhs.layerLevel < rhs.layerLevel
-            }
+        let activeLayers = orderedVideoLayers.filter { $0.timeRange.start < timeRange.end && $0.timeRange.end > timeRange.start }
 
         for layer in activeLayers {
             guard let trackID = allocation[ObjectIdentifier(layer)] else { continue }

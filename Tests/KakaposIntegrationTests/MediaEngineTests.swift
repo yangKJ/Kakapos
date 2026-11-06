@@ -534,8 +534,11 @@ final class MediaEngineTests: XCTestCase {
 
         pipeline.start()
 
-        let manifestReady = expectation(description: "manifest finished")
-        DispatchQueue.main.async { manifestReady.fulfill() }
+        let manifestReady = expectation(description: "管线完成后读取 manifest")
+        pipeline.stop { result in
+            if case .failure(let error) = result { XCTFail("管线收尾失败：\(error)") }
+            manifestReady.fulfill()
+        }
         wait(for: [manifestReady], timeout: 1)
 
         let encoder = JSONEncoder()
@@ -794,12 +797,9 @@ final class MediaEngineTests: XCTestCase {
         )
         let graph = MediaGraph(source: source, branches: [firstBranch, secondBranch])
 
+        let graphDelivery = expectation(description: "全部图分支完成")
+        graph.completionHandler = { graphDelivery.fulfill() }
         graph.start()
-        let graphReady = expectation(description: "graph ready")
-        DispatchQueue.main.async { graphReady.fulfill() }
-        wait(for: [graphReady], timeout: 1)
-        let graphDelivery = expectation(description: "graph delivery")
-        DispatchQueue.main.async { graphDelivery.fulfill() }
         wait(for: [graphDelivery], timeout: 1)
 
         XCTAssertEqual(firstSink.frames.first?.metadata.frameIndex, 11)
@@ -835,10 +835,9 @@ final class MediaEngineTests: XCTestCase {
         )
         let graph = MediaGraph(source: source, branches: [parentBranch])
 
+        let graphReady = expectation(description: "嵌套图处理完成")
+        graph.completionHandler = { graphReady.fulfill() }
         graph.start()
-
-        let graphReady = expectation(description: "nested graph ready")
-        DispatchQueue.main.async { graphReady.fulfill() }
         wait(for: [graphReady], timeout: 1)
 
         XCTAssertEqual(parentSink.frames.first?.metadata.frameIndex, 30)
@@ -4583,10 +4582,9 @@ final class MediaEngineTests: XCTestCase {
             )
         )
 
+        let graphDelivery = expectation(description: "重连图分支完成")
+        graph.completionHandler = { graphDelivery.fulfill() }
         graph.start()
-
-        let graphDelivery = expectation(description: "graph branches delivered")
-        DispatchQueue.main.async { graphDelivery.fulfill() }
         wait(for: [graphDelivery], timeout: 1)
 
         XCTAssertEqual(firstSink.frames.first?.metadata.frameIndex, 10)
