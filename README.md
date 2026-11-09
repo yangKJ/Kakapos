@@ -409,3 +409,10 @@ Kakapos is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE
 ### Photo preview resource options
 
 `CameraSourceConfiguration.discardsLateVideoFrames` opts a realtime preview into AVFoundation late-frame dropping. `CameraPhotoConfiguration.preparesMaximumDimensions` configures the active format's largest supported still-photo dimensions before session startup and after a device switch. Both options default to `false`. A capture request uses `maximumDimensions: true` to request that size. Its optional `videoOrientation` freezes the shutter orientation, and native photo requests honor the configured `photoQualityMode`. Processed Metal previews can use `MediaPipeline` with a custom `MediaSink`; the sink completes a frame after its GPU resources are no longer in use.
+
+
+### 原生照片的文件交付
+
+`CameraPhotoCaptureRequest.retainsEncodedData` 默认为 `true`，继续同时提供编码 Data 和已写入的文件 URL。需要文件流水线的消费者可显式设为 `false`：对应文件原子写入成功后释放编码 Data，完成条件接受文件资源；写入失败则保留字节供恢复，`captureFailure` 仍报告失败。消费者须在可靠入库后才删除捕获临时文件，不能将 nil Data 直接解释成照片丢失。
+
+2026-11-09：CameraEngine 聚焦测试 8 项通过；iOS 消费者构建覆盖文件请求与恢复分支。未执行原生拍照、镜头、权限或真实设备热量验收。

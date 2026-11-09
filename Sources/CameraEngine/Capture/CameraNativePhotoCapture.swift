@@ -24,15 +24,29 @@ public struct CameraPhotoCaptureRequest: Sendable {
     public let flashMode: AVCaptureDevice.FlashMode
     public let videoOrientation: AVCaptureVideoOrientation?
     public let suppressesShutterSound: Bool
+    /// 文件发布成功后是否同时保留编码 Data；默认兼容既有消费者，失败时始终保留可恢复数据。
+    public let retainsEncodedData: Bool
 
-    public init(id: UUID = UUID(), format: CameraPhotoResourceFormat = .heic,
-                maximumDimensions: Bool = false, includesLivePhoto: Bool = false,
-                outputDirectory: URL, flashMode: AVCaptureDevice.FlashMode = .off, videoOrientation: AVCaptureVideoOrientation? = nil, suppressesShutterSound: Bool = false) {
-        self.id = id; self.format = format; self.maximumDimensions = maximumDimensions
-        self.includesLivePhoto = includesLivePhoto; self.outputDirectory = outputDirectory
+    public init(
+        id: UUID = UUID(),
+        format: CameraPhotoResourceFormat = .heic,
+        maximumDimensions: Bool = false,
+        includesLivePhoto: Bool = false,
+        outputDirectory: URL,
+        flashMode: AVCaptureDevice.FlashMode = .off,
+        videoOrientation: AVCaptureVideoOrientation? = nil,
+        suppressesShutterSound: Bool = false,
+        retainsEncodedData: Bool = true
+    ) {
+        self.id = id
+        self.format = format
+        self.maximumDimensions = maximumDimensions
+        self.includesLivePhoto = includesLivePhoto
+        self.outputDirectory = outputDirectory
         self.flashMode = flashMode
         self.videoOrientation = videoOrientation
         self.suppressesShutterSound = suppressesShutterSound
+        self.retainsEncodedData = retainsEncodedData
     }
 }
 
@@ -70,6 +84,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
     private let outputDirectory: URL
     private let expectsRaw: Bool
     private let expectsLive: Bool
+    private let retainsEncodedData: Bool
     private let finish: @Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void
     private let lock = NSLock()
     private var processedData: Data?
@@ -89,6 +104,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
         outputDirectory = request.outputDirectory
         expectsRaw = request.format == .bayerRAW || request.format == .appleProRAW
         expectsLive = request.includesLivePhoto
+        retainsEncodedData = request.retainsEncodedData
         self.finish = finish
     }
 
@@ -109,7 +125,13 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
             let url = outputDirectory.appendingPathComponent(requestID.uuidString + suffix)
             try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
-            if photo.isRawPhoto { rawFileURL = url } else { processedFileURL = url }
+            if photo.isRawPhoto {
+                rawFileURL = url
+                if !retainsEncodedData { rawData = nil }
+            } else {
+                processedFileURL = url
+                if !retainsEncodedData { processedData = nil }
+            }
         } catch { failure = .captureFailed(error.localizedDescription) }
         metadata = photo.metadata
         let value = photo.isRawPhoto ? photo.resolvedSettings.rawPhotoDimensions : photo.resolvedSettings.photoDimensions
@@ -137,10 +159,12 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
         lock.lock()
         guard !completed else { lock.unlock(); return }
         completed = true
-        let missing = processedData == nil || (expectsRaw && rawData == nil) || (expectsLive && (movieURL == nil || keyTime == nil))
+        let missing = (processedData == nil && processedFileURL == nil)
+            || (expectsRaw && rawData == nil && rawFileURL == nil)
+            || (expectsLive && (movieURL == nil || keyTime == nil))
         let problem = error ?? failure ?? (missing ? .missingResource : nil)
         let result: Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>
-        if processedData != nil || rawData != nil || movieURL != nil {
+        if processedData != nil || rawData != nil || processedFileURL != nil || rawFileURL != nil || movieURL != nil {
             result = .success(CameraPhotoCaptureArtifact(requestID: requestID,
                 processedData: processedData, rawData: rawData, processedFileURL: processedFileURL, rawFileURL: rawFileURL, livePhotoMovieURL: movieURL,
                 livePhotoKeyTime: keyTime, metadata: metadata, dimensions: dimensions, captureFailure: problem))

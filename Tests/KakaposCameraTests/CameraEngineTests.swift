@@ -54,6 +54,9 @@ final class CameraEngineTests: XCTestCase {
         #if os(iOS)
         let request = CameraPhotoCaptureRequest(outputDirectory: FileManager.default.temporaryDirectory, videoOrientation: .landscapeLeft)
         XCTAssertEqual(request.videoOrientation, .landscapeLeft)
+        XCTAssertTrue(request.retainsEncodedData)
+        let fileRequest = CameraPhotoCaptureRequest(outputDirectory: FileManager.default.temporaryDirectory, retainsEncodedData: false)
+        XCTAssertFalse(fileRequest.retainsEncodedData)
         #endif
         XCTAssertFalse(defaults.discardsLateVideoFrames)
         XCTAssertFalse(defaults.photo.preparesMaximumDimensions)

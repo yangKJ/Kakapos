@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### 2026-11-09
+
+#### Added
+
+- 原生照片请求增加 `retainsEncodedData`，文件发布成功后可只交付 URL；默认继续同时交付 Data，落盘失败时保留编码字节供消费者恢复。
+
 ### 2026-11-06
 
 #### Changed
