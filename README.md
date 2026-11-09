@@ -416,3 +416,12 @@ Kakapos is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE
 `CameraPhotoCaptureRequest.retainsEncodedData` 默认为 `true`，继续同时提供编码 Data 和已写入的文件 URL。需要文件流水线的消费者可显式设为 `false`：对应文件原子写入成功后释放编码 Data，完成条件接受文件资源；写入失败则保留字节供恢复，`captureFailure` 仍报告失败。消费者须在可靠入库后才删除捕获临时文件，不能将 nil Data 直接解释成照片丢失。
 
 2026-11-09：CameraEngine 聚焦测试 8 项通过；iOS 消费者构建覆盖文件请求与恢复分支。未执行原生拍照、镜头、权限或真实设备热量验收。
+
+
+### 串行变焦与系统调焦
+
+`CameraSource.updateZoomFactor(_:rampRate:)` 在相机会话队列执行。nil rate 立即设置，正 rate 启动原生变焦并返回当前实际快照。新请求可替代排队请求，调用者用 `setZoomInteractionEnabled(false)` 停止并冻结当前倍率，再构造原生照片取景快照。停止、切镜会撤销旧请求。
+
+`observeAppliedZoom` 返回设备实际倍率、是否来自系统控件、是否为结束状态。观察只用于状态投影。`configureSystemZoomControl(range:title:)` 由消费者显式安装，支持平台先检查能力和控件代理。标题由消费者提供本地化文本。系统控件遵循同一交互启用态和设备队列。
+
+`setNativePreviewEnabled` 默认启用视频流。关闭操作保留原生图层与连接，可用于对照坐标转换和资源开销。对焦与性能效果由消费者真机验收确认。

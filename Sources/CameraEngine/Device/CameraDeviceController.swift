@@ -147,6 +147,17 @@ public final class CameraDeviceController {
         }
     }
 
+    /// 取消后固定到读到的实际倍率，避免缓出继续改变拍摄构图。
+    @discardableResult
+    public func stopZoomRamp() throws -> CameraDeviceSnapshot {
+        try withLockedDevice(operation: "stop zoom ramp") { device in
+            let actual = device.videoZoomFactor
+            device.cancelVideoZoomRamp()
+            device.videoZoomFactor = actual
+            emit(.zoomFactorChanged(actual))
+        }
+    }
+
     @discardableResult
     public func setFocusPoint(_ point: CGPoint, mode: CameraFocusMode? = nil) throws -> CameraDeviceSnapshot {
         focusPoint = point

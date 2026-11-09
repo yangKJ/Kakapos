@@ -8,6 +8,24 @@ import AVFoundation
 
 final class CameraEngineTests: XCTestCase {
 
+    func testZoomGateCoalescesRequestsAndStopInvalidatesPendingWork() throws {
+        let gate = CameraZoomRequestGate()
+        let old = try XCTUnwrap(gate.issue())
+        let latest = try XCTUnwrap(gate.issue())
+        XCTAssertFalse(gate.accepts(old))
+        XCTAssertTrue(gate.accepts(latest))
+        let stop = gate.setEnabled(false)
+        XCTAssertFalse(gate.isEnabled)
+        XCTAssertNil(gate.issue())
+        XCTAssertFalse(gate.accepts(latest))
+        XCTAssertTrue(gate.accepts(stop, requiresEnabled: false))
+        _ = gate.setEnabled(true)
+        XCTAssertFalse(gate.accepts(stop, requiresEnabled: false))
+        XCTAssertTrue(gate.isEnabled)
+        XCTAssertNotNil(gate.issue())
+        XCTAssertGreaterThan(gate.discardedCount, 0)
+    }
+
     func testCameraFrameIngressGateBoundsFramesBeforeAsyncDelivery() throws {
         let gate = CameraFrameIngressGate(maximumInFlightFrameCount: 2, maximumInFlightAudioFrameCount: 12)
         gate.reset()

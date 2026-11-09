@@ -286,6 +286,10 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         frameIngressGate.snapshot
     }
 
+    private let zoomRequestGate = CameraZoomRequestGate()
+    private var zoomController: CameraZoomController?
+    private var nativePreviewEnabled = true
+
     private let sessionQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.session")
     private let sessionQueueKey = DispatchSpecificKey<Void>()
     /// 视频与音频统一进入同一个 owner，保证 frameIndex 与最近帧元数据严格有序。
@@ -450,6 +454,86 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
     }
 
+    public var discardedZoomRequestCount: Int { zoomRequestGate.discardedCount }
+
+    /// 异步变焦请求在会话串行域执行，排队期间被新请求替代时返回取消。
+    public func updateZoomFactor(_ factor: CGFloat, rampRate: Float? = nil) async throws -> CameraDeviceSnapshot {
+        guard factor.isFinite, factor >= 1 else { throw CameraDeviceControlError.invalidZoomFactor(factor) }
+        guard let revision = zoomRequestGate.issue() else { throw CancellationError() }
+        return try await withCheckedThrowingContinuation { continuation in
+            sessionQueue.async {
+                guard self.zoomRequestGate.accepts(revision) else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                do { continuation.resume(returning: try self.resolvedZoomController().update(factor, rampRate: rampRate)) }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    /// 关闭时先拒绝旧请求，再在同一队列内停止并冻结实际倍率。
+    public func setZoomInteractionEnabled(_ enabled: Bool) async throws -> CameraDeviceSnapshot {
+        let revision = zoomRequestGate.setEnabled(enabled)
+        return try await withCheckedThrowingContinuation { continuation in
+            sessionQueue.async {
+                guard self.zoomRequestGate.accepts(revision, requiresEnabled: false) else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                let controller = self.resolvedZoomController()
+                controller.observe()
+                controller.setSystemInteractionEnabled(enabled)
+                if enabled {
+                    guard self.videoInput != nil else {
+                        continuation.resume(throwing: CameraDeviceControlError.deviceUnavailable)
+                        return
+                    }
+                    controller.publish(system: false, force: true)
+                    continuation.resume(returning: self.deviceController.snapshot)
+                } else {
+                    do { continuation.resume(returning: try controller.freeze()) }
+                    catch { continuation.resume(throwing: error) }
+                }
+            }
+        }
+    }
+
+    public func observeAppliedZoom(_ handler: @escaping @Sendable (_ factor: CGFloat, _ isSystemControl: Bool, _ isFinal: Bool) -> Void) {
+        sessionQueue.async {
+            let controller = self.resolvedZoomController()
+            controller.onApplied = handler
+            controller.observe()
+            controller.publish(system: false, force: true)
+        }
+    }
+
+    /// range 为 nil 时撤下本源创建的控件，既有消费者默认没有系统调焦控件。
+    public func configureSystemZoomControl(range: ClosedRange<CGFloat>?, title: String = "Zoom") {
+        sessionQueue.async { self.resolvedZoomController().configureSystemControl(range: range, title: title) }
+    }
+
+    /// 只控制视频流，图层和连接继续用于坐标换算。默认开启。
+    public func setNativePreviewEnabled(_ enabled: Bool) {
+        sessionQueue.async {
+            self.nativePreviewEnabled = enabled
+            self.previewLayer.connection?.isEnabled = enabled
+        }
+    }
+
+    private func resolvedZoomController() -> CameraZoomController {
+        if let zoomController { return zoomController }
+        let controller = CameraZoomController(
+            queue: sessionQueue,
+            session: session,
+            device: { [weak self] in self?.videoInput?.device },
+            controls: deviceController,
+            gate: zoomRequestGate
+        )
+        zoomController = controller
+        return controller
+    }
+
     public func pause() {
         isPaused = true
         publish(.pauseRequested)
@@ -461,10 +545,12 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     public func stop() {
+        _ = zoomRequestGate.setEnabled(false)
         guard let terminalGeneration = beginTerminalIfNeeded() else { return }
         let terminalDelegates = CameraCallbackTransfer(mediaSourceDelegatesSnapshot())
         waitForActiveFrameDeliveries()
         sessionQueue.async {
+            self.zoomController?.invalidate()
             self.lastVideoSampleBuffer = nil
             self.lastVideoPixelBuffer = nil
             if self.session.isRunning {
@@ -493,11 +579,14 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     public func switchCameraPosition(to position: CameraPosition) -> Bool {
         guard position != .unspecified else { return false }
         guard findVideoDevice(position: position) != nil else { return false }
+        _ = zoomRequestGate.setEnabled(false)
         publish(.positionSwitchRequested(position))
         sessionQueue.async {
+            self.zoomController?.invalidate()
             do {
                 try self.replaceVideoInput(position: position)
                 self.applyMirroring(for: position)
+                self.previewLayer.connection?.isEnabled = self.nativePreviewEnabled
                 self.publish(.positionChanged(position))
             } catch {
                 self.publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
@@ -1258,6 +1347,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func applyCurrentConnections() {
+        previewLayer.connection?.isEnabled = nativePreviewEnabled
         if let previewConnection = previewLayer.connection, previewConnection.isVideoOrientationSupported {
             previewConnection.videoOrientation = currentOrientation
         }
