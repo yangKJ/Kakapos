@@ -49,6 +49,25 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertEqual(gate.snapshot.droppedFrameCount, 0)
     }
 
+    func testPhotoPreviewResourceOptionsAreExplicit() {
+        let defaults = CameraSourceConfiguration()
+        #if os(iOS)
+        let request = CameraPhotoCaptureRequest(outputDirectory: FileManager.default.temporaryDirectory, videoOrientation: .landscapeLeft)
+        XCTAssertEqual(request.videoOrientation, .landscapeLeft)
+        #endif
+        XCTAssertFalse(defaults.discardsLateVideoFrames)
+        XCTAssertFalse(defaults.photo.preparesMaximumDimensions)
+        let preview = CameraSourceConfiguration(
+            captureMode: .photo,
+            discardsLateVideoFrames: true,
+            maximumInFlightFrameCount: 2,
+            photo: CameraPhotoConfiguration(preparesMaximumDimensions: true)
+        )
+        XCTAssertTrue(preview.discardsLateVideoFrames)
+        XCTAssertTrue(preview.photo.preparesMaximumDimensions)
+        XCTAssertEqual(preview.maximumInFlightFrameCount, 2)
+    }
+
     func testCameraSourceConfigurationClampsIngressCapacity() {
         XCTAssertEqual(CameraSourceConfiguration(maximumInFlightFrameCount: 0).maximumInFlightFrameCount, 1)
         XCTAssertEqual(CameraSourceConfiguration(maximumInFlightFrameCount: 9).maximumInFlightFrameCount, 9)

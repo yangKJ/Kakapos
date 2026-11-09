@@ -22,14 +22,16 @@ public struct CameraPhotoCaptureRequest: Sendable {
     public let includesLivePhoto: Bool
     public let outputDirectory: URL
     public let flashMode: AVCaptureDevice.FlashMode
+    public let videoOrientation: AVCaptureVideoOrientation?
     public let suppressesShutterSound: Bool
 
     public init(id: UUID = UUID(), format: CameraPhotoResourceFormat = .heic,
                 maximumDimensions: Bool = false, includesLivePhoto: Bool = false,
-                outputDirectory: URL, flashMode: AVCaptureDevice.FlashMode = .off, suppressesShutterSound: Bool = false) {
+                outputDirectory: URL, flashMode: AVCaptureDevice.FlashMode = .off, videoOrientation: AVCaptureVideoOrientation? = nil, suppressesShutterSound: Bool = false) {
         self.id = id; self.format = format; self.maximumDimensions = maximumDimensions
         self.includesLivePhoto = includesLivePhoto; self.outputDirectory = outputDirectory
         self.flashMode = flashMode
+        self.videoOrientation = videoOrientation
         self.suppressesShutterSound = suppressesShutterSound
     }
 }

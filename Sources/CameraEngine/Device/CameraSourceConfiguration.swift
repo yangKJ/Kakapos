@@ -275,6 +275,8 @@ public struct CameraPhotoConfiguration: Equatable, Sendable {
     public var flashMode: AVCaptureDevice.FlashMode
     public var isHighResolutionEnabled: Bool
     public var generateThumbnail: Bool
+    /// 在启动会话和切换设备时准备最大照片尺寸，避免首拍重新配置。
+    public var preparesMaximumDimensions: Bool
     public var photoQualityMode: CameraPhotoQualityMode
     public var deliversDepthData: Bool
     public var deliversPortraitEffectsMatte: Bool
@@ -284,6 +286,7 @@ public struct CameraPhotoConfiguration: Equatable, Sendable {
         flashMode: AVCaptureDevice.FlashMode = .off,
         isHighResolutionEnabled: Bool = true,
         generateThumbnail: Bool = true,
+        preparesMaximumDimensions: Bool = false,
         photoQualityMode: CameraPhotoQualityMode = .balanced,
         deliversDepthData: Bool = false,
         deliversPortraitEffectsMatte: Bool = false
@@ -292,6 +295,7 @@ public struct CameraPhotoConfiguration: Equatable, Sendable {
         self.flashMode = flashMode
         self.isHighResolutionEnabled = isHighResolutionEnabled
         self.generateThumbnail = generateThumbnail
+        self.preparesMaximumDimensions = preparesMaximumDimensions
         self.photoQualityMode = photoQualityMode
         self.deliversDepthData = deliversDepthData
         self.deliversPortraitEffectsMatte = deliversPortraitEffectsMatte
@@ -394,6 +398,8 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
     public var previewGravity: AVLayerVideoGravity
     /// Camera ingress 在创建任何异步帧投递前允许的最大在途帧数。
     /// 超出容量的新帧会被丢弃，并记录到 `CameraFrameIngressSnapshot`。
+    /// 实时预览可显式丢弃迟到帧，默认继续保留原有交付策略。
+    public var discardsLateVideoFrames: Bool
     public var maximumInFlightFrameCount: Int
     public var video: CameraVideoConfiguration
     public var audio: CameraAudioConfiguration
@@ -414,6 +420,7 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
         subjectAreaMonitoringEnabled: Bool = true,
         automaticallyRequestsAuthorization: Bool = false,
         previewGravity: AVLayerVideoGravity = .resizeAspectFill,
+        discardsLateVideoFrames: Bool = false,
         maximumInFlightFrameCount: Int = 6,
         video: CameraVideoConfiguration = CameraVideoConfiguration(),
         audio: CameraAudioConfiguration = CameraAudioConfiguration(),
@@ -433,6 +440,7 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
         self.subjectAreaMonitoringEnabled = subjectAreaMonitoringEnabled
         self.automaticallyRequestsAuthorization = automaticallyRequestsAuthorization
         self.previewGravity = previewGravity
+        self.discardsLateVideoFrames = discardsLateVideoFrames
         self.maximumInFlightFrameCount = max(1, maximumInFlightFrameCount)
         self.video = video
         self.audio = audio

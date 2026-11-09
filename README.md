@@ -405,3 +405,7 @@ Alipay or WeChat. Thanks.
 Kakapos is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE) file for more info.
 
 -----
+
+### Photo preview resource options
+
+`CameraSourceConfiguration.discardsLateVideoFrames` opts a realtime preview into AVFoundation late-frame dropping. `CameraPhotoConfiguration.preparesMaximumDimensions` configures the active format's largest supported still-photo dimensions before session startup and after a device switch. Both options default to `false`. A capture request uses `maximumDimensions: true` to request that size. Its optional `videoOrientation` freezes the shutter orientation, and native photo requests honor the configured `photoQualityMode`. Processed Metal previews can use `MediaPipeline` with a custom `MediaSink`; the sink completes a frame after its GPU resources are no longer in use.

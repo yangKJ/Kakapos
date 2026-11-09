@@ -638,7 +638,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                     // 原生照片输出独立于预览连接；界面锁定方向时仍按当前握持方向保存。
                     if let connection = self.photoOutput.connection(with: .video) {
                         if connection.isVideoOrientationSupported {
-                            connection.videoOrientation = self.currentOrientation
+                            connection.videoOrientation = request.videoOrientation ?? self.currentOrientation
                         }
                         if connection.isVideoMirroringSupported {
                             connection.automaticallyAdjustsVideoMirroring = false
@@ -893,7 +893,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func configureVideoOutput() throws {
-        videoOutput.alwaysDiscardsLateVideoFrames = false
+        videoOutput.alwaysDiscardsLateVideoFrames = configuration.discardsLateVideoFrames
         videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
         videoOutput.setSampleBufferDelegate(self, queue: mediaOutputQueue)
         guard session.canAddOutput(videoOutput) else {
@@ -917,6 +917,10 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
         session.addOutput(photoOutput)
         photoOutput.isHighResolutionCaptureEnabled = configuration.photo.isHighResolutionEnabled
+        prepareMaximumPhotoDimensions()
+        if #available(iOS 13.0, *) {
+            photoOutput.maxPhotoQualityPrioritization = configuration.photo.photoQualityMode.avFoundationValue
+        }
         if #available(iOS 11.0, *) {
             if photoOutput.isDepthDataDeliverySupported {
                 photoOutput.isDepthDataDeliveryEnabled = configuration.photo.deliversDepthData || configuration.advanced.enablesDepthData
@@ -983,8 +987,21 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         return false
     }
 
+    private func prepareMaximumPhotoDimensions() {
+        guard configuration.photo.preparesMaximumDimensions else { return }
+        if #available(iOS 16.0, *),
+           let maximum = videoInput?.device.activeFormat.supportedMaxPhotoDimensions.max(by: {
+               Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+           }) {
+            if photoOutput.maxPhotoDimensions.width != maximum.width || photoOutput.maxPhotoDimensions.height != maximum.height {
+                photoOutput.maxPhotoDimensions = maximum
+            }
+        }
+    }
+
     private func applyInitialDeviceConfigurationIfNeeded() {
         guard let device = videoInput?.device else { return }
+        prepareMaximumPhotoDimensions()
         do {
             try device.lockForConfiguration()
         } catch {
@@ -1006,7 +1023,10 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         device.isSubjectAreaChangeMonitoringEnabled = configuration.device.subjectAreaMonitoringEnabled
         let zoomFactor = min(max(configuration.device.initialZoomFactor, 1), device.activeFormat.videoMaxZoomFactor)
         device.videoZoomFactor = zoomFactor
-        if let range = configuration.video.preferredFrameRateRange {
+        if let range = configuration.video.preferredFrameRateRange,
+           device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
+               $0.minFrameRate <= range.minimumFramesPerSecond && $0.maxFrameRate >= range.maximumFramesPerSecond
+           }) {
             let minDuration = range.maximumFramesPerSecond > 0 ? CMTime(seconds: 1 / range.maximumFramesPerSecond, preferredTimescale: 600) : .invalid
             let maxDuration = range.minimumFramesPerSecond > 0 ? CMTime(seconds: 1 / range.minimumFramesPerSecond, preferredTimescale: 600) : .invalid
             if minDuration.isValid, maxDuration.isValid {
