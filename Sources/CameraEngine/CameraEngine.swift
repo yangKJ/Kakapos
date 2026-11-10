@@ -36,8 +36,14 @@ public final class CameraEngine {
     public let audioSessionController: CameraAudioSessionController
     public private(set) var previewController: CameraPreviewController?
     public private(set) var recordingController: CameraRecordingController?
-    public private(set) var recentEvents: [String] = []
+    public var recentEvents: [String] {
+        recentEventsLock.lock()
+        defer { recentEventsLock.unlock() }
+        return storedRecentEvents
+    }
 
+    private let recentEventsLock = NSLock()
+    private var storedRecentEvents: [String] = []
     private var recordingEventObserver: UUID?
     private var previewRecipe: PreviewRecipe?
 
@@ -419,9 +425,11 @@ public final class CameraEngine {
     }
 
     private func appendEvent(_ event: String) {
-        recentEvents.append(event)
-        if recentEvents.count > 20 {
-            recentEvents.removeFirst(recentEvents.count - 20)
+        recentEventsLock.lock()
+        defer { recentEventsLock.unlock() }
+        storedRecentEvents.append(event)
+        if storedRecentEvents.count > 20 {
+            storedRecentEvents.removeFirst(storedRecentEvents.count - 20)
         }
     }
 }

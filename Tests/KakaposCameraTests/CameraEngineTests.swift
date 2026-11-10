@@ -472,6 +472,22 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertEqual(diagnostics.capabilityGateStatuses[.metadataObjects], engine.capabilitySnapshot.supportsMetadataObjects)
     }
 
+    func testCameraEngineRecentEventsRemainBoundedWithConcurrentCallbacks() throws {
+        nonisolated(unsafe) let engine = try CameraEngine(
+            configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
+        )
+
+        DispatchQueue.concurrentPerform(iterations: 4) { _ in
+            for _ in 0..<500 {
+                engine.deviceController.notifySubjectAreaChanged()
+                _ = engine.recentEvents.count
+            }
+        }
+
+        XCTAssertEqual(engine.recentEvents.count, 20)
+        XCTAssertEqual(engine.diagnosticsSnapshot.recentEvents, engine.recentEvents)
+    }
+
     func testCameraEngineDiagnosticsDoNotOverrideExternalSourceHandlers() throws {
         let engine = try CameraEngine(
             configuration: CameraCaptureConfiguration(captureMode: .videoWithoutAudio)
