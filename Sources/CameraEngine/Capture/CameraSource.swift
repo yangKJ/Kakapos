@@ -118,6 +118,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         public static let sessionState = "kakapos.camera.session-state"
         public static let deviceOrientation = "kakapos.camera.device-orientation"
         public static let mirrored = "kakapos.camera.mirrored"
+        public static let hardwareObservation = "kakapos.camera.hardware-observation"
         public static let captureKind = "kakapos.camera.capture-kind"
         public static let depthDelivered = "kakapos.camera.depth-delivered"
         public static let portraitEffectsMatteDelivered = "kakapos.camera.portrait-matte-delivered"
@@ -329,6 +330,10 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
     private var isSessionConfigured = false
+    private let hardwareObservationLock = NSLock()
+    private var cachedHardwareObservation: CameraHardwareObservation?
+    private var hardwareObservationRequestedAt: Double = 0
+    private var hardwareObservationEpoch = UUID()
     private let lastVideoFrameLock = NSLock()
     private var lastVideoSampleBuffer: CMSampleBuffer?
     private var shouldResumeAfterInterruption = false
@@ -724,7 +729,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                         settings.livePhotoMovieFileURL = request.outputDirectory.appendingPathComponent(request.id.uuidString + ".mov")
                     }
                     let uniqueID = settings.uniqueID
-                    let delegate = NativePhotoRequestDelegate(request: request) { result in
+                    let delegate = NativePhotoRequestDelegate(request: request, hardwareObservation: self.deviceController.hardwareObservation(at: .photoRequest)) { result in
                         self.sessionQueue.async { self.nativePhotoRequests.removeValue(forKey: uniqueID) }
                         continuation.resume(with: result.mapError { $0 as Error })
                     }
@@ -748,7 +753,33 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
     }
 
+    private func previewHardwareObservation() -> CameraHardwareObservation? {
+        let now = ProcessInfo.processInfo.systemUptime
+        hardwareObservationLock.lock()
+        let cached = cachedHardwareObservation.flatMap { now - $0.hostTimeSeconds <= 1 ? $0 : nil }
+        let shouldRequest = now - hardwareObservationRequestedAt >= 0.25
+        let epoch = hardwareObservationEpoch
+        if shouldRequest { hardwareObservationRequestedAt = now }
+        hardwareObservationLock.unlock()
+        if shouldRequest {
+            sessionQueue.async {
+                let observation = self.deviceController.hardwareObservation(at: .preview)
+                self.hardwareObservationLock.lock()
+                if self.hardwareObservationEpoch == epoch { self.cachedHardwareObservation = observation }
+                self.hardwareObservationLock.unlock()
+            }
+        }
+        return cached
+    }
+
     private func setLastVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer?) {
+        if sampleBuffer == nil {
+            hardwareObservationLock.lock()
+            cachedHardwareObservation = nil
+            hardwareObservationRequestedAt = 0
+            hardwareObservationEpoch = UUID()
+            hardwareObservationLock.unlock()
+        }
         lastVideoFrameLock.lock()
         lastVideoSampleBuffer = sampleBuffer
         lastVideoFrameLock.unlock()
@@ -1212,6 +1243,10 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         if mediaType == .video {
             setLastVideoSampleBuffer(sampleBuffer)
         }
+        var captureInfo: [String: Any] = [:]
+        if mediaType == .video, let observation = previewHardwareObservation() {
+            captureInfo[MetadataKey.hardwareObservation] = observation
+        }
         let frame = SampleBufferFrame(
             sampleBuffer: sampleBuffer,
             metadata: FrameMetadata(
@@ -1226,7 +1261,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                     MetadataKey.deviceOrientation: String(describing: currentOrientation),
                     MetadataKey.mirrored: configuration.effectiveMirroringValue(for: currentPosition),
                     MetadataKey.captureKind: mediaType == .video ? "video" : "audio"
-                ]
+                ].merging(captureInfo) { _, new in new }
             )
         )
         let mediaKind: CameraFrameIngressMediaKind = mediaType == .video ? .video : .audio

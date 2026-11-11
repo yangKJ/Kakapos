@@ -123,6 +123,18 @@ public final class CameraDeviceController {
         )
     }
 
+    func hardwareObservation(at point: CameraHardwareObservation.Point) -> CameraHardwareObservation? {
+        guard let device = deviceProvider() else { return nil }
+        let gains = device.deviceWhiteBalanceGains
+        let white = device.temperatureAndTintValues(for: gains)
+        return CameraHardwareObservation(point: point, hostTimeSeconds: ProcessInfo.processInfo.systemUptime,
+            iso: Double(device.iso), minimumISO: Double(device.activeFormat.minISO),
+            exposureSeconds: device.exposureDuration.seconds, exposureBiasEV: Double(device.exposureTargetBias),
+            fNumber: Double(device.lensAperture), temperatureKelvin: Double(white.temperature), tint: Double(white.tint),
+            whiteBalanceGains: [Double(gains.redGain), Double(gains.greenGain), Double(gains.blueGain)],
+            whiteBalanceIsManual: device.whiteBalanceMode == .locked, torchActive: device.isTorchActive)
+    }
+
     @discardableResult
     public func setZoomFactor(_ zoomFactor: CGFloat) throws -> CameraDeviceSnapshot {
         guard zoomFactor >= 1 else {

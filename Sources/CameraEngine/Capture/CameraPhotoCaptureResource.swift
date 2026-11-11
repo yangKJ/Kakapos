@@ -20,6 +20,7 @@ public struct CameraPhotoCaptureFacts: Codable, Equatable, Sendable {
         case resolvedSettings = "resolved-photo-settings"
     }
 
+    public let hardwareObservation: CameraHardwareObservation?
     public let iso: Double?
     public let exposureDurationSeconds: Double?
     public let exposureBiasEV: Double?
@@ -53,8 +54,10 @@ public struct CameraPhotoCaptureFacts: Codable, Equatable, Sendable {
         metadata: [String: Any],
         requestedFlashMode: Int? = nil,
         resolvedFlashEnabled: Bool? = nil,
-        photoTimestampSeconds: Double? = nil
+        photoTimestampSeconds: Double? = nil,
+        hardwareObservation: CameraHardwareObservation? = nil
     ) {
+        self.hardwareObservation = hardwareObservation
         let exif = metadata[kCGImagePropertyExifDictionary as String] as? [String: Any] ?? [:]
         let tiff = metadata[kCGImagePropertyTIFFDictionary as String] as? [String: Any] ?? [:]
         func number(_ key: CFString) -> Double? {
@@ -129,7 +132,8 @@ public struct CameraPhotoCaptureResource: @unchecked Sendable {
         isRaw: Bool = false,
         requestedFlashMode: Int? = nil,
         resolvedFlashEnabled: Bool? = nil,
-        photoTimestampSeconds: Double? = nil
+        photoTimestampSeconds: Double? = nil,
+        hardwareObservation: CameraHardwareObservation? = nil
     ) throws {
         guard let source = CGImageSourceCreateWithData(encodedData as CFData, nil),
               let type = CGImageSourceGetType(source),
@@ -148,7 +152,7 @@ public struct CameraPhotoCaptureResource: @unchecked Sendable {
         self.origin = origin
         self.isRaw = isRaw
         facts = CameraPhotoCaptureFacts(metadata: metadata, requestedFlashMode: requestedFlashMode,
-            resolvedFlashEnabled: resolvedFlashEnabled, photoTimestampSeconds: photoTimestampSeconds)
+            resolvedFlashEnabled: resolvedFlashEnabled, photoTimestampSeconds: photoTimestampSeconds, hardwareObservation: hardwareObservation)
     }
 
     /// 只由采集器在原子写入成功后发布文件，失败时原始字节仍可恢复。
@@ -156,4 +160,21 @@ public struct CameraPhotoCaptureResource: @unchecked Sendable {
         fileURL = url
         if !retainingData { data = nil }
     }
+}
+
+/// 设备属性观测不等于逐帧传感器EXIF；采样点和宿主时刻随值交付。
+public struct CameraHardwareObservation: Codable, Equatable, Sendable {
+    public enum Point: String, Codable, Sendable { case preview, photoRequest }
+    public let point: Point
+    public let hostTimeSeconds: Double
+    public let iso: Double
+    public let minimumISO: Double
+    public let exposureSeconds: Double
+    public let exposureBiasEV: Double
+    public let fNumber: Double
+    public let temperatureKelvin: Double
+    public let tint: Double
+    public let whiteBalanceGains: [Double]
+    public let whiteBalanceIsManual: Bool
+    public let torchActive: Bool
 }

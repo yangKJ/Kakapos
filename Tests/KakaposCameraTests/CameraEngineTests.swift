@@ -8,6 +8,26 @@ import ImageIO
 @testable import KakaposCamera
 
 final class CameraEngineTests: XCTestCase {
+    func testPhotoHardwareObservationKeepsRequestAndExifFactsSeparate() throws {
+        let observation = CameraHardwareObservation(point: .photoRequest, hostTimeSeconds: 123,
+            iso: 100, minimumISO: 50, exposureSeconds: 0.02, exposureBiasEV: 1, fNumber: 1.8,
+            temperatureKelvin: 3200, tint: 5, whiteBalanceGains: [2, 1, 1.5],
+            whiteBalanceIsManual: false, torchActive: false)
+        let facts = CameraPhotoCaptureFacts(metadata: [kCGImagePropertyExifDictionary as String: [
+            kCGImagePropertyExifISOSpeedRatings as String: [800],
+            kCGImagePropertyExifExposureTime as String: 0.01,
+        ]], hardwareObservation: observation)
+        XCTAssertEqual(facts.iso, 800)
+        XCTAssertEqual(facts.exposureDurationSeconds, 0.01)
+        XCTAssertEqual(facts.hardwareObservation?.iso, 100)
+        XCTAssertEqual(facts.hardwareObservation?.point, .photoRequest)
+        XCTAssertEqual(facts.hardwareObservation?.hostTimeSeconds, 123)
+        XCTAssertNil(facts.flashFired)
+        XCTAssertEqual(try JSONDecoder().decode(CameraPhotoCaptureFacts.self, from: JSONEncoder().encode(facts)), facts)
+        let old = try JSONDecoder().decode(CameraPhotoCaptureFacts.self, from: Data("{}".utf8))
+        XCTAssertNil(old.hardwareObservation)
+    }
+
     func testPhotoFactsKeepExifAndResolvedFlashSeparate() throws {
         let metadata: [String: Any] = [kCGImagePropertyExifDictionary as String: [
             kCGImagePropertyExifISOSpeedRatings as String: [400],

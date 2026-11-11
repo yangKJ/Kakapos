@@ -76,6 +76,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
     private let expectsLive: Bool
     private let retainsEncodedData: Bool
     private let requestedFlashMode: Int
+    private let hardwareObservation: CameraHardwareObservation?
     private let finish: @Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void
     private let lock = NSLock()
     private var processedPhoto: CameraPhotoCaptureResource?
@@ -85,8 +86,9 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
     private var failure: CameraPhotoCaptureError?
     private var completed = false
 
-    init(request: CameraPhotoCaptureRequest,
+    init(request: CameraPhotoCaptureRequest, hardwareObservation: CameraHardwareObservation?,
          finish: @escaping @Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void) {
+        self.hardwareObservation = hardwareObservation
         requestID = request.id
         outputDirectory = request.outputDirectory
         expectsRaw = request.format == .bayerRAW || request.format == .appleProRAW
@@ -110,7 +112,8 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
                 isRaw: photo.isRawPhoto,
                 requestedFlashMode: requestedFlashMode,
                 resolvedFlashEnabled: photo.resolvedSettings.isFlashEnabled,
-                photoTimestampSeconds: photo.timestamp.seconds
+                photoTimestampSeconds: photo.timestamp.seconds,
+                hardwareObservation: hardwareObservation
             )
         } catch { failure = .missingResource; return }
         do {
