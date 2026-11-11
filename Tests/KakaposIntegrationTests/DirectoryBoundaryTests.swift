@@ -15,12 +15,12 @@ final class DirectoryBoundaryTests: XCTestCase {
             return values.isDirectory == true ? url.lastPathComponent : nil
         }.sorted()
 
-        XCTAssertEqual(topLevelDirectories, ["CameraEngine", "Core", "MediaCore", "TimelineEngine", "VideoEngine"])
+        XCTAssertEqual(topLevelDirectories, ["CameraEngine", "MediaCore", "TimelineEngine", "Umbrella", "VideoEngine"])
     }
 
     func testLegacyTopLevelDirectoriesDoNotReturn() {
         let sourceRoot = repositoryRoot().appendingPathComponent("Sources", isDirectory: true)
-        let legacyDirectories = ["Instructions", "Pipeline", "Processing", "RealtimeCore", "Setup", "Timeline"]
+        let legacyDirectories = ["Core", "Instructions", "Pipeline", "Processing", "RealtimeCore", "Setup", "Timeline"]
 
         for directory in legacyDirectories {
             XCTAssertFalse(
@@ -33,7 +33,7 @@ final class DirectoryBoundaryTests: XCTestCase {
     func testEngineBoundaryOwnsKnownSourceFiles() {
         let sourceRoot = repositoryRoot().appendingPathComponent("Sources", isDirectory: true)
         let expectedFiles = [
-            "Core/KakaposSurface.swift",
+            "Umbrella/KakaposSurface.swift",
             "VideoEngine/Setup/Kakapos.swift",
             "MediaCore/Frame/MediaFrame.swift",
             "MediaCore/Frame/SampleBufferUtilities.swift",
@@ -144,7 +144,7 @@ final class DirectoryBoundaryTests: XCTestCase {
         XCTAssertTrue(packageManifest.contains("name: \"KakaposCamera\",\n            dependencies: [\"KakaposMediaCore\", \"KakaposVideo\"]"))
         XCTAssertFalse(
             FileManager.default.fileExists(
-                atPath: repositoryRoot().appendingPathComponent("Sources/Core/KakaposBoards.swift").path
+                atPath: repositoryRoot().appendingPathComponent("Sources/Umbrella/KakaposBoards.swift").path
             )
         )
     }

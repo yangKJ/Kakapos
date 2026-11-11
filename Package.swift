@@ -60,7 +60,7 @@ let package = Package(
         .target(
             name: "Kakapos",
             dependencies: ["KakaposMediaCore", "KakaposVideo", "KakaposTimeline", "KakaposCamera"],
-            path: "Sources/Core"
+            path: "Sources/Umbrella"
         ),
         .testTarget(
             name: "KakaposIntegrationTests",
