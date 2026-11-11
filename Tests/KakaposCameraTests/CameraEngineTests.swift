@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import ImageIO
 @testable import Kakapos
 @testable import KakaposMediaCore
 @testable import KakaposVideo
@@ -7,6 +8,40 @@ import AVFoundation
 @testable import KakaposCamera
 
 final class CameraEngineTests: XCTestCase {
+    #if os(iOS)
+    func testPhotoFactsKeepExifAndResolvedFlashSeparate() throws {
+        let metadata: [String: Any] = [kCGImagePropertyExifDictionary as String: [
+            kCGImagePropertyExifISOSpeedRatings as String: [400],
+            kCGImagePropertyExifExposureTime as String: 0.01,
+            kCGImagePropertyExifExposureBiasValue as String: -0.7,
+            kCGImagePropertyExifFlash as String: 0,
+            kCGImagePropertyExifWhiteBalance as String: 1,
+        ]]
+        let facts = CameraPhotoCaptureFacts(metadata: metadata, requestedFlashMode: 1,
+            resolvedFlashEnabled: true, photoTimestampSeconds: 12)
+        XCTAssertEqual(facts.iso, 400)
+        XCTAssertEqual(facts.exposureDurationSeconds, 0.01)
+        XCTAssertEqual(facts.exposureBiasEV, -0.7)
+        XCTAssertEqual(facts.flashFired, false)
+        XCTAssertEqual(facts.resolvedFlashEnabled, true)
+        XCTAssertEqual(facts.flashSource, "photo-exif")
+        XCTAssertEqual(try JSONDecoder().decode(CameraPhotoCaptureFacts.self, from: JSONEncoder().encode(facts)), facts)
+        let unknown = CameraPhotoCaptureFacts(metadata: [:], requestedFlashMode: 2)
+        XCTAssertNil(unknown.iso)
+        XCTAssertNil(unknown.flashFired)
+        XCTAssertNil(unknown.flashSource)
+        XCTAssertEqual(unknown.requestedFlashMode, 2)
+        let resolved = CameraPhotoCaptureFacts(metadata: [:], requestedFlashMode: 1, resolvedFlashEnabled: false)
+        XCTAssertEqual(resolved.flashFired, false)
+        XCTAssertEqual(resolved.flashSource, "resolved-photo-settings")
+        let invalid = CameraPhotoCaptureFacts(metadata: [kCGImagePropertyExifDictionary as String: [
+            kCGImagePropertyExifWhiteBalance as String: Double.greatestFiniteMagnitude,
+        ]], requestedFlashMode: 0, photoTimestampSeconds: .nan)
+        XCTAssertNil(invalid.whiteBalanceMode)
+        XCTAssertNil(invalid.photoTimestampSeconds)
+    }
+    #endif
+
 
     func testZoomGateCoalescesRequestsAndStopInvalidatesPendingWork() throws {
         let gate = CameraZoomRequestGate()

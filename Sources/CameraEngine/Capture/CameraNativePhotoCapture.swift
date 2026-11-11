@@ -12,7 +12,7 @@ import ImageIO
 
 #if canImport(UIKit) && !os(watchOS)
 public enum CameraPhotoResourceFormat: String, Codable, Sendable {
-    case heic, jpeg, bayerRAW, appleProRAW
+    case heic, jpeg, bayerRAW, appleProRAW, uncompressedProcessed
 }
 
 public struct CameraPhotoCaptureRequest: Sendable {
@@ -56,6 +56,49 @@ public struct CameraPhotoCaptureCapabilities: Sendable {
     public let supportsAppleProRAW: Bool
     public let supportedDimensions: [CGSize]
     public let supportsHEIC: Bool
+    public var supportsUncompressedProcessed: Bool = false
+}
+
+/// 单张照片的采集事实；缺失值保持未知，不以设备的晚到快照补齐。
+public struct CameraPhotoCaptureFacts: Codable, Equatable, Sendable {
+    public let iso: Double?
+    public let exposureDurationSeconds: Double?
+    public let exposureBiasEV: Double?
+    public let aperture: Double?
+    public let focalLengthMM: Double?
+    public let lensModel: String?
+    public let whiteBalanceMode: Int?
+    public let requestedFlashMode: Int
+    public let resolvedFlashEnabled: Bool?
+    public let flashFired: Bool?
+    public let flashSource: String?
+    public let photoTimestampSeconds: Double?
+
+    public init(metadata: [String: Any], requestedFlashMode: Int, resolvedFlashEnabled: Bool? = nil, photoTimestampSeconds: Double? = nil) {
+        let exif = metadata[kCGImagePropertyExifDictionary as String] as? [String: Any] ?? [:]
+        func number(_ key: CFString) -> Double? {
+            guard let value = (exif[key as String] as? NSNumber)?.doubleValue, value.isFinite else { return nil }
+            return value
+        }
+        let sensitivity = (exif[kCGImagePropertyExifISOSpeedRatings as String] as? [NSNumber])?.first?.doubleValue
+        iso = sensitivity.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        exposureDurationSeconds = number(kCGImagePropertyExifExposureTime).flatMap { $0 > 0 ? $0 : nil }
+        exposureBiasEV = number(kCGImagePropertyExifExposureBiasValue)
+        aperture = number(kCGImagePropertyExifFNumber).flatMap { $0 > 0 ? $0 : nil }
+        focalLengthMM = number(kCGImagePropertyExifFocalLength).flatMap { $0 > 0 ? $0 : nil }
+        lensModel = exif[kCGImagePropertyExifLensModel as String] as? String
+        whiteBalanceMode = number(kCGImagePropertyExifWhiteBalance).flatMap { (0...1).contains($0) ? Int($0) : nil }
+        self.requestedFlashMode = requestedFlashMode
+        self.resolvedFlashEnabled = resolvedFlashEnabled
+        if let flash = number(kCGImagePropertyExifFlash), flash >= 0, flash <= 65535 {
+            flashFired = Int(flash) & 1 != 0
+            flashSource = "photo-exif"
+        } else {
+            flashFired = resolvedFlashEnabled
+            flashSource = resolvedFlashEnabled == nil ? nil : "resolved-photo-settings"
+        }
+        self.photoTimestampSeconds = photoTimestampSeconds.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+    }
 }
 
 /// 资源完全完成后才交付；原始编码数据不经过预览帧或产品滤镜。
@@ -71,6 +114,7 @@ public struct CameraPhotoCaptureArtifact: @unchecked Sendable {
     public let dimensions: CGSize
     /// 某部分失败时仍交付已取得的资源，消费者必须保存后呈现不完整状态。
     public let captureFailure: CameraPhotoCaptureError?
+    public var captureFacts: CameraPhotoCaptureFacts? = nil
 }
 
 public enum CameraPhotoCaptureError: Error, Equatable, Sendable {
@@ -85,6 +129,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
     private let expectsRaw: Bool
     private let expectsLive: Bool
     private let retainsEncodedData: Bool
+    private let requestedFlashMode: Int
     private let finish: @Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void
     private let lock = NSLock()
     private var processedData: Data?
@@ -94,6 +139,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
     private var movieURL: URL?
     private var keyTime: CMTime?
     private var metadata: [String: Any] = [:]
+    private var captureFacts: CameraPhotoCaptureFacts?
     private var dimensions = CGSize.zero
     private var failure: CameraPhotoCaptureError?
     private var completed = false
@@ -105,6 +151,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
         expectsRaw = request.format == .bayerRAW || request.format == .appleProRAW
         expectsLive = request.includesLivePhoto
         retainsEncodedData = request.retainsEncodedData
+        requestedFlashMode = request.flashMode.rawValue
         self.finish = finish
     }
 
@@ -120,7 +167,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
             else {
                 let source = CGImageSourceCreateWithData(data as CFData, nil)
                 let type = source.flatMap { CGImageSourceGetType($0) }.map { $0 as String }
-                suffix = type == "public.heic" ? "-processed.heic" : "-processed.jpg"
+                suffix = type == "public.heic" ? "-processed.heic" : (type == "public.tiff" ? "-processed.tiff" : "-processed.jpg")
             }
             let url = outputDirectory.appendingPathComponent(requestID.uuidString + suffix)
             try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -133,7 +180,15 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
                 if !retainsEncodedData { processedData = nil }
             }
         } catch { failure = .captureFailed(error.localizedDescription) }
-        metadata = photo.metadata
+        if !photo.isRawPhoto {
+            metadata = photo.metadata
+            captureFacts = CameraPhotoCaptureFacts(
+                metadata: photo.metadata,
+                requestedFlashMode: requestedFlashMode,
+                resolvedFlashEnabled: photo.resolvedSettings.isFlashEnabled,
+                photoTimestampSeconds: photo.timestamp.seconds
+            )
+        }
         let value = photo.isRawPhoto ? photo.resolvedSettings.rawPhotoDimensions : photo.resolvedSettings.photoDimensions
         dimensions = CGSize(width: Int(value.width), height: Int(value.height))
     }
@@ -167,7 +222,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
         if processedData != nil || rawData != nil || processedFileURL != nil || rawFileURL != nil || movieURL != nil {
             result = .success(CameraPhotoCaptureArtifact(requestID: requestID,
                 processedData: processedData, rawData: rawData, processedFileURL: processedFileURL, rawFileURL: rawFileURL, livePhotoMovieURL: movieURL,
-                livePhotoKeyTime: keyTime, metadata: metadata, dimensions: dimensions, captureFailure: problem))
+                livePhotoKeyTime: keyTime, metadata: metadata, dimensions: dimensions, captureFailure: problem, captureFacts: captureFacts))
         } else { result = .failure(problem ?? .missingResource) }
         lock.unlock()
         finish(result)

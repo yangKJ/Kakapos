@@ -658,7 +658,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                         if #available(iOS 14.3, *) { return AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
                         return !proRaw
                     }, supportsAppleProRAW: proRaw, supportedDimensions: dimensions,
-                    supportsHEIC: self.photoOutput.availablePhotoCodecTypes.contains(.hevc)))
+                    supportsHEIC: self.photoOutput.availablePhotoCodecTypes.contains(.hevc),
+                    supportsUncompressedProcessed: self.photoOutput.availablePhotoPixelFormatTypes.contains(kCVPixelFormatType_32BGRA)))
             }
         }
     }
@@ -678,7 +679,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                         } else { throw CameraPhotoCaptureError.unsupportedFormat }
                     }
                     let codec: AVVideoCodecType = request.format == .heic ? .hevc : .jpeg
-                    guard self.photoOutput.availablePhotoCodecTypes.contains(codec) else { throw CameraPhotoCaptureError.unsupportedFormat }
+                    if request.format != .uncompressedProcessed {
+                        guard self.photoOutput.availablePhotoCodecTypes.contains(codec) else { throw CameraPhotoCaptureError.unsupportedFormat }
+                    }
                     let settings: AVCapturePhotoSettings
                     if expectsRaw {
                         guard let rawType = self.photoOutput.availableRawPhotoPixelFormatTypes.first(where: {
@@ -688,6 +691,12 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                             return request.format == .bayerRAW
                         }) else { throw CameraPhotoCaptureError.unsupportedFormat }
                         settings = AVCapturePhotoSettings(rawPixelFormatType: rawType, processedFormat: [AVVideoCodecKey: codec])
+                    } else if request.format == .uncompressedProcessed {
+                        guard !request.includesLivePhoto,
+                              self.photoOutput.availablePhotoPixelFormatTypes.contains(kCVPixelFormatType_32BGRA) else {
+                            throw CameraPhotoCaptureError.unsupportedFormat
+                        }
+                        settings = AVCapturePhotoSettings(format: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
                     } else { settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec]) }
                     if #available(iOS 16.0, *) {
                         let supported = self.videoInput?.device.activeFormat.supportedMaxPhotoDimensions.sorted {
