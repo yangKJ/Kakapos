@@ -151,8 +151,13 @@ public struct CameraPhotoCaptureResource: @unchecked Sendable {
         }
         self.origin = origin
         self.isRaw = isRaw
-        facts = CameraPhotoCaptureFacts(metadata: metadata, requestedFlashMode: requestedFlashMode,
-            resolvedFlashEnabled: resolvedFlashEnabled, photoTimestampSeconds: photoTimestampSeconds, hardwareObservation: hardwareObservation)
+        facts = CameraPhotoCaptureFacts(
+            metadata: metadata,
+            requestedFlashMode: requestedFlashMode,
+            resolvedFlashEnabled: resolvedFlashEnabled,
+            photoTimestampSeconds: photoTimestampSeconds,
+            hardwareObservation: hardwareObservation
+        )
     }
 
     /// 只由采集器在原子写入成功后发布文件，失败时原始字节仍可恢复。
@@ -177,4 +182,41 @@ public struct CameraHardwareObservation: Codable, Equatable, Sendable {
     public let whiteBalanceGains: [Double]
     public let whiteBalanceIsManual: Bool
     public let torchActive: Bool
+    public let deviceModelIdentifier: String?
+    public let cameraIdentifier: String?
+    public let zoomFactor: Double?
+
+    init(
+        point: Point,
+        hostTimeSeconds: Double,
+        iso: Double,
+        minimumISO: Double,
+        exposureSeconds: Double,
+        exposureBiasEV: Double,
+        fNumber: Double,
+        temperatureKelvin: Double,
+        tint: Double,
+        whiteBalanceGains: [Double],
+        whiteBalanceIsManual: Bool,
+        torchActive: Bool,
+        deviceModelIdentifier: String? = nil,
+        cameraIdentifier: String? = nil,
+        zoomFactor: Double? = nil
+    ) {
+        self.point = point
+        self.hostTimeSeconds = hostTimeSeconds
+        self.iso = iso
+        self.minimumISO = minimumISO
+        self.exposureSeconds = exposureSeconds
+        self.exposureBiasEV = exposureBiasEV
+        self.fNumber = fNumber
+        self.temperatureKelvin = temperatureKelvin
+        self.tint = tint
+        self.whiteBalanceGains = whiteBalanceGains
+        self.whiteBalanceIsManual = whiteBalanceIsManual
+        self.torchActive = torchActive
+        self.deviceModelIdentifier = deviceModelIdentifier
+        self.cameraIdentifier = cameraIdentifier
+        self.zoomFactor = zoomFactor
+    }
 }

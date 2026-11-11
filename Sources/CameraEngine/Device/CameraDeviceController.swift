@@ -5,6 +5,7 @@
 //  Created by Condy on 2026/6/22.
 //
 
+import Darwin
 import Foundation
 import KakaposMediaCore
 import AVFoundation
@@ -123,6 +124,14 @@ public final class CameraDeviceController {
         )
     }
 
+    private static let hardwareModelIdentifier: String? = {
+        var system = utsname()
+        guard uname(&system) == 0 else { return nil }
+        return withUnsafeBytes(of: &system.machine) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }()
+
     func hardwareObservation(at point: CameraHardwareObservation.Point) -> CameraHardwareObservation? {
         guard let device = deviceProvider() else { return nil }
         let gains = device.deviceWhiteBalanceGains
@@ -132,7 +141,10 @@ public final class CameraDeviceController {
             exposureSeconds: device.exposureDuration.seconds, exposureBiasEV: Double(device.exposureTargetBias),
             fNumber: Double(device.lensAperture), temperatureKelvin: Double(white.temperature), tint: Double(white.tint),
             whiteBalanceGains: [Double(gains.redGain), Double(gains.greenGain), Double(gains.blueGain)],
-            whiteBalanceIsManual: device.whiteBalanceMode == .locked, torchActive: device.isTorchActive)
+            whiteBalanceIsManual: device.whiteBalanceMode == .locked, torchActive: device.isTorchActive,
+            deviceModelIdentifier: Self.hardwareModelIdentifier,
+            cameraIdentifier: device.deviceType.rawValue + ":" + String(device.position.rawValue),
+            zoomFactor: Double(device.videoZoomFactor))
     }
 
     @discardableResult

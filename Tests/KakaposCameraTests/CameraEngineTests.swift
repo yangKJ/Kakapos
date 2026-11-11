@@ -8,6 +8,20 @@ import ImageIO
 @testable import KakaposCamera
 
 final class CameraEngineTests: XCTestCase {
+    func testPhotoHardwareBindingSurvivesResourceFactsEncoding() throws {
+        let observation = CameraHardwareObservation(point: .photoRequest, hostTimeSeconds: 123,
+            iso: 100, minimumISO: 50, exposureSeconds: 0.02, exposureBiasEV: 0, fNumber: 1.8,
+            temperatureKelvin: 5500, tint: 0, whiteBalanceGains: [1, 1, 1],
+            whiteBalanceIsManual: false, torchActive: false,
+            deviceModelIdentifier: "test-device", cameraIdentifier: "test-camera", zoomFactor: 2)
+        let facts = CameraPhotoCaptureFacts(metadata: [:], hardwareObservation: observation)
+        let decoded = try JSONDecoder().decode(CameraPhotoCaptureFacts.self, from: JSONEncoder().encode(facts))
+        XCTAssertEqual(decoded.hardwareObservation?.deviceModelIdentifier, "test-device")
+        XCTAssertEqual(decoded.hardwareObservation?.cameraIdentifier, "test-camera")
+        XCTAssertEqual(decoded.hardwareObservation?.zoomFactor, 2)
+        XCTAssertNil(decoded.iso)
+    }
+
     func testPhotoHardwareObservationKeepsRequestAndExifFactsSeparate() throws {
         let observation = CameraHardwareObservation(point: .photoRequest, hostTimeSeconds: 123,
             iso: 100, minimumISO: 50, exposureSeconds: 0.02, exposureBiasEV: 1, fNumber: 1.8,
