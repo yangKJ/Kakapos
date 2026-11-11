@@ -413,11 +413,14 @@ Kakapos is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE
 
 ### 原生照片的文件交付
 
-`CameraPhotoCaptureArtifact.captureFacts`提供单张照片的结构化事实。曝光、ISO、镜头与白平衡模式来自照片EXIF；请求闪光、系统解析闪光及最终EXIF闪光分别保留，EXIF优先决定`flashFired`并记录来源。缺失或无效字段保持nil。`photoTimestampSeconds`属于系统照片时基，不能当成UTC日期；此合同不宣称逐帧硬件同步，也不引入风格参数。
+`CameraPhotoCaptureArtifact.processedPhoto`与`rawPhoto`分别交付`CameraPhotoCaptureResource`，每个资源独立持有Data／文件URL、原始metadata、编码格式、像素尺寸、方向和结构化facts。编码格式与几何只在资源构造时从实际容器头解析一次，消费者不再重复读文件或猜测请求尺寸。回调先后顺序不再改变另一种资源的尺寸或元数据。便捷拍照回调使用同一resource合同，通过origin区分原生照片与视频帧；不保留旧扁平字段或兼容转发。
+
+
+`CameraPhotoCaptureArtifact.processedPhoto.facts`提供单张照片的结构化事实。曝光、ISO、镜头与白平衡模式来自照片EXIF；请求闪光、系统解析闪光及最终EXIF闪光分别保留，EXIF优先决定`flashFired`并记录来源。缺失或无效字段保持nil。`photoTimestampSeconds`属于系统照片时基，不能当成UTC日期；此合同不宣称逐帧硬件同步，也不引入风格参数。
 
 `CameraPhotoResourceFormat.uncompressedProcessed`在设备支持BGRA照片输出时请求未压缩的已处理照片，按TIFF保存并沿用原子文件交付。先检查`supportsUncompressedProcessed`；不支持时返回格式错误，不会自动重拍。它不等于RAW，不撤销ISP，也不保证额外动态范围。画质、内存、等待时间和真实设备准入由消费者验证后决定是否使用。
 
-`CameraPhotoCaptureRequest.retainsEncodedData` 默认为 `true`，继续同时提供编码 Data 和已写入的文件 URL。需要文件流水线的消费者可显式设为 `false`：对应文件原子写入成功后释放编码 Data，完成条件接受文件资源；写入失败则保留字节供恢复，`captureFailure` 仍报告失败。消费者须在可靠入库后才删除捕获临时文件，不能将 nil Data 直接解释成照片丢失。
+`CameraPhotoCaptureRequest.retainsEncodedData`默认为`false`，以文件URL交付。需要同时持有字节的消费者显式设置`true`。默认路径中，对应文件原子写入成功后释放编码 Data，完成条件接受文件资源；写入失败则保留字节供恢复，`captureFailure` 仍报告失败。消费者须在可靠入库后才删除捕获临时文件，不能将 nil Data 直接解释成照片丢失。
 
 2026-11-09：CameraEngine 聚焦测试 8 项通过；iOS 消费者构建覆盖文件请求与恢复分支。未执行原生拍照、镜头、权限或真实设备热量验收。
 

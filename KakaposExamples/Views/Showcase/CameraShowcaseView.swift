@@ -297,12 +297,12 @@ struct CameraShowcaseView: View {
                     }
                     engine.source.photoCaptureHandler = { result in
                         DispatchQueue.main.async {
-                            if let data = result.data, let image = UIImage(data: data)?.cgImage {
+                            if let data = result.resource.data, let image = UIImage(data: data)?.cgImage {
                                 photoImage = image
                                 previewImage = image
                             }
                             statusText = "Photo captured"
-                            recentEventText = result.isFromCurrentFrame ? "Captured from current frame" : "Captured from photo output"
+                            recentEventText = result.resource.origin == .videoFrame ? "Captured from current frame" : "Captured from photo output"
                         }
                     }
                     engine.advancedOutput.metadataObjectsHandler = { payload in

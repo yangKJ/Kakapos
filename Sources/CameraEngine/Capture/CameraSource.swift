@@ -329,7 +329,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
     private var isSessionConfigured = false
-    private var lastVideoPixelBuffer: CVPixelBuffer?
+    private let lastVideoFrameLock = NSLock()
     private var lastVideoSampleBuffer: CMSampleBuffer?
     private var shouldResumeAfterInterruption = false
     private var audioSessionEventToken: UUID?
@@ -551,8 +551,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         waitForActiveFrameDeliveries()
         sessionQueue.async {
             self.zoomController?.invalidate()
-            self.lastVideoSampleBuffer = nil
-            self.lastVideoPixelBuffer = nil
+            self.setLastVideoSampleBuffer(nil)
             if self.session.isRunning {
                 self.expectStopNotification(generation: terminalGeneration)
                 self.session.stopRunning()
@@ -749,9 +748,22 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
     }
 
+    private func setLastVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer?) {
+        lastVideoFrameLock.lock()
+        lastVideoSampleBuffer = sampleBuffer
+        lastVideoFrameLock.unlock()
+    }
+
+    private func lastVideoFrameSnapshot() -> CMSampleBuffer? {
+        lastVideoFrameLock.lock()
+        defer { lastVideoFrameLock.unlock() }
+        return lastVideoSampleBuffer
+    }
+
     public func capturePhotoFromCurrentFrame() {
         photoQueue.async {
-            guard let pixelBuffer = self.lastVideoPixelBuffer else {
+            guard let sampleBuffer = self.lastVideoFrameSnapshot(),
+                  let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
                 DispatchQueue.main.async {
                     self.notifyDelegatesOfFailure(CameraSourceError.photoFrameUnavailable)
                 }
@@ -759,9 +771,20 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             }
             let image = CIImage(cvPixelBuffer: pixelBuffer)
             let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let metadata = Self.attachmentsDictionary(from: self.lastVideoSampleBuffer)
-            let data = self.ciContext.jpegRepresentation(of: image, colorSpace: colorSpace, options: [:])
-            let result = CameraPhotoCaptureResult(data: data, metadata: metadata, isFromCurrentFrame: true)
+            let metadata = Self.attachmentsDictionary(from: sampleBuffer)
+            guard let data = self.ciContext.jpegRepresentation(of: image, colorSpace: colorSpace, options: [:]) else {
+                DispatchQueue.main.async { self.notifyDelegatesOfFailure(CameraSourceError.photoFrameUnavailable) }
+                return
+            }
+            let resource: CameraPhotoCaptureResource
+            do {
+                resource = try CameraPhotoCaptureResource(encodedData: data, metadata: metadata,
+                    origin: .videoFrame, photoTimestampSeconds: CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds)
+            } catch {
+                DispatchQueue.main.async { self.notifyDelegatesOfFailure(error) }
+                return
+            }
+            let result = CameraPhotoCaptureResult(resource: resource)
             let resultTransfer = CameraCallbackTransfer(result)
             DispatchQueue.main.async {
                 self.photoCaptureHandler?(resultTransfer.value)
@@ -891,8 +914,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         frameIndex = 0
         lastPresentationTime = nil
         lastMediaType = nil
-        lastVideoSampleBuffer = nil
-        lastVideoPixelBuffer = nil
+        setLastVideoSampleBuffer(nil)
         isPaused = false
         state = .idle
     }
@@ -1188,8 +1210,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         lastPresentationTime = presentationTime
         lastMediaType = mediaType.rawValue
         if mediaType == .video {
-            lastVideoSampleBuffer = sampleBuffer
-            lastVideoPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
+            setLastVideoSampleBuffer(sampleBuffer)
         }
         let frame = SampleBufferFrame(
             sampleBuffer: sampleBuffer,
@@ -1789,10 +1810,21 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
             }
             advancedOutput.emitPortraitEffectsMatte(.init(deliveredInPhoto: true, matte: matte, timestamp: lastPresentationTime))
         }
+        guard let data = photo.fileDataRepresentation() else {
+            DispatchQueue.main.async { self.notifyDelegatesOfFailure(CameraPhotoCaptureError.missingResource) }
+            return
+        }
+        let resource: CameraPhotoCaptureResource
+        do {
+            resource = try CameraPhotoCaptureResource(encodedData: data, metadata: photo.metadata,
+                origin: .nativePhoto, isRaw: photo.isRawPhoto,
+                resolvedFlashEnabled: photo.resolvedSettings.isFlashEnabled, photoTimestampSeconds: photo.timestamp.seconds)
+        } catch {
+            DispatchQueue.main.async { self.notifyDelegatesOfFailure(error) }
+            return
+        }
         let result = CameraPhotoCaptureResult(
-            data: photo.fileDataRepresentation(),
-            metadata: photo.metadata,
-            isFromCurrentFrame: false,
+            resource: resource,
             depthDataDelivered: deliveredDepthData,
             portraitEffectsMatteDelivered: deliveredPortraitEffectsMatte
         )

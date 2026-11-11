@@ -8,7 +8,6 @@ import ImageIO
 @testable import KakaposCamera
 
 final class CameraEngineTests: XCTestCase {
-    #if os(iOS)
     func testPhotoFactsKeepExifAndResolvedFlashSeparate() throws {
         let metadata: [String: Any] = [kCGImagePropertyExifDictionary as String: [
             kCGImagePropertyExifISOSpeedRatings as String: [400],
@@ -24,7 +23,7 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertEqual(facts.exposureBiasEV, -0.7)
         XCTAssertEqual(facts.flashFired, false)
         XCTAssertEqual(facts.resolvedFlashEnabled, true)
-        XCTAssertEqual(facts.flashSource, "photo-exif")
+        XCTAssertEqual(facts.flashSource, .photoExif)
         XCTAssertEqual(try JSONDecoder().decode(CameraPhotoCaptureFacts.self, from: JSONEncoder().encode(facts)), facts)
         let unknown = CameraPhotoCaptureFacts(metadata: [:], requestedFlashMode: 2)
         XCTAssertNil(unknown.iso)
@@ -33,15 +32,76 @@ final class CameraEngineTests: XCTestCase {
         XCTAssertEqual(unknown.requestedFlashMode, 2)
         let resolved = CameraPhotoCaptureFacts(metadata: [:], requestedFlashMode: 1, resolvedFlashEnabled: false)
         XCTAssertEqual(resolved.flashFired, false)
-        XCTAssertEqual(resolved.flashSource, "resolved-photo-settings")
+        XCTAssertEqual(resolved.flashSource, .resolvedSettings)
         let invalid = CameraPhotoCaptureFacts(metadata: [kCGImagePropertyExifDictionary as String: [
             kCGImagePropertyExifWhiteBalance as String: Double.greatestFiniteMagnitude,
         ]], requestedFlashMode: 0, photoTimestampSeconds: .nan)
         XCTAssertNil(invalid.whiteBalanceMode)
         XCTAssertNil(invalid.photoTimestampSeconds)
     }
-    #endif
 
+
+    func testPhotoResourcesKeepDimensionsAndMetadataIndependent() throws {
+        let processedMetadata: [String: Any] = [
+            kCGImagePropertyTIFFDictionary as String: [kCGImagePropertyTIFFMake as String: "Device", kCGImagePropertyTIFFModel as String: "Model"],
+            kCGImagePropertyExifDictionary as String: [
+                kCGImagePropertyExifDateTimeOriginal as String: "2026:11:11 08:09:10",
+                kCGImagePropertyExifOffsetTimeOriginal as String: "+08:00",
+                kCGImagePropertyExifSubsecTimeOriginal as String: "005006",
+                kCGImagePropertyExifDateTimeDigitized as String: "2026:11:11 09:10:11",
+                kCGImagePropertyExifOffsetTimeDigitized as String: "+09:00",
+                kCGImagePropertyExifSubsecTimeDigitized as String: "456",
+                kCGImagePropertyExifFocalLenIn35mmFilm as String: 35,
+                kCGImagePropertyExifDigitalZoomRatio as String: 2,
+                kCGImagePropertyExifLensMake as String: "Optics",
+                kCGImagePropertyExifLensSpecification as String: [2, 8, 1.8, 2.8],
+                kCGImagePropertyExifMeteringMode as String: 5,
+                kCGImagePropertyExifExposureProgram as String: 2,
+            ]
+        ]
+        let processed = try CameraPhotoCaptureResource(encodedData: photoFixture(width: 40, height: 30), metadata: processedMetadata, origin: .nativePhoto)
+        var raw = try CameraPhotoCaptureResource(encodedData: photoFixture(width: 80, height: 60), metadata: [:], origin: .nativePhoto, isRaw: true)
+        raw.publish(at: URL(fileURLWithPath: "/tmp/capture.dng"), retainingData: false)
+        XCTAssertEqual(processed.pixelDimensions, CGSize(width: 40, height: 30))
+        XCTAssertEqual(raw.pixelDimensions, CGSize(width: 80, height: 60))
+        XCTAssertFalse(processed.isRaw)
+        XCTAssertTrue(raw.isRaw)
+        XCTAssertEqual(processed.facts.deviceMake, "Device")
+        XCTAssertEqual(processed.facts.deviceModel, "Model")
+        XCTAssertEqual(processed.facts.equivalentFocalLength35MM, 35)
+        XCTAssertEqual(processed.facts.digitalZoomRatio, 2)
+        XCTAssertEqual(processed.facts.lensSpecification, [2, 8, 1.8, 2.8])
+        XCTAssertEqual(processed.facts.meteringMode, 5)
+        XCTAssertEqual(processed.facts.exposureProgram, 2)
+        XCTAssertEqual(processed.facts.dateTimeOriginal, "2026:11:11 08:09:10")
+        XCTAssertEqual(processed.facts.offsetTimeOriginal, "+08:00")
+        XCTAssertEqual(processed.facts.subsecTimeOriginal, "005006")
+        XCTAssertEqual(processed.facts.dateTimeDigitized, "2026:11:11 09:10:11")
+        XCTAssertEqual(processed.facts.offsetTimeDigitized, "+09:00")
+        XCTAssertEqual(processed.facts.subsecTimeDigitized, "456")
+        XCTAssertNil(processed.facts.requestedFlashMode)
+        XCTAssertNil(raw.facts.dateTimeOriginal)
+        let frame = try CameraPhotoCaptureResource(encodedData: photoFixture(width: 16, height: 9), metadata: [:], origin: .videoFrame)
+        XCTAssertEqual(frame.uniformTypeIdentifier, "public.jpeg")
+        XCTAssertNil(raw.data)
+        XCTAssertNotNil(raw.fileURL)
+        XCTAssertThrowsError(try CameraPhotoCaptureResource(encodedData: Data([1]), metadata: [:], origin: .nativePhoto))
+        XCTAssertEqual(frame.origin, .videoFrame)
+        XCTAssertNil(frame.facts.flashFired)
+        XCTAssertEqual(try JSONDecoder().decode(CameraPhotoCaptureFacts.self, from: JSONEncoder().encode(processed.facts)), processed.facts)
+    }
+
+    private func photoFixture(width: Int, height: Int) throws -> Data {
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let image = try XCTUnwrap(context.makeImage())
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data as CFMutableData, "public.jpeg" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
 
     func testZoomGateCoalescesRequestsAndStopInvalidatesPendingWork() throws {
         let gate = CameraZoomRequestGate()
@@ -107,9 +167,9 @@ final class CameraEngineTests: XCTestCase {
         #if os(iOS)
         let request = CameraPhotoCaptureRequest(outputDirectory: FileManager.default.temporaryDirectory, videoOrientation: .landscapeLeft)
         XCTAssertEqual(request.videoOrientation, .landscapeLeft)
-        XCTAssertTrue(request.retainsEncodedData)
-        let fileRequest = CameraPhotoCaptureRequest(outputDirectory: FileManager.default.temporaryDirectory, retainsEncodedData: false)
-        XCTAssertFalse(fileRequest.retainsEncodedData)
+        XCTAssertFalse(request.retainsEncodedData)
+        let dataRequest = CameraPhotoCaptureRequest(outputDirectory: FileManager.default.temporaryDirectory, retainsEncodedData: true)
+        XCTAssertTrue(dataRequest.retainsEncodedData)
         #endif
         XCTAssertFalse(defaults.discardsLateVideoFrames)
         XCTAssertFalse(defaults.photo.preparesMaximumDimensions)

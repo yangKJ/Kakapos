@@ -542,22 +542,12 @@ public struct CameraSourceConfiguration: Equatable, Sendable {
 public typealias CameraCaptureConfiguration = CameraSourceConfiguration
 
 public struct CameraPhotoCaptureResult {
-    public let data: Data?
-    public let metadata: [String: Any]
-    public let isFromCurrentFrame: Bool
+    public let resource: CameraPhotoCaptureResource
     public let depthDataDelivered: Bool
     public let portraitEffectsMatteDelivered: Bool
 
-    public init(
-        data: Data?,
-        metadata: [String: Any],
-        isFromCurrentFrame: Bool,
-        depthDataDelivered: Bool = false,
-        portraitEffectsMatteDelivered: Bool = false
-    ) {
-        self.data = data
-        self.metadata = metadata
-        self.isFromCurrentFrame = isFromCurrentFrame
+    public init(resource: CameraPhotoCaptureResource, depthDataDelivered: Bool = false, portraitEffectsMatteDelivered: Bool = false) {
+        self.resource = resource
         self.depthDataDelivered = depthDataDelivered
         self.portraitEffectsMatteDelivered = portraitEffectsMatteDelivered
     }

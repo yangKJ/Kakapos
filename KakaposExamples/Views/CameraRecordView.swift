@@ -269,10 +269,10 @@ struct CameraRecordView: View {
                     }
                     engine.source.photoCaptureHandler = { result in
                         DispatchQueue.main.async {
-                            if let data = result.data, let image = UIImage(data: data)?.cgImage {
+                            if let data = result.resource.data, let image = UIImage(data: data)?.cgImage {
                                 photoImage = image
                             }
-                            lastOutputText = result.isFromCurrentFrame ? "photo fallback frame" : "photo output"
+                            lastOutputText = result.resource.origin == .videoFrame ? "photo fallback frame" : "photo output"
                             advancedEventText = "photo · depth \(result.depthDataDelivered ? "yes" : "no") · portrait \(result.portraitEffectsMatteDelivered ? "yes" : "no")"
                             message = "Captured photo"
                         }
