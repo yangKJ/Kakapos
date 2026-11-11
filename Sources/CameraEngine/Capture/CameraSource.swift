@@ -976,6 +976,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         defer { session.commitConfiguration() }
         applySessionPreset()
         try configureVideoInput(position: configuration.preferredPosition)
+        try configureVideoColorPolicy()
         try configureAudioInputIfNeeded()
         try configureVideoOutput()
         try configureAudioOutputIfNeeded()
@@ -1014,6 +1015,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
         do {
             try configureVideoInput(position: position)
+            try configureVideoColorPolicy()
+            try configureVideoPixelFormat()
             try configureDepthOutputIfNeeded()
             applyCurrentConnections()
             applyInitialDeviceConfigurationIfNeeded()
@@ -1043,9 +1046,67 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         audioInput = input
     }
 
+    private func configureVideoColorPolicy() throws {
+        let policy = configuration.video.colorPolicy
+        guard policy != .sourceCompatible else { return }
+        guard let device = videoInput?.device else { throw CameraSourceError.unsupportedFeature("相机尚未配置。") }
+        let colorSpace: AVCaptureColorSpace
+        if policy == .standardBT709 {
+            colorSpace = .sRGB
+        } else {
+            guard policy == .hdrHLG, configuration.video.codec == .hevc else {
+                throw CameraSourceError.unsupportedFeature("原生HDR采集需要HLG和HEVC；PQ由渲染后交付转换产生。")
+            }
+            guard #available(iOS 14.1, *) else { throw CameraSourceError.unsupportedFeature("当前系统不支持HLG采集。") }
+            colorSpace = .HLG_BT2020
+        }
+        let dimensions = configuration.video.dimensions ?? CGSize(
+            width: Int(CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription).width),
+            height: Int(CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription).height))
+        guard dimensions.width.isFinite, dimensions.height.isFinite,
+              dimensions.width >= 1, dimensions.height >= 1,
+              dimensions.width.rounded() == dimensions.width, dimensions.height.rounded() == dimensions.height,
+              dimensions.width <= CGFloat(Int32.max), dimensions.height <= CGFloat(Int32.max) else {
+            throw CameraSourceError.unsupportedFeature("采集尺寸必须为有效的正像素值。")
+        }
+        if let range = configuration.video.preferredFrameRateRange {
+            guard range.minimumFramesPerSecond.isFinite, range.maximumFramesPerSecond.isFinite,
+                  range.minimumFramesPerSecond > 0, range.maximumFramesPerSecond >= range.minimumFramesPerSecond else {
+                throw CameraSourceError.unsupportedFeature("采集帧率范围必须为有限正数且上下限有序。")
+            }
+        }
+        let candidates = device.formats.filter { format in
+            let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            guard size.width == Int32(dimensions.width), size.height == Int32(dimensions.height),
+                  format.supportedColorSpaces.contains(colorSpace) else { return false }
+            if let range = configuration.video.preferredFrameRateRange {
+                return format.videoSupportedFrameRateRanges.contains {
+                    $0.minFrameRate <= range.minimumFramesPerSecond && $0.maxFrameRate >= range.maximumFramesPerSecond
+                }
+            }
+            return true
+        }
+        guard let format = candidates.first else {
+            throw CameraSourceError.unsupportedFeature("设备不支持所请求尺寸和帧率的HLG采集。")
+        }
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        session.automaticallyConfiguresCaptureDeviceForWideColor = false
+        device.activeFormat = format
+        device.activeColorSpace = colorSpace
+    }
+
+    private func configureVideoPixelFormat() throws {
+        let type = configuration.video.colorPolicy.pixelBufferFormat
+        guard videoOutput.availableVideoPixelFormatTypes.contains(type) else {
+            throw CameraSourceError.unsupportedFeature("当前相机输出不支持所请求的像素格式。")
+        }
+        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(type)]
+    }
+
     private func configureVideoOutput() throws {
         videoOutput.alwaysDiscardsLateVideoFrames = configuration.discardsLateVideoFrames
-        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
+        try configureVideoPixelFormat()
         videoOutput.setSampleBufferDelegate(self, queue: mediaOutputQueue)
         guard session.canAddOutput(videoOutput) else {
             throw CameraSourceError.cannotAddOutput(.video)

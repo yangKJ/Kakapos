@@ -706,7 +706,8 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         case VideoAssetExportSession.SessionError.videoFrameProcessingTimedOut(let seconds):
             return VideoX.Error.frameProcessingTimedOut(seconds: seconds)
         default:
-            return VideoX.Error.toError(error)
+            // 处理器拥有自身错误合同；仅映射本引擎的已知生命周期错误。
+            return error
         }
     }
 

@@ -7,6 +7,7 @@
 
 import Foundation
 import KakaposMediaCore
+import KakaposVideo
 import AVFoundation
 import CoreGraphics
 
@@ -221,6 +222,7 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
     public var maximumCaptureDuration: CMTime?
     public var preferredFrameRateRange: CameraFrameRateRange?
     public var preferredStabilizationMode: CameraVideoStabilizationMode
+    public var colorPolicy: VideoExportColorPolicy
 
     public init(
         sessionPreset: AVCaptureSession.Preset = .high,
@@ -232,7 +234,8 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         transform: CGAffineTransform = .identity,
         maximumCaptureDuration: CMTime? = nil,
         preferredFrameRateRange: CameraFrameRateRange? = nil,
-        preferredStabilizationMode: CameraVideoStabilizationMode = .auto
+        preferredStabilizationMode: CameraVideoStabilizationMode = .auto,
+        colorPolicy: VideoExportColorPolicy = .sourceCompatible
     ) {
         self.sessionPreset = sessionPreset
         self.aspectRatio = aspectRatio
@@ -244,6 +247,7 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         self.maximumCaptureDuration = maximumCaptureDuration
         self.preferredFrameRateRange = preferredFrameRateRange
         self.preferredStabilizationMode = preferredStabilizationMode
+        self.colorPolicy = colorPolicy
     }
 
     public func resolvedDimensions(from sourceDimensions: CGSize) -> CGSize {

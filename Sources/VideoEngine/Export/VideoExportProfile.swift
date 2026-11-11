@@ -35,9 +35,9 @@ public enum VideoExportColorPolicy: Equatable, Hashable, Sendable {
         }
     }
 
-    var pixelBufferFormat: OSType { isHDR ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_32BGRA }
+    public var pixelBufferFormat: OSType { isHDR ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_32BGRA }
 
-    var colorProperties: [String: Any]? {
+    public var colorProperties: [String: Any]? {
         switch self {
         case .sourceCompatible: return nil
         case .standardBT709:

@@ -83,6 +83,13 @@ The board entry points above are the recommended path for new code.
 
 ### Camera Engine Highlights
 
+
+显式 HLG 采集使用 `CameraVideoConfiguration(codec: .hevc, colorPolicy: .hdrHLG)`。
+只有设备实际支持请求尺寸、帧率和 HLG 色彩空间时才启动；不静默降低分辨率或回退 SDR。
+`RecordingPipeline` 继承相机的 HDR 交付合同；自定义处理器必须交回真实 P010 HLG/PQ 像素。
+渲染框架由消费者 adapter 注入，Kakapos 不导入渲染内核。默认 `.sourceCompatible` 保留现有 SDR 用法。
+
+
 - `CameraEngine`: top-level camera orchestration entry that assembles source, preview, recording, and processor routing.
 - `CameraEngine` is the lifecycle owner when processed preview and recording share one `CameraSource`; both branches receive frames without competing to start or stop the capture session.
 - `CameraSource`: video, audio, photo, metadata-object, depth, and portrait-matte capture output.

@@ -316,7 +316,15 @@ public final class RecordingPipeline {
         controlsSourceLifecycle: Bool = true
     ) throws {
         self.source = source
-        self.recorderSink = try RecorderSink(outputURL: outputURL, fileType: fileType, configuration: recorderConfiguration)
+        var effectiveConfiguration = recorderConfiguration
+        #if canImport(UIKit) && !os(watchOS)
+        if let camera = source as? CameraSource, camera.configuration.video.colorPolicy.isHDR,
+           recorderConfiguration.colorPolicy == .sourceCompatible {
+            effectiveConfiguration.colorPolicy = camera.configuration.video.colorPolicy
+            effectiveConfiguration.codec = camera.configuration.video.codec
+        }
+        #endif
+        self.recorderSink = try RecorderSink(outputURL: outputURL, fileType: fileType, configuration: effectiveConfiguration)
         self.pipeline = MediaPipeline(
             source: source,
             processors: processors,
@@ -371,7 +379,8 @@ public extension RecordingPipeline {
             includesAudio: configuration.captureMode.includesAudio,
             audioBitRate: configuration.audio.bitRate,
             audioSampleRate: configuration.audio.sampleRate,
-            audioChannelCount: configuration.audio.channelCount
+            audioChannelCount: configuration.audio.channelCount,
+            colorPolicy: configuration.video.colorPolicy
         )
         try self.init(
             source: source,

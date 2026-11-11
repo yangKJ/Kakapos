@@ -5,6 +5,7 @@ import CoreVideo
 @testable import Kakapos
 @testable import KakaposMediaCore
 @testable import KakaposCamera
+@testable import KakaposVideo
 
 final class RecorderSinkRegressionTests: XCTestCase {
 
@@ -273,6 +274,85 @@ final class RecorderSinkRegressionTests: XCTestCase {
         wait(for: [finishCallbacks], timeout: 5)
         XCTAssertEqual(sink.state, .cancelled)
         XCTAssertNil(sink.recordedClip)
+    }
+
+    func testUnsupportedVideoPayloadFailsInsteadOfReportingDeliverySuccess() throws {
+        struct UnsupportedFrame: MediaFrame {
+            var metadata = FrameMetadata(presentationTime: .zero)
+        }
+        let sink = try RecorderSink(outputURL: makeOutputURL())
+        let rejected = expectation(description: "不支持的视频帧明确失败")
+        sink.consume(UnsupportedFrame()) { result in
+            guard case .failure(let error as RecorderSink.RecorderError) = result,
+                  case .unsupportedVideoPayload = error else {
+                XCTFail("无像素缓冲区的帧不能报告录制成功")
+                rejected.fulfill()
+                return
+            }
+            rejected.fulfill()
+        }
+        wait(for: [rejected], timeout: 2)
+        XCTAssertEqual(sink.state, .failed)
+        XCTAssertNil(sink.recordedClip)
+    }
+
+    func testHDRRecorderRejectsH264BeforeCreatingOutput() throws {
+        XCTAssertThrowsError(try RecorderSink(outputURL: makeOutputURL(),
+            configuration: .init(codec: .h264, colorPolicy: .hdrHLG))) { error in
+            guard case VideoExportProfileError.incompatibleHDRCodec = error else { return XCTFail("HDR必须拒绝H264") }
+        }
+    }
+
+    func testHDRRecorderRejectsSDRPixels() throws {
+        let sink = try RecorderSink(outputURL: makeOutputURL(), configuration: .init(codec: .hevc, colorPolicy: .hdrHLG))
+        let done = expectation(description: "HDR录制拒绝SDR像素")
+        sink.consume(PixelBufferFrame(pixelBuffer: try makePixelBuffer(), metadata: FrameMetadata(presentationTime: .zero))) {
+            if case .success = $0 { XCTFail("SDR像素不能以HDR元数据冒充成功") }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(sink.state, .failed)
+    }
+
+    func testHDRRecorderWritesHLGMain10Artifact() throws {
+        var raw: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 32, 32, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &raw)
+        let buffer = try XCTUnwrap(raw)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        for plane in 0..<2 {
+            let pointer = try XCTUnwrap(CVPixelBufferGetBaseAddressOfPlane(buffer, plane)).assumingMemoryBound(to: UInt16.self)
+            let count = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane) / 2
+            pointer.initialize(repeating: UInt16(plane == 0 ? 800 : 512) << 6, count: count)
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_2020, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_2100_HLG, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_2020, .shouldPropagate)
+        let url = makeOutputURL()
+        let sink = try RecorderSink(outputURL: url, configuration: .init(codec: .hevc, colorPolicy: .hdrHLG))
+        let appended = expectation(description: "HLG首帧录入")
+        sink.consume(PixelBufferFrame(pixelBuffer: buffer,
+            metadata: FrameMetadata(presentationTime: .zero, duration: CMTime(value: 1, timescale: 30)))) {
+            if case .failure(let error) = $0 { XCTFail("HLG首帧失败：\(error)") }
+            appended.fulfill()
+        }
+        wait(for: [appended], timeout: 5)
+        let finished = expectation(description: "HLG文件收尾")
+        sink.finishRecording {
+            if case .failure(let error) = $0 { XCTFail("HLG收尾失败：\(error)") }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 10)
+        let profile = try VideoAssetProfileInspector().inspect(AVURLAsset(url: url))
+        XCTAssertEqual(profile.frameFormat.dynamicRange, .hdr(.hlg))
+        let reader = try AVAssetReader(asset: AVURLAsset(url: url))
+        let track = try XCTUnwrap(reader.asset.tracks(withMediaType: .video).first)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange])
+        reader.add(output)
+        XCTAssertTrue(reader.startReading())
+        let sample = try XCTUnwrap(output.copyNextSampleBuffer())
+        XCTAssertEqual(CVPixelBufferGetPixelFormatType(try XCTUnwrap(CMSampleBufferGetImageBuffer(sample))), kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
     }
 
     private func makeOutputURL() -> URL {

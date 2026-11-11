@@ -25,6 +25,26 @@ final class HDRArtifactContractTests: XCTestCase {
         try assertHDRExport(policy: .hdrPQ, transfer: kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ)
     }
 
+    func testHDRProcessorFailurePreservesItsOriginalErrorType() throws {
+        let source = try makeHDRFixture(transfer: kCVImageBufferTransferFunction_ITU_R_2100_HLG)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let output = temporaryURL(extension: "mp4")
+        defer { try? FileManager.default.removeItem(at: output) }
+        let job = ReaderWriterExportJob(asset: AVAsset(url: source), outputURL: output,
+            videoProcessors: [RejectingHDRProcessor()], exportProfile: .init(videoCodec: .hevc, colorPolicy: .hdrHLG))
+        let done = expectation(description: "保留处理器原始错误")
+        job.export { result in
+            guard case .failure(let error) = result,
+                  error as? HDRSentinelError == .rejected else {
+                XCTFail("清理和媒体包装不能替换处理器的错误类型")
+                done.fulfill()
+                return
+            }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+    }
+
     func testHDRProfileRejectsH264() throws {
         let url = try makeHDRFixture(transfer: kCVImageBufferTransferFunction_ITU_R_2100_HLG)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -271,5 +291,13 @@ private struct HDRBufferProcessor: FrameProcessor, FrameProcessorCapabilityProvi
     let capabilities = FrameProcessorCapabilities(supportedDynamicRanges: [.hdr(.hlg), .hdr(.pq)])
     func process(_ frame: MediaFrame, completion: @escaping (Result<MediaFrame, Error>) -> Void) {
         completion(.success(PixelBufferFrame(pixelBuffer: buffer, metadata: frame.metadata)))
+    }
+}
+
+private enum HDRSentinelError: Error { case rejected }
+private struct RejectingHDRProcessor: FrameProcessor, FrameProcessorCapabilityProviding {
+    var capabilities: FrameProcessorCapabilities { .init(supportedDynamicRanges: [.hdr(.hlg)]) }
+    func process(_ frame: MediaFrame, completion: @escaping (Result<MediaFrame, Error>) -> Void) {
+        completion(.failure(HDRSentinelError.rejected))
     }
 }

@@ -10,6 +10,7 @@ import KakaposMediaCore
 import KakaposVideo
 import AVFoundation
 import CoreVideo
+import VideoToolbox
 
 public final class RecorderSink: MediaSink, @unchecked Sendable {
     public enum RecorderError: LocalizedError {
@@ -18,6 +19,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         case writerCannotStart(underlying: Error?)
         case noRecordedMedia
         case outputMissing
+        case unsupportedVideoPayload
 
         public var errorDescription: String? {
             switch self {
@@ -26,6 +28,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             case .writerCannotStart(let error): return error?.localizedDescription ?? "The asset writer could not start."
             case .noRecordedMedia: return "Recording finished without any media frames."
             case .outputMissing: return "Recording finished without an output media file."
+            case .unsupportedVideoPayload: return "Pixel buffers must be provided for recording video frames."
             }
         }
     }
@@ -34,6 +37,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         public var dimensions: CGSize?
         public var bitRate: Int?
         public var codec: AVVideoCodecType
+        public var colorPolicy: VideoExportColorPolicy
         public var scalingMode: String
         public var transform: CGAffineTransform
         public var includesVideo: Bool
@@ -52,11 +56,13 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             includesAudio: Bool = false,
             audioBitRate: Int = 128_000,
             audioSampleRate: Double = 44_100,
-            audioChannelCount: Int = 1
+            audioChannelCount: Int = 1,
+            colorPolicy: VideoExportColorPolicy = .sourceCompatible
         ) {
             self.dimensions = dimensions
             self.bitRate = bitRate
             self.codec = codec
+            self.colorPolicy = colorPolicy
             self.scalingMode = scalingMode
             self.transform = transform
             self.includesVideo = includesVideo
@@ -244,6 +250,9 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     public var maximumDuration: CMTime?
 
     public init(outputURL: URL, fileType: AVFileType = .mp4, configuration: Configuration = .init()) throws {
+        if configuration.includesVideo, configuration.colorPolicy.isHDR, configuration.codec != .hevc {
+            throw VideoExportProfileError.incompatibleHDRCodec
+        }
         self.outputURL = outputURL
         self.configuration = configuration
         try? FileManager.default.removeItem(at: outputURL)
@@ -389,6 +398,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         // `consume(_:)` 已在入队前预留了帧槽；停止录制只应拒绝后续帧，
         // 不能丢弃已经被接收、但尚未在串行队列执行的帧。
         guard !isCancellationRequested() else { return }
+        if state == .failed { throw terminalError ?? RecorderError.noRecordedMedia }
         guard state != .paused else { return }
         guard state != .cancelled && state != .finished else { return }
         if let sampleBuffer = extractSampleBuffer(frame), CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
@@ -396,7 +406,14 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             return
         }
         guard configuration.includesVideo else { throw RecorderError.writerCannotAddVideoInput }
-        guard let pixelBuffer = extractPixelBuffer(frame) else { return }
+        guard let pixelBuffer = extractPixelBuffer(frame) else { throw RecorderError.unsupportedVideoPayload }
+        if configuration.colorPolicy.isHDR {
+            let format = FrameFormat(pixelBuffer: pixelBuffer)
+            guard format.dynamicRange == configuration.colorPolicy.requestedDynamicRange,
+                  format.pixelFormat == .yuv420BiPlanar10BitVideoRange else {
+                throw VideoExportProfileError.invalidHDROutput
+            }
+        }
         let normalizedTime = adjustedPresentationTime(
             normalizedPresentationTime(for: frame.metadata.presentationTime),
             sampleDuration: frame.metadata.duration,
@@ -442,7 +459,11 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             AVVideoHeightKey: height,
             AVVideoScalingModeKey: configuration.scalingMode
         ]
-        if let bitRate = configuration.bitRate { settings[AVVideoAverageBitRateKey] = bitRate }
+        var compression: [String: Any] = [:]
+        if let bitRate = configuration.bitRate { compression[AVVideoAverageBitRateKey] = bitRate }
+        if configuration.colorPolicy.isHDR { compression[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main10_AutoLevel }
+        if !compression.isEmpty { settings[AVVideoCompressionPropertiesKey] = compression }
+        if let colors = configuration.colorPolicy.colorProperties { settings[AVVideoColorPropertiesKey] = colors }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
         guard writer.canAdd(input) else {
@@ -451,7 +472,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         input.transform = configuration.transform
         writer.add(input)
         let attributes: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferPixelFormatTypeKey as String: configuration.colorPolicy.pixelBufferFormat,
             kCVPixelBufferWidthKey as String: width,
             kCVPixelBufferHeightKey as String: height
         ]
@@ -676,6 +697,11 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
                 try self.consumeOnQueue(frame)
                 completion(.success(()))
             } catch {
+                self.terminalError = error
+                self.rejectFurtherFrames()
+                if self.writer.status == .writing { self.writer.cancelWriting() }
+                try? FileManager.default.removeItem(at: self.outputURL)
+                self.setState(.failed)
                 self.runtimeErrorHandler?(error)
                 completion(.failure(error))
             }
