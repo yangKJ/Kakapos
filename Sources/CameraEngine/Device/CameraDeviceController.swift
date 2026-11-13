@@ -159,6 +159,44 @@ public final class CameraDeviceController {
         }
     }
 
+    public var exposureBiasRange: ClosedRange<Float>? {
+        guard let device = deviceProvider() else { return nil }
+        return device.minExposureTargetBias...device.maxExposureTargetBias
+    }
+
+    /// 界面倍率与设备倍率可能不同，例如三摄的设备 1 倍对应界面 0.5 倍。
+    public var displayZoomRange: ClosedRange<CGFloat>? {
+        guard let device = deviceProvider() else { return nil }
+        let multiplier = displayZoomMultiplier(for: device)
+        let minimum = device.minAvailableVideoZoomFactor
+        let maximum = max(minimum, min(device.maxAvailableVideoZoomFactor, device.activeFormat.videoMaxZoomFactor))
+        return (minimum * multiplier)...(maximum * multiplier)
+    }
+
+    /// 输入与范围均为界面倍率；返回快照继续记录实际设备倍率。
+    @discardableResult
+    public func setDisplayZoomFactor(_ factor: CGFloat) throws -> CameraDeviceSnapshot {
+        guard factor.isFinite, factor > 0 else { throw CameraDeviceControlError.invalidZoomFactor(factor) }
+        return try withLockedDevice(operation: "set display zoom factor") { device in
+            let multiplier = displayZoomMultiplier(for: device)
+            let minimum = device.minAvailableVideoZoomFactor
+            let maximum = max(minimum, min(device.maxAvailableVideoZoomFactor, device.activeFormat.videoMaxZoomFactor))
+            let resolved = min(max(factor / multiplier, minimum), maximum)
+            device.videoZoomFactor = resolved
+            emit(.zoomFactorChanged(resolved))
+        }
+    }
+
+    private func displayZoomMultiplier(for device: AVCaptureDevice) -> CGFloat {
+        #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
+        if #available(iOS 18, macCatalyst 14, tvOS 17, *) {
+            let multiplier = device.displayVideoZoomFactorMultiplier
+            if multiplier.isFinite, multiplier > 0 { return multiplier }
+        }
+        #endif
+        return 1
+    }
+
     @discardableResult
     public func rampZoomFactor(to zoomFactor: CGFloat, rate: Float = 8) throws -> CameraDeviceSnapshot {
         guard zoomFactor >= 1 else {

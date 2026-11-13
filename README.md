@@ -439,3 +439,12 @@ Kakapos is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE
 `observeAppliedZoom` 返回设备实际倍率、是否来自系统控件、是否为结束状态。观察只用于状态投影。`configureSystemZoomControl(range:title:)` 由消费者显式安装，支持平台先检查能力和控件代理。标题由消费者提供本地化文本。系统控件遵循同一交互启用态和设备队列。
 
 `setNativePreviewEnabled` 默认启用视频流。关闭操作保留原生图层与连接，可用于对照坐标转换和资源开销。对焦与性能效果由消费者真机验收确认。
+
+
+### 界面倍率与曝光补偿范围
+
+`CameraDeviceController.displayZoomRange` 返回当前设备可显示的倍率范围。`setDisplayZoomFactor(_:)` 接受有限正数，将界面倍率按系统 `displayVideoZoomFactorMultiplier` 换算为设备倍率，并收敛到当前格式的实际范围；返回快照和事件继续记录设备倍率。没有系统显示换算能力的平台使用设备倍率，未连接设备时范围返回 nil。
+
+`exposureBiasRange` 返回设备当前曝光补偿上下限，消费者不应把所有相机固定为相同范围。手势密集更新可继续使用现有会话串行变焦接口；界面倍率与设备倍率不能直接混用。
+
+2026-11-13：iOS 消费者构建与无设备/无效值的聚焦合同测试通过。此记录不等同于实体多镜头切换、持续性能或相机画质验收。
