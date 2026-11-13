@@ -1097,8 +1097,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func configureVideoPixelFormat() throws {
-        let type = configuration.video.colorPolicy.pixelBufferFormat
-        guard videoOutput.availableVideoPixelFormatTypes.contains(type) else {
+        guard let type = configuration.video.resolvedPixelFormat(available: videoOutput.availableVideoPixelFormatTypes) else {
             throw CameraSourceError.unsupportedFeature("当前相机输出不支持所请求的像素格式。")
         }
         videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(type)]

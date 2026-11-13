@@ -223,6 +223,8 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
     public var preferredFrameRateRange: CameraFrameRateRange?
     public var preferredStabilizationMode: CameraVideoStabilizationMode
     public var colorPolicy: VideoExportColorPolicy
+    /// 空列表保留默认格式；消费者可优先请求原生双平面，减少采集端转换。
+    public var preferredPixelFormats: [OSType]
 
     public init(
         sessionPreset: AVCaptureSession.Preset = .high,
@@ -235,7 +237,8 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         maximumCaptureDuration: CMTime? = nil,
         preferredFrameRateRange: CameraFrameRateRange? = nil,
         preferredStabilizationMode: CameraVideoStabilizationMode = .auto,
-        colorPolicy: VideoExportColorPolicy = .sourceCompatible
+        colorPolicy: VideoExportColorPolicy = .sourceCompatible,
+        preferredPixelFormats: [OSType] = []
     ) {
         self.sessionPreset = sessionPreset
         self.aspectRatio = aspectRatio
@@ -248,6 +251,12 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         self.preferredFrameRateRange = preferredFrameRateRange
         self.preferredStabilizationMode = preferredStabilizationMode
         self.colorPolicy = colorPolicy
+        self.preferredPixelFormats = preferredPixelFormats
+    }
+
+    public func resolvedPixelFormat(available: [OSType]) -> OSType? {
+        let choices = colorPolicy.isHDR ? [colorPolicy.pixelBufferFormat] : preferredPixelFormats + [colorPolicy.pixelBufferFormat]
+        return choices.first { available.contains($0) }
     }
 
     public func resolvedDimensions(from sourceDimensions: CGSize) -> CGSize {

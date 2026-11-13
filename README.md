@@ -413,6 +413,10 @@ Kakapos is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE
 
 -----
 
+### 相机采集像素格式偏好
+
+`CameraVideoConfiguration.preferredPixelFormats` 允许消费者按顺序请求设备实际支持的采集格式，例如优先使用双平面 YUV 以减少输入带宽。空列表保留既有默认格式；显式 HDR 仍强制所需的 10-bit 格式，不被 SDR 偏好覆盖。`RecorderSink` 按实际输入缓冲区像素类型配置写入适配器，避免 NV12 输入被错误声明为 BGRA。合成 NV12 缓冲区写出并回读电影的合同测试位于 `CapturePixelFormatTests`。
+
 ### Photo preview resource options
 
 `CameraSourceConfiguration.discardsLateVideoFrames` opts a realtime preview into AVFoundation late-frame dropping. `CameraPhotoConfiguration.preparesMaximumDimensions` configures the active format's largest supported still-photo dimensions before session startup and after a device switch. Both options default to `false`. A capture request uses `maximumDimensions: true` to request that size. Its optional `videoOrientation` freezes the shutter orientation, and native photo requests honor the configured `photoQualityMode`. Processed Metal previews can use `MediaPipeline` with a custom `MediaSink`; the sink completes a frame after its GPU resources are no longer in use.

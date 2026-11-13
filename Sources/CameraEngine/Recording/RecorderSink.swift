@@ -472,7 +472,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         input.transform = configuration.transform
         writer.add(input)
         let attributes: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: configuration.colorPolicy.pixelBufferFormat,
+            kCVPixelBufferPixelFormatTypeKey as String: CVPixelBufferGetPixelFormatType(pixelBuffer),
             kCVPixelBufferWidthKey as String: width,
             kCVPixelBufferHeightKey as String: height
         ]
