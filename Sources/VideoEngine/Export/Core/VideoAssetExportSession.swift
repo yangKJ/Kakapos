@@ -686,6 +686,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
             duration: CMSampleBufferGetDuration(sampleBuffer).isValid ? CMSampleBufferGetDuration(sampleBuffer) : nil,
             sourceTime: CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer),
+            trackTransform: videoInput?.transform ?? .identity,
             format: FrameFormat(pixelBuffer: pixelBuffer)
         )
         return SampleBufferFrame(sampleBuffer: sampleBuffer, metadata: metadata)
