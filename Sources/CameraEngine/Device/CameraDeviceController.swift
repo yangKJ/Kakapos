@@ -301,6 +301,32 @@ public final class CameraDeviceController {
         }
     }
 
+    /// 色温和偏色由当前设备转换为增益，避免消费者复制相机标定数学。
+    @discardableResult
+    public func lockWhiteBalance(temperature: Float, tint: Float) throws -> CameraDeviceSnapshot {
+        guard temperature.isFinite, tint.isFinite, (1000...15000).contains(temperature), (-200...200).contains(tint) else {
+            throw CameraDeviceControlError.unsupportedControl("white balance temperature/tint")
+        }
+        return try withLockedDevice(operation: "lock white balance temperature/tint") { device in
+            guard device.isWhiteBalanceModeSupported(.locked) else {
+                throw CameraDeviceControlError.unsupportedControl("white balance temperature/tint")
+            }
+            var gains = device.deviceWhiteBalanceGains(for: .init(temperature: temperature, tint: tint))
+            gains.redGain = min(max(1, gains.redGain), device.maxWhiteBalanceGain)
+            gains.greenGain = min(max(1, gains.greenGain), device.maxWhiteBalanceGain)
+            gains.blueGain = min(max(1, gains.blueGain), device.maxWhiteBalanceGain)
+            device.setWhiteBalanceModeLocked(with: gains)
+            emit(.whiteBalanceModeChanged(.locked))
+            emit(.whiteBalanceGainsChanged([gains.redGain, gains.greenGain, gains.blueGain]))
+        }
+    }
+
+    public var whiteBalanceTemperatureAndTint: (temperature: Float, tint: Float)? {
+        guard let device = deviceProvider() else { return nil }
+        let values = device.temperatureAndTintValues(for: device.deviceWhiteBalanceGains)
+        return (values.temperature, values.tint)
+    }
+
     @discardableResult
     public func setSmoothAutoFocusEnabled(_ isEnabled: Bool) throws -> CameraDeviceSnapshot {
         try withLockedDevice(operation: "set smooth auto focus") { device in
