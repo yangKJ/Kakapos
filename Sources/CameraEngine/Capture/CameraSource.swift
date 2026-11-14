@@ -118,7 +118,6 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         public static let sessionState = "kakapos.camera.session-state"
         public static let deviceOrientation = "kakapos.camera.device-orientation"
         public static let mirrored = "kakapos.camera.mirrored"
-        public static let hardwareObservation = "kakapos.camera.hardware-observation"
         public static let captureKind = "kakapos.camera.capture-kind"
         public static let depthDelivered = "kakapos.camera.depth-delivered"
         public static let portraitEffectsMatteDelivered = "kakapos.camera.portrait-matte-delivered"
@@ -314,7 +313,6 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private var lastMediaType: String?
     private var currentOrientation: AVCaptureVideoOrientation = .portrait
     private let ownsSession: Bool
-
     private let videoOutput = AVCaptureVideoDataOutput()
     private let audioOutput = AVCaptureAudioDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
@@ -809,8 +807,11 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             }
             let resource: CameraPhotoCaptureResource
             do {
-                resource = try CameraPhotoCaptureResource(encodedData: data, metadata: metadata,
-                    origin: .videoFrame, photoTimestampSeconds: CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds)
+                resource = try CameraPhotoCaptureResource(
+                    encodedData: data, metadata: metadata,
+                    origin: .videoFrame,
+                    photoTimestampSeconds: CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+                )
             } catch {
                 DispatchQueue.main.async { self.notifyDelegatesOfFailure(error) }
                 return
@@ -1303,10 +1304,6 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         if mediaType == .video {
             setLastVideoSampleBuffer(sampleBuffer)
         }
-        var captureInfo: [String: Any] = [:]
-        if mediaType == .video, let observation = previewHardwareObservation() {
-            captureInfo[MetadataKey.hardwareObservation] = observation
-        }
         let frame = SampleBufferFrame(
             sampleBuffer: sampleBuffer,
             metadata: FrameMetadata(
@@ -1314,6 +1311,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                 duration: duration.isValid ? duration : nil,
                 sourceTime: presentationTime,
                 frameIndex: frameIndex,
+                captureObservation: mediaType == .video ? previewHardwareObservation() : nil,
+                receivedHostTimeSeconds: ProcessInfo.processInfo.systemUptime,
                 userInfo: [
                     MetadataKey.mediaType: mediaType.rawValue,
                     MetadataKey.cameraPosition: String(describing: currentPosition),
@@ -1321,7 +1320,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                     MetadataKey.deviceOrientation: String(describing: currentOrientation),
                     MetadataKey.mirrored: configuration.effectiveMirroringValue(for: currentPosition),
                     MetadataKey.captureKind: mediaType == .video ? "video" : "audio"
-                ].merging(captureInfo) { _, new in new }
+                ]
             )
         )
         let mediaKind: CameraFrameIngressMediaKind = mediaType == .video ? .video : .audio

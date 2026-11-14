@@ -24,6 +24,9 @@ public struct FrameMetadata: @unchecked Sendable {
     public var trackTransform: CGAffineTransform
     public var frameIndex: Int64?
     public var format: FrameFormat?
+    /// 摄像头设备状态观测；来源时钟与媒体PTS分别保留，不宣称逐帧传感器EXIF。
+    public var captureObservation: CameraHardwareObservation?
+    public var receivedHostTimeSeconds: Double?
     public var userInfo: [String: Any]
 
     public init(
@@ -33,6 +36,8 @@ public struct FrameMetadata: @unchecked Sendable {
         trackTransform: CGAffineTransform = .identity,
         frameIndex: Int64? = nil,
         format: FrameFormat? = nil,
+        captureObservation: CameraHardwareObservation? = nil,
+        receivedHostTimeSeconds: Double? = nil,
         userInfo: [String: Any] = [:]
     ) {
         self.presentationTime = presentationTime
@@ -41,6 +46,8 @@ public struct FrameMetadata: @unchecked Sendable {
         self.trackTransform = trackTransform
         self.frameIndex = frameIndex
         self.format = format
+        self.captureObservation = captureObservation
+        self.receivedHostTimeSeconds = receivedHostTimeSeconds
         self.userInfo = userInfo
     }
 }

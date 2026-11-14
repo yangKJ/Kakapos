@@ -8,6 +8,7 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import KakaposMediaCore
 
 #if canImport(UIKit) && !os(watchOS)
 public enum CameraPhotoResourceFormat: String, Codable, Sendable {
@@ -86,8 +87,11 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
     private var failure: CameraPhotoCaptureError?
     private var completed = false
 
-    init(request: CameraPhotoCaptureRequest, hardwareObservation: CameraHardwareObservation?,
-         finish: @escaping @Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void) {
+    init(
+        request: CameraPhotoCaptureRequest,
+        hardwareObservation: CameraHardwareObservation?,
+        finish: @escaping @Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void
+    ) {
         self.hardwareObservation = hardwareObservation
         requestID = request.id
         outputDirectory = request.outputDirectory
@@ -131,10 +135,12 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
             try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
             resource.publish(at: url, retainingData: retainsEncodedData)
-        } catch let error as CameraPhotoCaptureError { failure = error }
-        catch { failure = .captureFailed(error.localizedDescription) }
-        if photo.isRawPhoto { rawPhoto = resource }
-        else { processedPhoto = resource }
+        } catch let error as CameraPhotoCaptureError {
+            failure = error
+        } catch {
+            failure = .captureFailed(error.localizedDescription)
+        }
+        if photo.isRawPhoto { rawPhoto = resource } else { processedPhoto = resource }
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput,
@@ -148,7 +154,8 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput,
-                     didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+                     didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
+                     error: Error?) {
         complete(error: error.map { .captureFailed($0.localizedDescription) })
     }
 
@@ -163,10 +170,17 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
         let problem = error ?? failure ?? (missing ? .missingResource : nil)
         let result: Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>
         if processedPhoto != nil || rawPhoto != nil || movieURL != nil {
-            result = .success(CameraPhotoCaptureArtifact(requestID: requestID,
-                processedPhoto: processedPhoto, rawPhoto: rawPhoto, livePhotoMovieURL: movieURL,
-                livePhotoKeyTime: keyTime, captureFailure: problem))
-        } else { result = .failure(problem ?? .missingResource) }
+            result = .success(CameraPhotoCaptureArtifact(
+                requestID: requestID,
+                processedPhoto: processedPhoto,
+                rawPhoto: rawPhoto,
+                livePhotoMovieURL: movieURL,
+                livePhotoKeyTime: keyTime,
+                captureFailure: problem
+            ))
+        } else {
+            result = .failure(problem ?? .missingResource)
+        }
         lock.unlock()
         finish(result)
     }
