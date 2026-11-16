@@ -430,13 +430,12 @@ public final class CameraDeviceController {
     @discardableResult
     public func selectFrameRateRange(_ range: CameraFrameRateRange) throws -> CameraDeviceSnapshot {
         return try withLockedDevice(operation: "select frame rate range") { device in
-            let minDuration = range.maximumFramesPerSecond > 0 ? CMTime(seconds: 1 / range.maximumFramesPerSecond, preferredTimescale: 600) : .invalid
-            let maxDuration = range.minimumFramesPerSecond > 0 ? CMTime(seconds: 1 / range.minimumFramesPerSecond, preferredTimescale: 600) : .invalid
-            guard minDuration.isValid, maxDuration.isValid else {
-                throw CameraDeviceControlError.unsupportedControl("frame rate range")
-            }
-            device.activeVideoMinFrameDuration = minDuration
-            device.activeVideoMaxFrameDuration = maxDuration
+            guard device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
+                $0.minFrameRate <= range.minimumFramesPerSecond && $0.maxFrameRate >= range.maximumFramesPerSecond
+            }) else { throw CameraDeviceControlError.unsupportedControl("frame rate range") }
+            let durations = try range.frameDurations()
+            device.activeVideoMinFrameDuration = durations.minimum
+            device.activeVideoMaxFrameDuration = durations.maximum
             emit(.frameRateChanged(range))
         }
     }

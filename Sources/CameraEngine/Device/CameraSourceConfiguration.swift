@@ -212,6 +212,9 @@ public struct CameraFrameRateRange: Equatable, Sendable {
 }
 
 public struct CameraVideoConfiguration: Equatable, Sendable {
+    public var formatSelectionPolicy: CameraVideoFormatSelectionPolicy
+    /// 传感器格式尺寸，独立于dimensions编码画布及连接旋转。
+    public var captureDimensions: CGSize?
     public var sessionPreset: AVCaptureSession.Preset
     public var aspectRatio: CameraAspectRatio
     public var dimensions: CGSize?
@@ -238,8 +241,12 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
         preferredFrameRateRange: CameraFrameRateRange? = nil,
         preferredStabilizationMode: CameraVideoStabilizationMode = .auto,
         colorPolicy: VideoExportColorPolicy = .sourceCompatible,
-        preferredPixelFormats: [OSType] = []
+        preferredPixelFormats: [OSType] = [],
+        formatSelectionPolicy: CameraVideoFormatSelectionPolicy = .bestEffort,
+        captureDimensions: CGSize? = nil
     ) {
+        self.formatSelectionPolicy = formatSelectionPolicy
+        self.captureDimensions = captureDimensions
         self.sessionPreset = sessionPreset
         self.aspectRatio = aspectRatio
         self.dimensions = dimensions

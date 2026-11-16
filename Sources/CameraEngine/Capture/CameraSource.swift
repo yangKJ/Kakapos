@@ -145,6 +145,32 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     public private(set) var currentPosition: CameraPosition
     public private(set) var authorizationStatus: CameraAuthorizationStatus
     public private(set) var configuration: CameraSourceConfiguration
+    public var captureControlIdentity: String? {
+        onSessionQueueSync {
+            guard let device = videoInput?.device else { return nil }
+            runLock.lock()
+            defer { runLock.unlock() }
+            guard let generation = activeRunGeneration else { return nil }
+            return device.uniqueID + ":" + String(generation)
+        }
+    }
+
+    public var resolvedVideoSpecification: CameraVideoSpecification? {
+        onSessionQueueSync {
+            guard let device = videoInput?.device else { return nil }
+            let size = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+            func fps(_ duration: CMTime) -> Double? {
+                let seconds = duration.seconds
+                return seconds.isFinite && seconds > 0 ? 1 / seconds : nil
+            }
+            return CameraVideoSpecification(width: Int(size.width), height: Int(size.height),
+                minimumFrameRate: fps(device.activeVideoMaxFrameDuration), maximumFrameRate: fps(device.activeVideoMinFrameDuration),
+                pixelFormat: (videoOutput.videoSettings[kCVPixelBufferPixelFormatTypeKey as String] as? NSNumber)?.uint32Value,
+                stabilizationMode: videoOutput.connection(with: .video).map { Int($0.activeVideoStabilizationMode.rawValue) },
+                deviceIdentifier: device.uniqueID)
+        }
+    }
+
     public var frameHandler: ((MediaFrame) -> Void)?
     public var sessionEventHandler: ((CameraSessionEvent) -> Void)?
     public var photoCaptureHandler: ((CameraPhotoCaptureResult) -> Void)?
@@ -985,7 +1011,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         try configureMetadataOutputIfNeeded()
         try configureDepthOutputIfNeeded()
         applyCurrentConnections()
-        applyInitialDeviceConfigurationIfNeeded()
+        try applyInitialDeviceConfigurationIfNeeded()
         installDeviceObservers()
         isSessionConfigured = true
     }
@@ -1020,7 +1046,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             try configureVideoPixelFormat()
             try configureDepthOutputIfNeeded()
             applyCurrentConnections()
-            applyInitialDeviceConfigurationIfNeeded()
+            try applyInitialDeviceConfigurationIfNeeded()
             installDeviceObservers()
         } catch {
             if let previousInput, session.canAddInput(previousInput) {
@@ -1048,6 +1074,21 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func configureVideoColorPolicy() throws {
+        if configuration.video.formatSelectionPolicy == .requireRequested {
+            guard let device = videoInput?.device else { throw CameraVideoSpecificationError.unsupportedSpecification }
+            let formats = device.formats
+            let candidates = formats.map { format in
+                let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                return CameraVideoFormatCandidate(width: Int(size.width), height: Int(size.height), frameRateRanges: format.videoSupportedFrameRateRanges.map {
+                    CameraFrameRateRange(minimumFramesPerSecond: $0.minFrameRate, maximumFramesPerSecond: $0.maxFrameRate)
+                })
+            }
+            if let index = try configuration.video.preferredFormatIndex(in: candidates, currentIndex: formats.firstIndex(of: device.activeFormat)) {
+                try device.lockForConfiguration()
+                device.activeFormat = formats[index]
+                device.unlockForConfiguration()
+            }
+        }
         let policy = configuration.video.colorPolicy
         guard policy != .sourceCompatible else { return }
         guard let device = videoInput?.device else { throw CameraSourceError.unsupportedFeature("相机尚未配置。") }
@@ -1211,12 +1252,13 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
     }
 
-    private func applyInitialDeviceConfigurationIfNeeded() {
+    private func applyInitialDeviceConfigurationIfNeeded() throws {
         guard let device = videoInput?.device else { return }
         prepareMaximumPhotoDimensions()
         do {
             try device.lockForConfiguration()
         } catch {
+            if configuration.video.formatSelectionPolicy == .requireRequested { throw error }
             return
         }
         defer { device.unlockForConfiguration() }
@@ -1239,12 +1281,11 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
            device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
                $0.minFrameRate <= range.minimumFramesPerSecond && $0.maxFrameRate >= range.maximumFramesPerSecond
            }) {
-            let minDuration = range.maximumFramesPerSecond > 0 ? CMTime(seconds: 1 / range.maximumFramesPerSecond, preferredTimescale: 600) : .invalid
-            let maxDuration = range.minimumFramesPerSecond > 0 ? CMTime(seconds: 1 / range.minimumFramesPerSecond, preferredTimescale: 600) : .invalid
-            if minDuration.isValid, maxDuration.isValid {
-                device.activeVideoMinFrameDuration = minDuration
-                device.activeVideoMaxFrameDuration = maxDuration
-            }
+            let durations = try range.frameDurations()
+            device.activeVideoMinFrameDuration = durations.minimum
+            device.activeVideoMaxFrameDuration = durations.maximum
+        } else if configuration.video.preferredFrameRateRange != nil, configuration.video.formatSelectionPolicy == .requireRequested {
+            throw CameraVideoSpecificationError.unsupportedSpecification
         }
     }
 

@@ -127,6 +127,60 @@ final class RecordingCadenceTests: XCTestCase {
         XCTAssertEqual(duration.seconds, 12, accuracy: 0.05)
     }
 
+    func testEighteenFpsRecordingPreservesClockAndFrameCount() async throws {
+        let url = outputURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sink = try RecorderSink(outputURL: url, configuration: .init(includesAudio: false))
+        let buffer = try pixelBuffer()
+        let duration = try CameraFrameRateRange(minimumFramesPerSecond: 18, maximumFramesPerSecond: 18).frameDurations().minimum
+        for index in 0..<36 {
+            let deadline = Date().addingTimeInterval(2)
+            while !sink._videoInputReadyForTesting && Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+            let done = expectation(description: "18fps帧完成")
+            sink.consume(PixelBufferFrame(pixelBuffer: buffer, metadata: .init(
+                presentationTime: CMTimeMultiply(duration, multiplier: Int32(index)), duration: duration))) { result in
+                if case .failure(let error) = result { XCTFail(String(describing: error)) }
+                done.fulfill()
+            }
+            await fulfillment(of: [done], timeout: 3)
+        }
+        let finished = expectation(description: "18fps收尾")
+        sink.finishRecording { result in
+            if case .failure(let error) = result { XCTFail(String(describing: error)) }
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 10)
+        XCTAssertEqual(sink.recordingCadence.videoFrameCount, 36)
+        XCTAssertEqual(sink.recordingCadence.effectiveVideoFrameRate ?? 0, 18, accuracy: 0.000001)
+        let asset = AVURLAsset(url: url)
+        let reader = try AVAssetReader(asset: asset)
+        let track = try XCTUnwrap(asset.tracks(withMediaType: .video).first)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        reader.add(output)
+        XCTAssertTrue(reader.startReading())
+        var times: [CMTime] = []
+        while let sample = output.copyNextSampleBuffer() {
+            let time = CMSampleBufferGetOutputPresentationTimeStamp(sample)
+            if CMSampleBufferGetNumSamples(sample) == 0 {
+                XCTAssertNil(CMSampleBufferGetDataBuffer(sample))
+                continue
+            }
+            XCTAssertTrue(time.isNumeric)
+            times.append(time)
+        }
+        XCTAssertEqual(reader.status, .completed)
+        XCTAssertEqual(times.count, 36)
+        times.sort { $0 < $1 }
+        let tolerance = 1 / Double(max(1, track.naturalTimeScale))
+        let origin = try XCTUnwrap(times.first)
+        // 原始压缩流允许编码重排起点；帧节奏以相对呈现时间和容器精度验收。
+        for (index, time) in times.enumerated() {
+            XCTAssertEqual((time - origin).seconds, Double(index) / 18, accuracy: 2 * tolerance)
+        }
+        let fileDuration = try await asset.load(.duration)
+        XCTAssertEqual(fileDuration.seconds, 2, accuracy: 0.06)
+    }
+
     private func outputURL() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4") }
     private func pixelBuffer() throws -> CVPixelBuffer {
         var buffer: CVPixelBuffer?

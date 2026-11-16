@@ -105,7 +105,11 @@ final class RuntimeContractTests: XCTestCase {
         pipeline.start()
         source.emit(frameIndex: 4)
         wait(for: [started], timeout: 2)
+        let cancelled = expectation(description: "处理器取消已交付")
+        processor.didCancel = { cancelled.fulfill() }
         pipeline.cancel()
+        // started发生在取消句柄返回前，等待句柄安装后的取消交付。
+        wait(for: [cancelled], timeout: 2)
         XCTAssertEqual(processor.cancelled, 1)
         processor.callback?(
             .success(PixelBufferFrame(pixelBuffer: makeBuffer(), metadata: FrameMetadata(presentationTime: .zero))))
@@ -255,6 +259,7 @@ private final class CapabilityLimitedProcessor: FrameProcessor, FrameProcessorCa
 
 private final class DeferredProcessor: CancellableFrameProcessor {
     private(set) var cancelled = 0
+    var didCancel: (() -> Void)?
     var callback: ((Result<MediaFrame, Error>) -> Void)?
     var started: (() -> Void)?
     func process(_ frame: MediaFrame, completion: @escaping (Result<MediaFrame, Error>) -> Void) {
@@ -265,7 +270,10 @@ private final class DeferredProcessor: CancellableFrameProcessor {
     {
         callback = completion
         started?()
-        return FrameProcessingCancellation { [weak self] in self?.cancelled += 1 }
+        return FrameProcessingCancellation { [weak self] in
+            self?.cancelled += 1
+            self?.didCancel?()
+        }
     }
 }
 
