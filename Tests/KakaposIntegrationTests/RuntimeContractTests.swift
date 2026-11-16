@@ -36,6 +36,30 @@ final class RuntimeContractTests: XCTestCase {
         XCTAssertTrue(onMain)
     }
 
+    func testSourceFailureAfterGracefulStopDoesNotCancelAcceptedWork() {
+        let source = ContractSource()
+        let processor = DeferredProcessor()
+        let started = expectation(description: "已接纳末帧")
+        processor.started = { started.fulfill() }
+        let received = expectation(description: "末帧交付写入端")
+        let sink = ContractSink { _ in received.fulfill() }
+        let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [sink])
+        pipeline.start()
+        source.emit(frameIndex: 1)
+        wait(for: [started], timeout: 2)
+        let finished = expectation(description: "保留已接纳的成片收尾")
+        pipeline.stop { result in
+            if case .failure(let error) = result { XCTFail("安全收尾失败：\(error)") }
+            finished.fulfill()
+        }
+        XCTAssertEqual(pipeline.state, .finishing)
+        source.delegate?.mediaSource(source, didFail: NSError(domain: "camera.reset", code: 1))
+        processor.callback?(.success(PixelBufferFrame(pixelBuffer: makeBuffer(), metadata: .init(presentationTime: .zero))))
+        wait(for: [finished, received], timeout: 2)
+        XCTAssertEqual(pipeline.state, .finished)
+        XCTAssertEqual(processor.cancelled, 0)
+    }
+
     func testStopDrainsAnAlreadyAcceptedLastFrameBeforeCompletion() {
         let source = ContractSource()
         let processorFinished = expectation(description: "processor completion")

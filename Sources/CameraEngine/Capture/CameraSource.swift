@@ -150,7 +150,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             guard let device = videoInput?.device else { return nil }
             runLock.lock()
             defer { runLock.unlock() }
-            guard let generation = activeRunGeneration else { return nil }
+            guard let generation = runLifecycle.activeGeneration else { return nil }
             return device.uniqueID + ":" + String(generation) + ":" + String(controlConfigurationRevision)
         }
     }
@@ -327,12 +327,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private let runLock = NSLock()
     private let frameDeliveryFence = NSRecursiveLock()
     private let observerIngressGate = CameraFrameIngressGate(maximumInFlightFrameCount: 6)
-    private var isRunActive = false
-    private var activeRunGeneration: UInt64?
-    private var isStopInProgress = false
-    private var restartRequestedAfterStop = false
-    private var expectedStopNotificationGeneration: UInt64?
-    private var didDeliverTerminalCallback = false
+    private var runLifecycle = CameraRunLifecycle()
     private var lifecycle: CameraSessionLifecycle
     private var frameIndex: Int64 = 0
     private var lastPresentationTime: CMTime?
@@ -619,9 +614,12 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                 self.previewLayer.connection?.isEnabled = self.nativePreviewEnabled
                 self.publish(.positionChanged(position))
             } catch {
-                self.publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
-                DispatchQueue.main.async {
-                    self.notifyDelegatesOfFailure(error)
+                if let device = self.videoInput?.device, self.session.isRunning {
+                    let restored = Self.cameraPosition(from: device.position)
+                    self.publish(.runtimeError(isRecoverable: true, description: error.localizedDescription))
+                    self.publish(.positionChanged(restored))
+                } else {
+                    self.finishRuntimeFailure(error)
                 }
             }
         }
@@ -929,7 +927,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     var _terminalHandoffForTesting: (isPending: Bool, restartRequested: Bool) {
         runLock.lock()
-        let value = (isStopInProgress, restartRequestedAfterStop)
+        let value = (runLifecycle.isStopping, runLifecycle.restartRequested)
         runLock.unlock()
         return value
     }
@@ -1529,87 +1527,68 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private func beginRunIfNeeded() -> UInt64? {
         runLock.lock()
         defer { runLock.unlock() }
-        guard !isRunActive, !isStopInProgress else { return nil }
-        isRunActive = true
-        didDeliverTerminalCallback = false
-        observerIngressGate.reset()
-        let generation = frameIngressGate.reset()
-        activeRunGeneration = generation
-        return generation
+        return runLifecycle.begin {
+            observerIngressGate.reset()
+            return frameIngressGate.reset()
+        }
     }
 
     private func beginAuthorizationRequestIfNeeded() -> UInt64? {
         runLock.lock()
         defer { runLock.unlock() }
-        guard !isRunActive, !isStopInProgress else { return nil }
-        isRunActive = true
-        didDeliverTerminalCallback = false
-        observerIngressGate.rejectFurtherFrames()
-        let generation = frameIngressGate.rejectFurtherFrames()
-        activeRunGeneration = generation
-        return generation
+        return runLifecycle.begin {
+            observerIngressGate.rejectFurtherFrames()
+            return frameIngressGate.rejectFurtherFrames()
+        }
     }
 
     private func completeAuthorizationRequest(generation: UInt64) -> Bool {
         runLock.lock()
         defer { runLock.unlock() }
-        guard isRunActive,
-              !isStopInProgress,
-              frameIngressGate.isCurrentGeneration(generation) else { return false }
-        isRunActive = false
-        activeRunGeneration = nil
-        return true
+        guard frameIngressGate.isCurrentGeneration(generation) else { return false }
+        return runLifecycle.completeAuthorization(generation: generation)
     }
 
     private func beginTerminalIfNeeded() -> UInt64? {
         runLock.lock()
         defer { runLock.unlock() }
-        guard isRunActive, !isStopInProgress else { return nil }
-        isRunActive = false
-        activeRunGeneration = nil
-        isStopInProgress = true
-        didDeliverTerminalCallback = false
-        observerIngressGate.rejectFurtherFrames()
-        return frameIngressGate.rejectFurtherFrames()
+        return runLifecycle.beginTerminal {
+            observerIngressGate.rejectFurtherFrames()
+            return frameIngressGate.rejectFurtherFrames()
+        }
     }
 
     private func invalidateRunForFailure() -> UInt64 {
         runLock.lock()
         defer { runLock.unlock() }
-        isRunActive = false
-        activeRunGeneration = nil
-        observerIngressGate.rejectFurtherFrames()
-        return frameIngressGate.rejectFurtherFrames()
+        return runLifecycle.invalidate {
+            observerIngressGate.rejectFurtherFrames()
+            return frameIngressGate.rejectFurtherFrames()
+        }
     }
 
     private func deferStartUntilTerminalHandoffIfNeeded() -> Bool {
         runLock.lock()
         defer { runLock.unlock() }
-        guard isStopInProgress else { return false }
-        restartRequestedAfterStop = true
-        return true
+        return runLifecycle.deferStartIfStopping()
     }
 
     private func expectStopNotification(generation: UInt64) {
         runLock.lock()
-        if isStopInProgress {
-            expectedStopNotificationGeneration = generation
-        }
+        runLifecycle.expectStop(generation: generation)
         runLock.unlock()
     }
 
     private func currentActiveRunGeneration() -> UInt64? {
         runLock.lock()
-        let generation = isRunActive ? activeRunGeneration : nil
-        runLock.unlock()
-        return generation
+        defer { runLock.unlock() }
+        return runLifecycle.activeGeneration
     }
 
     private func isActiveRunGeneration(_ generation: UInt64) -> Bool {
         runLock.lock()
-        let isCurrent = isRunActive && activeRunGeneration == generation
-        runLock.unlock()
-        return isCurrent
+        defer { runLock.unlock() }
+        return runLifecycle.isCurrent(generation)
     }
 
     /// `startRunning()` 可能阻塞，不能在持有 runLock 时调用（AVFoundation 可能同步回调通知）。
@@ -1630,37 +1609,17 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     private func consumeExpectedStopNotification() -> Bool {
         runLock.lock()
-        guard expectedStopNotificationGeneration != nil else {
-            runLock.unlock()
-            return false
-        }
-        expectedStopNotificationGeneration = nil
-        let shouldRestart = completeTerminalHandoffIfReadyLocked()
+        let result = runLifecycle.consumeExpectedStop()
         runLock.unlock()
-        if shouldRestart {
-            start()
-        }
-        return true
+        if result.restart { start() }
+        return result.consumed
     }
 
     private func markTerminalCallbackDelivered() {
         runLock.lock()
-        didDeliverTerminalCallback = true
-        let shouldRestart = completeTerminalHandoffIfReadyLocked()
+        let shouldRestart = runLifecycle.markCallbackDelivered()
         runLock.unlock()
-        if shouldRestart {
-            start()
-        }
-    }
-
-    private func completeTerminalHandoffIfReadyLocked() -> Bool {
-        guard isStopInProgress,
-              didDeliverTerminalCallback,
-              expectedStopNotificationGeneration == nil else { return false }
-        isStopInProgress = false
-        let shouldRestart = restartRequestedAfterStop
-        restartRequestedAfterStop = false
-        return shouldRestart
+        if shouldRestart { start() }
     }
 
     private func waitForActiveFrameDeliveries() {
@@ -1722,15 +1681,19 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil) { [weak self] _ in
-                self?.onSessionQueue {
-                    self?.handleSessionInterruption(isRecordingActive: self?.isRecordingActiveProvider?() == true)
+                guard let self, let generation = self.currentActiveRunGeneration() else { return }
+                self.onSessionQueue {
+                    guard self.isActiveRunGeneration(generation) else { return }
+                    self.handleSessionInterruption(isRecordingActive: self.isRecordingActiveProvider?() == true)
                 }
             }
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: session, queue: nil) { [weak self] _ in
-                self?.onSessionQueue {
-                    self?.handleSessionInterruptionEnded()
+                guard let self, let generation = self.currentActiveRunGeneration() else { return }
+                self.onSessionQueue {
+                    guard self.isActiveRunGeneration(generation) else { return }
+                    self.handleSessionInterruptionEnded()
                 }
             }
         )
@@ -1788,32 +1751,37 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private func handleRuntimeError(_ notification: Notification) {
         let error = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
         let isRecoverable = error?.domain == AVFoundationErrorDomain && error?.code == AVError.mediaServicesWereReset.rawValue
-        publish(.runtimeError(isRecoverable: isRecoverable, description: error?.localizedDescription))
         if isRecoverable {
+            publish(.runtimeError(isRecoverable: true, description: error?.localizedDescription))
             guard let runGeneration = currentActiveRunGeneration(),
                   authorizationStatus == .authorized else { return }
-            do {
-                session.beginConfiguration()
-                do {
-                    try configureVideoColorPolicy()
-                    try configureVideoPixelFormat()
-                    applyCurrentConnections()
-                    try applyInitialDeviceConfigurationIfNeeded()
-                    installDeviceObservers()
-                } catch {
-                    session.commitConfiguration()
-                    throw error
-                }
-                session.commitConfiguration()
-                guard startSessionIfRunIsActive(generation: runGeneration), session.isRunning else { return }
-                publish(.didStartRunning)
-            } catch {
-                publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
-                DispatchQueue.main.async { self.notifyDelegatesOfFailure(error) }
-            }
+            CameraSessionRecovery.run(isCurrent: { self.isActiveRunGeneration(runGeneration) }, configure: {
+                self.session.beginConfiguration()
+                defer { self.session.commitConfiguration() }
+                try self.configureVideoColorPolicy()
+                try self.configureVideoPixelFormat()
+                self.applyCurrentConnections()
+                try self.applyInitialDeviceConfigurationIfNeeded()
+                self.installDeviceObservers()
+            }, restart: {
+                guard self.startSessionIfRunIsActive(generation: runGeneration) else { return false }
+                guard self.session.isRunning else { throw CameraPhotoCaptureError.sessionUnavailable }
+                return true
+            }, ready: {
+                self.publish(.didStartRunning)
+            }, failed: {
+                self.finishRuntimeFailure($0)
+            })
             return
         }
-        guard let error, let terminalGeneration = beginTerminalIfNeeded() else { return }
+        guard let error else { return }
+        finishRuntimeFailure(error)
+    }
+
+    private func finishRuntimeFailure(_ error: Error) {
+        guard let terminalGeneration = beginTerminalIfNeeded() else { return }
+        publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
+        setLastVideoSampleBuffer(nil)
         let terminalDelegates = CameraCallbackTransfer(mediaSourceDelegatesSnapshot())
         waitForActiveFrameDeliveries()
         if session.isRunning {
@@ -1827,6 +1795,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func handleSessionInterruption(isRecordingActive: Bool) {
+        guard currentActiveRunGeneration() != nil, lifecycle.canBeginInterruption else { return }
         if !isPaused {
             isPaused = true
             shouldResumeAfterInterruption = true
@@ -1837,6 +1806,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func handleSessionInterruptionEnded() {
+        guard currentActiveRunGeneration() != nil,
+              state == .interrupted || state == .interruptedWhileRecording else { return }
         if shouldResumeAfterInterruption {
             isPaused = false
             publish(.resumeRequested)
