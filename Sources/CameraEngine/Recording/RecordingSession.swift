@@ -119,7 +119,8 @@ final class RecordingSession {
         outputURL: URL,
         fallbackStartedAt: CMTime?,
         fallbackEndedAt: CMTime?,
-        infoDictionary: [String: Any]? = nil
+        infoDictionary: [String: Any]? = nil,
+        recordingCadence: RecordingCadence? = nil
     ) -> RecordedClip {
         let startedAt = clips.first?.startedAt ?? fallbackStartedAt
         let endedAt = clips.last?.endedAt ?? fallbackEndedAt
@@ -144,7 +145,8 @@ final class RecordingSession {
                 "totalDurationSeconds": total.seconds,
                 "startedAtSeconds": startedAt?.seconds ?? 0,
                 "endedAtSeconds": endedAt?.seconds ?? 0
-            ]
+            ],
+            recordingCadence: recordingCadence
         )
     }
 

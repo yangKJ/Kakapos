@@ -30,6 +30,9 @@ final class RecorderSinkRegressionTests: XCTestCase {
             try await Task.sleep(nanoseconds: 34_000_000)
         }
         XCTAssertEqual(sink.snapshot.lastPresentationTime?.seconds ?? -1, 5.0 / 30, accuracy: 0.0001)
+        XCTAssertEqual(sink.recordingCadence.videoFrameCount, 6)
+        XCTAssertEqual(sink.recordingCadence.audioSampleBufferCount, 6)
+        XCTAssertEqual(sink.recordingCadence.audioVideoStartOffsetSeconds ?? -1, 0, accuracy: 0.0001)
         let finished = expectation(description: "同时间录制完成")
         sink.finishRecording { result in
             if case .failure(let error) = result { XCTFail("录制收尾失败：\(error)") }

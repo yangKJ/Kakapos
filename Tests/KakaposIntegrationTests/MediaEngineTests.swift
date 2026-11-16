@@ -5604,6 +5604,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recordedClip?.segments.count, 2)
         XCTAssertEqual(recordedClip?.segments.first?.duration, CMTime(value: 30, timescale: 30))
         XCTAssertEqual(recordedClip?.segments.allSatisfy(\.containsVideo), true)
+        XCTAssertEqual(recordedClip?.recordingCadence?.videoFrameCount, 2)
+        XCTAssertEqual(recordedClip?.recordingCadence?.maximumVideoGapSeconds ?? -1, 1, accuracy: 0.001)
     }
 
     func testRecorderSinkFinishWhilePausedKeepsRecordedDuration() throws {

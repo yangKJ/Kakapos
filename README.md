@@ -67,6 +67,8 @@ Start with the smallest entry points:
 - **Record**: `CameraEngine`, `RecordingPipeline`, `CameraSource`
 - **Timeline**: `TimelinePipeline`, `TimelineComposition`
 
+`RecorderSink.recordingCadence`提供有界录制摘要，并随`RecordedClip.recordingCadence`交付。摘要按成功写入的规范化PTS累计帧数、最大间隔、有效帧率、非单调计数、录制器明确丢弃的音视频及音画起止偏移；暂停先由录制时钟处理。可变帧率不自动判错，未知末帧时长返回nil尾部偏移；这些数据不代表传感器到显示的端到端帧龄，也不包含未到达录制器的所有上游丢帧。
+
 Recorded clips are also first-class bridge inputs. After camera recording finishes, `RecordedClip` can be sent back into preview, timeline, and export without rebuilding the media wiring by hand.
 
 The fuller surface stays available behind each board:

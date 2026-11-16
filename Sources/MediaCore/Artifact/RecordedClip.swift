@@ -92,7 +92,64 @@ public struct RecordedClipMergeHandoff: Equatable, Sendable {
     }
 }
 
+/// 成功写入时钟的有界摘要；帧率允许可变，暂停由录制器先规范化时间。
+public struct RecordingCadence: Codable, Equatable, Sendable {
+    public private(set) var videoFrameCount = 0
+    public private(set) var audioSampleBufferCount = 0
+    public private(set) var droppedVideoFrames = 0
+    public private(set) var droppedAudioBuffers = 0
+    public private(set) var nonMonotonicVideoFrames = 0
+    public private(set) var maximumVideoGapSeconds = 0.0
+    private var firstVideo: Double?
+    private var lastVideo: Double?
+    private var videoEnd: Double?
+    private var firstAudio: Double?
+    private var audioEnd: Double?
+
+    public init() {}
+
+    public var effectiveVideoFrameRate: Double? {
+        guard videoFrameCount > 1, let firstVideo, let lastVideo, lastVideo > firstVideo else { return nil }
+        return Double(videoFrameCount - 1) / (lastVideo - firstVideo)
+    }
+    public var audioVideoStartOffsetSeconds: Double? {
+        guard let firstAudio, let firstVideo else { return nil }
+        return firstAudio - firstVideo
+    }
+    public var audioVideoEndOffsetSeconds: Double? {
+        guard let audioEnd, let videoEnd else { return nil }
+        return audioEnd - videoEnd
+    }
+
+    public mutating func recordVideo(seconds: Double, duration: Double) {
+        guard seconds.isFinite else { return }
+        if let lastVideo {
+            if seconds <= lastVideo { nonMonotonicVideoFrames += 1 }
+            maximumVideoGapSeconds = max(maximumVideoGapSeconds, seconds - lastVideo)
+        }
+        videoFrameCount += 1
+        firstVideo = firstVideo ?? seconds
+        lastVideo = max(lastVideo ?? seconds, seconds)
+        // 未知末帧时长不能伪装成0，否则会制造一个假的音画尾部偏移。
+        let end = seconds + duration
+        videoEnd = duration.isFinite && duration > 0 && end.isFinite ? max(videoEnd ?? end, end) : nil
+    }
+
+    public mutating func recordAudio(seconds: Double, duration: Double) {
+        guard seconds.isFinite else { return }
+        audioSampleBufferCount += 1
+        firstAudio = firstAudio ?? seconds
+        let end = seconds + duration
+        audioEnd = duration.isFinite && duration > 0 && end.isFinite ? max(audioEnd ?? end, end) : nil
+    }
+
+    public mutating func recordDrop(audio: Bool) {
+        if audio { droppedAudioBuffers += 1 } else { droppedVideoFrames += 1 }
+    }
+}
+
 public final class RecordedClip {
+    public let recordingCadence: RecordingCadence?
     public let identifier: UUID
     public let outputURL: URL?
     public let duration: CMTime
@@ -175,8 +232,10 @@ public final class RecordedClip {
         isMutedOnMerge: Bool = false,
         infoDictionary: [String: Any]? = nil,
         thumbnailTime: CMTime? = nil,
-        sessionManifest: [String: Any]? = nil
+        sessionManifest: [String: Any]? = nil,
+        recordingCadence: RecordingCadence? = nil
     ) {
+        self.recordingCadence = recordingCadence
         self.identifier = identifier
         self.outputURL = outputURL
         self.duration = duration

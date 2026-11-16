@@ -226,6 +226,19 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     private let writer: AVAssetWriter
     private let configuration: Configuration
     private let session = RecordingSession()
+    private let cadenceLock = NSLock()
+    private var cadence = RecordingCadence()
+    public var recordingCadence: RecordingCadence {
+        cadenceLock.lock()
+        defer { cadenceLock.unlock() }
+        return cadence
+    }
+    private func updateCadence(_ update: (inout RecordingCadence) -> Void) {
+        cadenceLock.lock()
+        defer { cadenceLock.unlock() }
+        update(&cadence)
+    }
+
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
@@ -264,6 +277,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
         guard enqueueAcceptedFrame(frame, completion: completion) else {
+            if canAcceptFrames() { updateCadence { $0.recordDrop(audio: isAudioMediaFrame(frame)) } }
             droppedFrameHandler?(frame.metadata)
             if isAudioMediaFrame(frame) && canAcceptFrames() {
                 let error = MediaCoreError.audioDeliveryOverflow
@@ -340,7 +354,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
                         let clip = self.session.makeRecordedClip(
                             outputURL: self.outputURL,
                             fallbackStartedAt: self.startTime,
-                            fallbackEndedAt: self.lastPresentationTime
+                            fallbackEndedAt: self.lastPresentationTime,
+                            recordingCadence: self.recordingCadence
                         )
                         self.storeRecordedClip(clip)
                         self.setState(.finished)
@@ -429,13 +444,16 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         guard let adaptor = pixelBufferAdaptor, let videoInput else { throw RecorderError.writerCannotAddVideoInput }
         // 实时编码器背压时不能调用 adaptor，否则 AVFoundation 会抛出不可捕获的异常。
         guard videoInput.isReadyForMoreMediaData else {
+            updateCadence { $0.recordDrop(audio: false) }
             droppedFrameHandler?(frame.metadata)
             return
         }
         guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
+            updateCadence { $0.recordDrop(audio: false) }
             droppedFrameHandler?(frame.metadata)
             return
         }
+        updateCadence { $0.recordVideo(seconds: normalizedTime.seconds, duration: frame.metadata.duration?.seconds ?? 0) }
         lastVideoPresentationTime = normalizedTime
         session.markVideoFrame(at: normalizedTime)
         if !hasWrittenFirstVideoFrame {
@@ -532,9 +550,11 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         )
         guard input.isReadyForMoreMediaData else { throw MediaCoreError.audioDeliveryOverflow }
         guard input.append(rebasedBuffer ?? sampleBuffer) else {
+            updateCadence { $0.recordDrop(audio: true) }
             droppedFrameHandler?(FrameMetadata(presentationTime: normalizedTime))
             return
         }
+        updateCadence { $0.recordAudio(seconds: normalizedTime.seconds, duration: CMSampleBufferGetDuration(sampleBuffer).seconds) }
         lastAudioPresentationTime = normalizedTime
         session.markAudioFrame(at: normalizedTime)
         updateLastPresentationTime(normalizedTime)
