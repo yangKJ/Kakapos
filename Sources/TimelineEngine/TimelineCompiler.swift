@@ -14,6 +14,14 @@ import QuartzCore
 
 internal final class TimelineCompiler {
     private let compositionModel: TimelineRenderCompositionNode
+    private struct TransitionBinding {
+        let transition: Transition
+        let source: ClipLayer
+        let destination: ClipLayer
+    }
+    private var transitionBindings: [TransitionBinding] = []
+    private var samplingSizes: [ObjectIdentifier: CGSize] = [:]
+    private var keyframeIndexes: [ObjectIdentifier: TimelineKeyframeIndex] = [:]
 
     init(composition: TimelineComposition) {
         self.compositionModel = TimelineRenderNodeBuilder.build(from: composition)
@@ -29,8 +37,35 @@ internal final class TimelineCompiler {
 
         let flattenedLayers = compositionModel.flattenedLayers()
         let resolvedLayers = resolve(flattenedLayers)
+        for layer in flattenedLayers {
+            keyframeIndexes[ObjectIdentifier(layer)] = TimelineKeyframeIndex(layer.keyframes)
+            guard layer.keyframes.contains(where: { $0.keyPath != "opacity" && $0.keyPath != "intensity" && $0.keyPath != "effect.intensity" }) else { continue }
+            let size: CGSize
+            if let clip = layer as? ClipLayer { size = clip.asset.tracks(withMediaType: .video).first?.naturalSize ?? compositionModel.renderSize }
+            else if let image = layer as? ImageLayer { size = CGSize(width: image.image.width, height: image.image.height) }
+            else if let text = layer as? TextLayer { size = text.frame.size }
+            else { size = compositionModel.renderSize }
+            samplingSizes[ObjectIdentifier(layer)] = size
+        }
 
         let videoAllocation = allocateClipTracks(for: resolvedLayers.videoLayers)
+        transitionBindings = compositionModel.transitions.compactMap { transition in
+            let candidates = resolvedLayers.videoLayers.filter {
+                $0.timeRange.start < transition.timeRange.end && $0.timeRange.end > transition.timeRange.start
+            }.sorted { $0.layerLevel == $1.layerLevel ? $0.timeRange.start < $1.timeRange.start : $0.layerLevel < $1.layerLevel }
+            guard candidates.count >= 2 else { return nil }
+            let source: ClipLayer
+            let destination: ClipLayer
+            if let sourceLevel = transition.sourceLayerLevel, let destinationLevel = transition.destinationLayerLevel {
+                guard let from = candidates.first(where: { $0.layerLevel == sourceLevel }),
+                      let to = candidates.first(where: { $0.layerLevel == destinationLevel }) else { return nil }
+                source = from
+                destination = to
+            } else { source = candidates[0]; destination = candidates[1] }
+            let overlap = CMTimeRangeGetIntersection(source.timeRange, otherRange: destination.timeRange)
+            guard source !== destination, CMTimeRangeGetIntersection(overlap, otherRange: transition.timeRange).duration > .zero else { return nil }
+            return TransitionBinding(transition: transition, source: source, destination: destination)
+        }
         let audioAllocation = allocateAudioTracks(
             clipLayers: resolvedLayers.videoLayers,
             audioLayers: resolvedLayers.audioLayers
@@ -171,10 +206,10 @@ internal final class TimelineCompiler {
         for start: CMTime,
         trackEndTimes: [CMPersistentTrackID: CMTime]
     ) -> CMPersistentTrackID? {
-        trackEndTimes
-            .sorted { $0.value < $1.value }
-            .first(where: { $0.value <= start })?
-            .key
+        guard let earliest = trackEndTimes.min(by: {
+            $0.value == $1.value ? $0.key < $1.key : $0.value < $1.value
+        }), earliest.value <= start else { return nil }
+        return earliest.key
     }
 
     private func insertVideoLayers(
@@ -372,11 +407,25 @@ internal final class TimelineCompiler {
         for ramp in ramps {
             let clippedRange = CMTimeRangeGetIntersection(ramp.timeRange, otherRange: allowedTimeRange)
             guard clippedRange.isValid, !clippedRange.isEmpty else { continue }
-            parameters.setVolumeRamp(
-                fromStartVolume: ramp.startVolume * baseVolume,
-                toEndVolume: ramp.endVolume * baseVolume,
-                timeRange: clippedRange
-            )
+            applyVolumeCurve(in: clippedRange, to: parameters) { time in
+                let progress = TimelineCurveSampling.progress(at: time, in: ramp.timeRange)
+                let fraction = ramp.timingFunction.value(at: progress)
+                return (ramp.startVolume + fraction * (ramp.endVolume - ramp.startVolume)) * baseVolume
+            }
+        }
+    }
+
+    private func applyVolumeCurve(
+        in range: CMTimeRange,
+        to parameters: AVMutableAudioMixInputParameters,
+        value: (CMTime) -> Float
+    ) {
+        let times = TimelineCurveSampling.times(in: range, minimumStep: CMTime(value: 1, timescale: 48_000)) {
+            [Double(value($0))]
+        }
+        for (start, end) in zip(times, times.dropFirst()) {
+            parameters.setVolumeRamp(fromStartVolume: value(start), toEndVolume: value(end),
+                timeRange: CMTimeRange(start: start, end: end))
         }
     }
 
@@ -385,36 +434,28 @@ internal final class TimelineCompiler {
         allocation: [ObjectIdentifier: CMPersistentTrackID],
         parametersByTrackID: inout [CMPersistentTrackID: AVMutableAudioMixInputParameters]
     ) {
-        guard !compositionModel.transitions.isEmpty else { return }
-        let layerByTrackID = Dictionary(
-            uniqueKeysWithValues: clipLayers.compactMap { layer -> (CMPersistentTrackID, (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState))? in
-                guard let trackID = allocation[ObjectIdentifier(layer)] else { return nil }
-                let startState = renderState(for: layer, at: layer.timeRange.start, allocation: allocation)
-                let endState = renderState(for: layer, at: layer.timeRange.end, allocation: allocation)
-                return (trackID, (layer, startState, endState))
-            }
-        )
-
         for transition in compositionModel.transitions where transition.kind == .crossDissolve && transition.audioBehavior == .crossfade {
-            guard let selectedLayers = layersForTransition(transition, activeLayers: layerByTrackID) else { continue }
-            let overlap = CMTimeRangeGetIntersection(transition.timeRange, otherRange: selectedLayers.source.layer.timeRange)
-            let transitionRange = CMTimeRangeGetIntersection(overlap, otherRange: selectedLayers.destination.layer.timeRange)
-            guard transitionRange.isValid, !transitionRange.isEmpty else { continue }
-
-            if let sourceParameters = parametersByTrackID[selectedLayers.sourceTrackID] {
-                sourceParameters.setVolumeRamp(
-                    fromStartVolume: selectedLayers.source.layer.volume,
-                    toEndVolume: 0,
-                    timeRange: transitionRange
-                )
+            let candidates = clipLayers.filter {
+                $0.timeRange.start < transition.timeRange.end && $0.timeRange.end > transition.timeRange.start
             }
-
-            if let destinationParameters = parametersByTrackID[selectedLayers.destinationTrackID] {
-                destinationParameters.setVolumeRamp(
-                    fromStartVolume: 0,
-                    toEndVolume: selectedLayers.destination.layer.volume,
-                    timeRange: transitionRange
-                )
+            let times = uniqueSortedTimes([transition.timeRange.start, transition.timeRange.end] + candidates.flatMap {
+                [max($0.timeRange.start, transition.timeRange.start), min($0.timeRange.end, transition.timeRange.end)]
+            })
+            var index = TimelineIntervalIndex(candidates, range: { $0.timeRange }, level: { $0.layerLevel })
+            for (start, end) in zip(times, times.dropFirst()) where end > start {
+                let range = CMTimeRange(start: start, end: end)
+                let active = activeVideoLayerEntries(for: range, from: index.elements(overlapping: range), allocation: allocation)
+                guard let selected = layersForTransition(transition, activeLayers: active) else { continue }
+                for (trackID, volume, fadesIn) in [
+                    (selected.sourceTrackID, selected.source.layer.volume, false),
+                    (selected.destinationTrackID, selected.destination.layer.volume, true)
+                ] {
+                    guard let parameters = parametersByTrackID[trackID] else { continue }
+                    applyVolumeCurve(in: range, to: parameters) { time in
+                        let progress = transition.timingFunction.value(at: TimelineCurveSampling.progress(at: time, in: transition.timeRange))
+                        return volume * (fadesIn ? progress : 1 - progress)
+                    }
+                }
             }
         }
     }
@@ -428,38 +469,69 @@ internal final class TimelineCompiler {
     ) -> [TimelineRenderInstruction] {
         let visualLayers = (videoLayers as [TimelineLayer]) + imageLayers + textLayers + effectLayers
         let activeLayers = visualLayers.filter { !$0.timeRange.isEmpty }
-        let cutPoints = uniqueSortedTimes(activeLayers.flatMap { [$0.timeRange.start, $0.timeRange.end] })
-        guard cutPoints.count >= 2 else { return [] }
-
-        // 切分点仍从原顺序产生，保留等值 CMTime 的原始 timescale；层级排序只做一次。
-        let orderedLayers = activeLayers.sorted { $0.layerLevel < $1.layerLevel }
-        var instructions: [TimelineRenderInstruction] = []
-
-        for index in 0..<(cutPoints.count - 1) {
-            let start = cutPoints[index]
-            let end = cutPoints[index + 1]
-            let timeRange = CMTimeRange(start: start, end: end)
-            let intervalLayers = orderedLayers.filter { $0.timeRange.start < end && $0.timeRange.end > start }
-
-            guard !intervalLayers.isEmpty else { continue }
-
-            let trackIDs = intervalLayers.compactMap { layer -> CMPersistentTrackID? in
-                guard let clipLayer = layer as? ClipLayer else { return nil }
-                return allocation[ObjectIdentifier(clipLayer)]
+        // 先收集原始边界，保留等值 CMTime 首次出现的时间刻度。
+        var times = activeLayers.flatMap { [$0.timeRange.start, $0.timeRange.end] }
+        times += activeLayers.flatMap { layer in
+            layer.keyframes.flatMap(\.keyTimes).filter {
+                $0.isNumeric && $0 > layer.timeRange.start && $0 < layer.timeRange.end
             }
-
-            instructions.append(
-                TimelineRenderInstruction(
-                    timeRange: timeRange,
-                    layerLevels: intervalLayers.map(\.layerLevel),
-                    sourceTrackIDs: uniqueTrackIDsPreservingOrder(trackIDs),
-                    layerStates: intervalLayers.map { renderState(for: $0, at: timeRange.start, allocation: allocation) },
-                    processors: intervalLayers.compactMap { ($0 as? EffectLayer)?.processor }
-                )
-            )
         }
-
+        let cutPoints = uniqueSortedTimes(times)
+        var index = TimelineIntervalIndex(activeLayers, range: { $0.timeRange }, level: { $0.layerLevel })
+        var instructions: [TimelineRenderInstruction] = []
+        for (start, end) in zip(cutPoints, cutPoints.dropFirst()) {
+            let timeRange = CMTimeRange(start: start, end: end)
+            let intervalLayers = index.elements(overlapping: timeRange)
+            guard !intervalLayers.isEmpty else { continue }
+            let trackIDs = intervalLayers.compactMap { allocation[ObjectIdentifier($0)] }
+            instructions.append(TimelineRenderInstruction(
+                timeRange: timeRange,
+                layerLevels: intervalLayers.map(\.layerLevel),
+                sourceTrackIDs: uniqueTrackIDsPreservingOrder(trackIDs),
+                layerStates: intervalLayers.map { renderState(for: $0, at: start, allocation: allocation) },
+                processors: intervalLayers.compactMap { ($0 as? EffectLayer)?.processor }
+            ))
+        }
         return instructions
+    }
+
+    private func visualSampleTimes(
+        in range: CMTimeRange,
+        layers: [TimelineLayer],
+        allocation: [ObjectIdentifier: CMPersistentTrackID]
+    ) -> [CMTime] {
+        let bindings = transitionBindings.filter { binding in
+            layers.contains { $0 === binding.source || $0 === binding.destination }
+        }
+        guard layers.contains(where: { !$0.keyframes.isEmpty }) || !bindings.isEmpty else { return [range.start, range.end] }
+        let boundaries = uniqueSortedTimes([range.start, range.end] + bindings.flatMap {
+            [$0.transition.timeRange.start, $0.transition.timeRange.end].filter { $0 > range.start && $0 < range.end }
+        } + layers.flatMap { $0.keyframes.flatMap(\.keyTimes).filter { $0.isNumeric && $0 > range.start && $0 < range.end } })
+        var samples: [CMTime] = []
+        for (start, end) in zip(boundaries, boundaries.dropFirst()) {
+            let times = TimelineCurveSampling.times(in: CMTimeRange(start: start, end: end),
+                minimumStep: CMTimeMultiplyByFloat64(compositionModel.frameDuration, multiplier: 0.125)) { time in
+                layers.flatMap { layer -> [Double] in
+                    let state = renderState(for: layer, at: time, allocation: allocation)
+                    let m = state.transform
+                    let size = samplingSizes[ObjectIdentifier(layer)] ?? compositionModel.renderSize
+                    let w = Double(size.width)
+                    let h = Double(size.height)
+                    // 以源图四角的输出像素误差采样，避免大图放大矩阵系数误差。
+                    let x = Double(m.tx)
+                    let y = Double(m.ty)
+                    let ax = Double(m.a) * w
+                    let ay = Double(m.b) * w
+                    let bx = Double(m.c) * h
+                    let by = Double(m.d) * h
+                    return [Double(effectiveOpacity(for: layer, at: time)), x / 250, y / 250,
+                        (ax + x) / 250, (ay + y) / 250, (bx + x) / 250, (by + y) / 250,
+                        (ax + bx + x) / 250, (ay + by + y) / 250, Double(state.effectIntensity ?? 0)]
+                }
+            }
+            samples += samples.isEmpty ? times : Array(times.dropFirst())
+        }
+        return samples
     }
 
     private func makeVideoInstructions(
@@ -468,47 +540,35 @@ internal final class TimelineCompiler {
         videoLayers: [ClipLayer],
         allocation: [ObjectIdentifier: CMPersistentTrackID]
     ) -> [AVVideoCompositionInstructionProtocol] {
-        let orderedVideoLayers = videoLayers.sorted { lhs, rhs in
-            if lhs.layerLevel == rhs.layerLevel {
-                return lhs.timeRange.start < rhs.timeRange.start
-            }
-            return lhs.layerLevel < rhs.layerLevel
-        }
-        return renderInstructions.compactMap { instruction in
-            let mutableInstruction = AVMutableVideoCompositionInstruction()
-            mutableInstruction.timeRange = instruction.timeRange
-            let activeClipLayers = activeVideoLayerEntries(
-                for: instruction.timeRange,
-                from: orderedVideoLayers,
-                allocation: allocation
-            )
-            let layerInstructions = instruction.sourceTrackIDs.compactMap { trackID -> AVMutableVideoCompositionLayerInstruction? in
-                guard let track = composition.track(withTrackID: trackID) else { return nil }
-                let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-                if let activeLayer = activeClipLayers[trackID] {
-                    layerInstruction.setTransform(activeLayer.startState.transform, at: instruction.timeRange.start)
-                    if !transformsEqual(activeLayer.startState.transform, activeLayer.endState.transform) {
-                        layerInstruction.setTransformRamp(
-                            fromStart: activeLayer.startState.transform,
-                            toEnd: activeLayer.endState.transform,
-                            timeRange: instruction.timeRange
-                        )
+        var index = TimelineIntervalIndex(videoLayers, range: { $0.timeRange }, level: { $0.layerLevel })
+        var result: [AVVideoCompositionInstructionProtocol] = []
+        for instruction in renderInstructions {
+            let layers = index.elements(overlapping: instruction.timeRange)
+            let times = visualSampleTimes(in: instruction.timeRange, layers: layers, allocation: allocation)
+            for (start, end) in zip(times, times.dropFirst()) {
+                let range = CMTimeRange(start: start, end: end)
+                let active = activeVideoLayerEntries(for: range, from: layers, allocation: allocation)
+                let output = AVMutableVideoCompositionInstruction()
+                output.timeRange = range
+                let layerInstructions = instruction.sourceTrackIDs.compactMap { trackID -> AVMutableVideoCompositionLayerInstruction? in
+                    guard let track = composition.track(withTrackID: trackID), let layer = active[trackID] else { return nil }
+                    let entry = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+                    entry.setTransform(layer.startState.transform, at: start)
+                    if !transformsEqual(layer.startState.transform, layer.endState.transform) {
+                        entry.setTransformRamp(fromStart: layer.startState.transform, toEnd: layer.endState.transform, timeRange: range)
                     }
-                    layerInstruction.setOpacity(activeLayer.startState.opacity, at: instruction.timeRange.start)
-                    if !floatsEqual(activeLayer.startState.opacity, activeLayer.endState.opacity) {
-                        layerInstruction.setOpacityRamp(
-                            fromStartOpacity: activeLayer.startState.opacity,
-                            toEndOpacity: activeLayer.endState.opacity,
-                            timeRange: instruction.timeRange
-                        )
+                    entry.setOpacity(layer.startState.opacity, at: start)
+                    if !floatsEqual(layer.startState.opacity, layer.endState.opacity) {
+                        entry.setOpacityRamp(fromStartOpacity: layer.startState.opacity, toEndOpacity: layer.endState.opacity, timeRange: range)
                     }
+                    return entry
                 }
-                return layerInstruction
+                applyTransitions(to: layerInstructions, timeRange: range, activeLayers: active)
+                output.layerInstructions = layerInstructions
+                result.append(output)
             }
-            applyTransitions(to: layerInstructions, timeRange: instruction.timeRange, activeLayers: activeClipLayers)
-            mutableInstruction.layerInstructions = layerInstructions
-            return mutableInstruction
         }
+        return result
     }
 
     private func activeVideoLayerEntries(
@@ -517,9 +577,7 @@ internal final class TimelineCompiler {
         allocation: [ObjectIdentifier: CMPersistentTrackID]
     ) -> [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)] {
         var result: [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)] = [:]
-        let activeLayers = orderedVideoLayers.filter { $0.timeRange.start < timeRange.end && $0.timeRange.end > timeRange.start }
-
-        for layer in activeLayers {
+        for layer in orderedVideoLayers {
             guard let trackID = allocation[ObjectIdentifier(layer)] else { continue }
             let startState = renderState(for: layer, at: timeRange.start, allocation: allocation)
             let endState = renderState(for: layer, at: timeRange.end, allocation: allocation)
@@ -533,28 +591,22 @@ internal final class TimelineCompiler {
         timeRange: CMTimeRange,
         activeLayers: [CMPersistentTrackID: (layer: ClipLayer, startState: TimelineLayerRenderState, endState: TimelineLayerRenderState)]
     ) {
-        for transition in compositionModel.transitions {
-            let overlap = CMTimeRangeGetIntersection(timeRange, otherRange: transition.timeRange)
-            guard overlap.isValid, !overlap.isEmpty else { continue }
-            guard let selectedLayers = layersForTransition(transition, activeLayers: activeLayers) else { continue }
-
-            for layerInstruction in layerInstructions {
-                let trackID = layerInstruction.trackID
-                if trackID == selectedLayers.sourceTrackID {
-                    layerInstruction.setOpacityRamp(
-                        fromStartOpacity: selectedLayers.source.startState.opacity,
-                        toEndOpacity: 0,
-                        timeRange: overlap
-                    )
-                } else if trackID == selectedLayers.destinationTrackID {
-                    layerInstruction.setOpacityRamp(
-                        fromStartOpacity: 0,
-                        toEndOpacity: selectedLayers.destination.endState.opacity,
-                        timeRange: overlap
-                    )
-                }
-            }
+        for instruction in layerInstructions {
+            guard let layer = activeLayers[instruction.trackID]?.layer,
+                  transitionBindings.contains(where: { $0.source === layer || $0.destination === layer }) else { continue }
+            instruction.setOpacityRamp(fromStartOpacity: effectiveOpacity(for: layer, at: timeRange.start),
+                toEndOpacity: effectiveOpacity(for: layer, at: timeRange.end), timeRange: timeRange)
         }
+    }
+
+    private func effectiveOpacity(for layer: TimelineLayer, at time: CMTime) -> Float {
+        let base = opacity(for: layer, at: time)
+        var result = base
+        for binding in transitionBindings {
+            if binding.source === layer { result *= 1 - transitionProgress(binding.transition, at: time) }
+            if binding.destination === layer { result *= transitionProgress(binding.transition, at: time) }
+        }
+        return result
     }
 
     private func layersForTransition(
@@ -590,7 +642,7 @@ internal final class TimelineCompiler {
         at time: CMTime,
         allocation: [ObjectIdentifier: CMPersistentTrackID]
     ) -> TimelineLayerRenderState {
-        let opacity = KeyframeAnimation.value(for: "opacity", at: time, animations: layer.keyframes) ?? layer.opacity
+        let opacity = opacity(for: layer, at: time)
         let transform = resolvedTransform(for: layer, at: time)
         let kind: TimelineLayerKind
         let trackID: CMPersistentTrackID?
@@ -620,8 +672,8 @@ internal final class TimelineCompiler {
             trackID = nil
             image = nil
             processor = effectLayer.processor
-            effectIntensity = KeyframeAnimation.value(for: "effect.intensity", at: time, animations: effectLayer.keyframes)
-                ?? KeyframeAnimation.value(for: "intensity", at: time, animations: effectLayer.keyframes)
+            effectIntensity = keyframeValue("effect.intensity", for: effectLayer, at: time)
+                ?? keyframeValue("intensity", for: effectLayer, at: time)
                 ?? effectLayer.intensity
         } else {
             kind = .effect
@@ -642,34 +694,51 @@ internal final class TimelineCompiler {
         )
     }
 
+    private func keyframeValue(_ keyPath: String, for layer: TimelineLayer, at time: CMTime) -> Float? {
+        keyframeIndexes[ObjectIdentifier(layer)]?.value(for: keyPath, at: time)
+    }
+
+    private func opacity(for layer: TimelineLayer, at time: CMTime) -> Float {
+        keyframeValue("opacity", for: layer, at: time) ?? layer.opacity
+    }
+
+    private func transitionProgress(_ transition: Transition, at time: CMTime) -> Float {
+        transition.timingFunction.value(at: TimelineCurveSampling.progress(at: time, in: transition.timeRange))
+    }
+
     private func resolvedTransform(for layer: TimelineLayer, at time: CMTime) -> CGAffineTransform {
-        let baseTransform = layer.transform
-        let baseTranslationX = Float(baseTransform.tx)
-        let baseTranslationY = Float(baseTransform.ty)
-        let baseScaleX = Float(hypot(baseTransform.a, baseTransform.c))
-        let baseScaleY = Float(hypot(baseTransform.b, baseTransform.d))
-        let baseRotation = Float(atan2(baseTransform.b, baseTransform.a))
-
-        let translationX = KeyframeAnimation.value(for: "translation.x", at: time, animations: layer.keyframes)
-            ?? KeyframeAnimation.value(for: "transform.tx", at: time, animations: layer.keyframes)
-            ?? baseTranslationX
-        let translationY = KeyframeAnimation.value(for: "translation.y", at: time, animations: layer.keyframes)
-            ?? KeyframeAnimation.value(for: "transform.ty", at: time, animations: layer.keyframes)
-            ?? baseTranslationY
-        let scale = KeyframeAnimation.value(for: "scale", at: time, animations: layer.keyframes)
-        let scaleX = KeyframeAnimation.value(for: "scale.x", at: time, animations: layer.keyframes)
-            ?? scale
-            ?? baseScaleX
-        let scaleY = KeyframeAnimation.value(for: "scale.y", at: time, animations: layer.keyframes)
-            ?? scale
-            ?? baseScaleY
-        let rotation = KeyframeAnimation.value(for: "rotation", at: time, animations: layer.keyframes)
-            ?? baseRotation
-
-        return CGAffineTransform.identity
-            .translatedBy(x: CGFloat(translationX), y: CGFloat(translationY))
-            .rotated(by: CGFloat(rotation))
-            .scaledBy(x: CGFloat(scaleX), y: CGFloat(scaleY))
+        let base = layer.transform
+        func value(_ key: String) -> CGFloat? { keyframeValue(key, for: layer, at: time).map(CGFloat.init) }
+        let tx = value("translation.x") ?? value("transform.tx")
+        let ty = value("translation.y") ?? value("transform.ty")
+        let scale = value("scale")
+        let sx = value("scale.x") ?? scale
+        let sy = value("scale.y") ?? scale
+        let angle = value("rotation")
+        guard tx != nil || ty != nil || sx != nil || sy != nil || angle != nil else { return base }
+        // QR 分解保留镜像符号和剪切；仅平移时完全保留原始线性矩阵。
+        if sx == nil && sy == nil && angle == nil {
+            return CGAffineTransform(a: base.a, b: base.b, c: base.c, d: base.d, tx: tx ?? base.tx, ty: ty ?? base.ty)
+        }
+        let determinant = base.a * base.d - base.b * base.c
+        let baseX = hypot(base.a, base.b)
+        let baseY: CGFloat
+        let rotation: CGFloat
+        let shear: CGFloat
+        if baseX > 0 {
+            baseY = determinant / baseX
+            rotation = atan2(base.b, base.a)
+            shear = (base.a * base.c + base.b * base.d) / baseX
+        } else {
+            baseY = hypot(base.c, base.d)
+            rotation = baseY > 0 ? atan2(-base.c, base.d) : 0
+            shear = 0
+        }
+        let c = cos(angle ?? rotation)
+        let s = sin(angle ?? rotation)
+        return CGAffineTransform(a: c * (sx ?? baseX), b: s * (sx ?? baseX),
+            c: c * shear - s * (sy ?? baseY), d: s * shear + c * (sy ?? baseY),
+            tx: tx ?? base.tx, ty: ty ?? base.ty)
     }
 
     private func makeOverlayLayer(
@@ -682,7 +751,30 @@ internal final class TimelineCompiler {
         let totalDuration = textLayers.map(\.timeRange.end).max()?.seconds ?? 0
         let overlayDuration = max(totalDuration, compositionModel.frameDuration.seconds)
         for textLayer in textLayers.sorted(by: { $0.layerLevel < $1.layerLevel }) {
-            overlayLayer.addSublayer(textLayer.makePresentationLayer(duration: overlayDuration))
+            let layer = textLayer.makePresentationLayer(duration: overlayDuration)
+            if textLayer.timeRange.duration.isNumeric, textLayer.timeRange.duration > .zero, !textLayer.keyframes.isEmpty {
+                let times = visualSampleTimes(in: textLayer.timeRange, layers: [textLayer], allocation: [:])
+                let keys = times.map { NSNumber(value: TimelineCurveSampling.progress(at: $0, in: textLayer.timeRange)) }
+                if textLayer.keyframes.contains(where: { $0.keyPath == "opacity" }) {
+                    layer.removeAnimation(forKey: "timelineVisibility")
+                    layer.opacity = 0
+                    let animation = CAKeyframeAnimation(keyPath: "opacity")
+                    animation.values = times.map { opacity(for: textLayer, at: $0) }
+                    animation.keyTimes = keys
+                    animation.duration = textLayer.timeRange.duration.seconds
+                    animation.beginTime = AVCoreAnimationBeginTimeAtZero + textLayer.timeRange.start.seconds
+                    animation.isRemovedOnCompletion = false
+                    layer.add(animation, forKey: "timelineOpacity")
+                }
+                let animation = CAKeyframeAnimation(keyPath: "transform")
+                animation.values = times.map { NSValue(caTransform3D: CATransform3DMakeAffineTransform(resolvedTransform(for: textLayer, at: $0))) }
+                animation.keyTimes = keys
+                animation.duration = textLayer.timeRange.duration.seconds
+                animation.beginTime = AVCoreAnimationBeginTimeAtZero + textLayer.timeRange.start.seconds
+                animation.isRemovedOnCompletion = false
+                layer.add(animation, forKey: "timelineTransform")
+            }
+            overlayLayer.addSublayer(layer)
         }
         return overlayLayer
     }
@@ -712,7 +804,7 @@ internal final class TimelineCompiler {
         abs(lhs - rhs) <= tolerance
     }
 
-    private func transformsEqual(_ lhs: CGAffineTransform, _ rhs: CGAffineTransform, tolerance: CGFloat = 0.0001) -> Bool {
+    private func transformsEqual(_ lhs: CGAffineTransform, _ rhs: CGAffineTransform, tolerance: CGFloat = 0) -> Bool {
         abs(lhs.a - rhs.a) <= tolerance &&
         abs(lhs.b - rhs.b) <= tolerance &&
         abs(lhs.c - rhs.c) <= tolerance &&

@@ -31,6 +31,7 @@ public extension ReaderWriterExportJob {
         public let processorInvocationCount: Int
         public let processorCompletionCount: Int
         public let processorTimeoutCount: Int
+        public let peakPrefetchedVideoSampleCount: Int
         public let peakProcessorInFlightCount: Int
         public let peakPendingProcessedFrameCount: Int
         /// 至少观察到一次 writer not-ready 的已处理视频帧数，不按轮询次数重复累计。
@@ -85,6 +86,7 @@ final class ReaderWriterExportPerformanceAccumulator: @unchecked Sendable {
     private var finishingStartTime: UInt64?
     private var finalTime: UInt64?
     private var isFinal = false
+    private var peakPrefetchedVideoSampleCount = 0
     private var videoSamplesRead = 0
     private var audioSamplesRead = 0
     private var videoSamplesWritten = 0
@@ -119,6 +121,13 @@ final class ReaderWriterExportPerformanceAccumulator: @unchecked Sendable {
             guard isFinal == false, startTime == nil else { return }
             startTime = time ?? clock()
         }
+    }
+
+    func recordVideoPrefetchCount(_ count: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isFinal else { return }
+        peakPrefetchedVideoSampleCount = max(peakPrefetchedVideoSampleCount, count)
     }
 
     func recordVideoSampleRead() {
@@ -248,6 +257,7 @@ final class ReaderWriterExportPerformanceAccumulator: @unchecked Sendable {
                 processorInvocationCount: processorInvocationCount,
                 processorCompletionCount: processorCompletionCount,
                 processorTimeoutCount: processorTimeoutCount,
+                peakPrefetchedVideoSampleCount: peakPrefetchedVideoSampleCount,
                 peakProcessorInFlightCount: peakProcessorInFlightCount,
                 peakPendingProcessedFrameCount: peakPendingProcessedFrameCount,
                 processedFrameWriterBackpressureCount: processedFrameWriterBackpressureCount,

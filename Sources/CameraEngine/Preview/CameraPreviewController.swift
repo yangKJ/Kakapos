@@ -117,14 +117,35 @@ public final class CameraPreviewController {
             self.previewSink = nil
             self.previewPipeline = nil
         case .processed:
-            let resolvedHandler = handler ?? { _, _ in }
             let pipeline = PreviewPipeline(
                 source: source,
                 processors: processors,
                 callbackQueue: callbackQueue,
                 controlsSourceLifecycle: controlsSourceLifecycle,
-                handler: resolvedHandler
+                handler: handler ?? { _, _ in }
             )
+            self.previewSink = CameraPreviewSink(sink: pipeline.previewSink)
+            self.previewPipeline = pipeline
+        }
+    }
+
+    public init(
+        source: CameraSource,
+        mode: Mode = .processed,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        controlsSourceLifecycle: Bool = true,
+        frameHandler: @escaping (MediaFrame) -> Void
+    ) {
+        self.source = source
+        self.mode = mode
+        self.previewLayer = source.previewLayer
+        if mode == .raw {
+            self.previewSink = nil
+            self.previewPipeline = nil
+        } else {
+            let pipeline = PreviewPipeline(source: source, processors: processors, callbackQueue: callbackQueue,
+                controlsSourceLifecycle: controlsSourceLifecycle, frameHandler: frameHandler)
             self.previewSink = CameraPreviewSink(sink: pipeline.previewSink)
             self.previewPipeline = pipeline
         }

@@ -24,6 +24,9 @@ final class TimelineEffectProcessor: CancellableFrameProcessor, FrameProcessorCa
         (processor as? FrameProcessorCapabilityProviding)?.capabilities ?? FrameProcessorCapabilities()
     }
     private let segment: TimelineProcessorSegment
+    private let keyframeLock = NSLock()
+    private let hasKeyframes: Bool
+    private var keyframeSampler: TimelineKeyframeIndex
     private let processor: FrameProcessor
     private let context = CIContext(options: [
         .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)!,
@@ -36,6 +39,8 @@ final class TimelineEffectProcessor: CancellableFrameProcessor, FrameProcessorCa
 
     init(segment: TimelineProcessorSegment, processor: FrameProcessor) {
         self.segment = segment
+        self.hasKeyframes = !segment.keyframes.isEmpty
+        self.keyframeSampler = TimelineKeyframeIndex(segment.keyframes)
         self.processor = processor
     }
 
@@ -51,7 +56,15 @@ final class TimelineEffectProcessor: CancellableFrameProcessor, FrameProcessorCa
             completion(.success(frame))
             return FrameProcessingCancellation()
         }
-        let value = segment.intensity(at: time)
+        let value: Float
+        if !hasKeyframes { value = segment.source.intensity }
+        else {
+            keyframeLock.lock()
+            value = keyframeSampler.sampledValue(for: "effect.intensity", at: time)
+                ?? keyframeSampler.sampledValue(for: "intensity", at: time)
+                ?? segment.source.intensity
+            keyframeLock.unlock()
+        }
         guard value.isFinite else {
             completion(.failure(TimelineEffectError.invalidIntensity))
             return FrameProcessingCancellation()

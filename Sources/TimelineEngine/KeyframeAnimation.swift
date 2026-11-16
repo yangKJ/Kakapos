@@ -191,7 +191,8 @@ public enum TimelineEasing: Equatable {
 public struct KeyframeAnimation {
     public var keyPath: String
     public var values: [Float]
-    public var keyTimes: [CMTime]
+    public var keyTimes: [CMTime] { didSet { orderedKeyTimes = Self.areOrdered(keyTimes) } }
+    private var orderedKeyTimes: Bool
     public var timingFunctions: [TimelineEasing]
 
     public init(
@@ -203,6 +204,7 @@ public struct KeyframeAnimation {
         self.keyPath = keyPath
         self.values = values
         self.keyTimes = keyTimes
+        self.orderedKeyTimes = Self.areOrdered(keyTimes)
         self.timingFunctions = Array(
             repeating: easing,
             count: max(values.count - 1, 0)
@@ -218,6 +220,7 @@ public struct KeyframeAnimation {
         self.keyPath = keyPath
         self.values = values
         self.keyTimes = keyTimes
+        self.orderedKeyTimes = Self.areOrdered(keyTimes)
         self.timingFunctions = timingFunctions
     }
 
@@ -236,30 +239,60 @@ public struct KeyframeAnimation {
             return values[0]
         }
 
-        let timeValue = time.seconds
-        for index in 0..<(keyTimes.count - 1) {
-            let startTimeValue = keyTimes[index].seconds
-            let endTimeValue = keyTimes[index + 1].seconds
-
-            if index == 0 && timeValue < startTimeValue {
-                return values[0]
+        guard time.isNumeric else { return nil }
+        let index: Int
+        if orderedKeyTimes {
+            if time < keyTimes[0] { return values[0] }
+            if time > keyTimes[keyTimes.count - 1] { return values[values.count - 1] }
+            var low = 1
+            var high = keyTimes.count - 1
+            while low < high {
+                let middle = (low + high) / 2
+                if keyTimes[middle] < time { low = middle + 1 } else { high = middle }
             }
-
-            if index == keyTimes.count - 2 && timeValue > endTimeValue {
-                return values[index + 1]
-            }
-
-            if timeValue >= startTimeValue && timeValue <= endTimeValue {
-                let progress = Float(timeValue - startTimeValue) / Float(max(endTimeValue - startTimeValue, 0.0001))
-                let timingFunction = timingFunctions[safe: index] ?? timingFunctions.last ?? .linear
-                let normalizedValue = timingFunction.value(at: progress)
-                let fromValue = values[index]
-                let toValue = values[index + 1]
-                return fromValue + normalizedValue * (toValue - fromValue)
-            }
+            index = low - 1
+        } else {
+            // 无序历史输入先匹配区间；只有没有匹配时才使用末端外推。
+            if time < keyTimes[0] { return values[0] }
+            if let match = (0..<(keyTimes.count - 1)).first(where: {
+                time >= keyTimes[$0] && time <= keyTimes[$0 + 1]
+            }) { index = match }
+            else if time > keyTimes[keyTimes.count - 1] { return values[values.count - 1] }
+            else { return nil }
         }
+        return interpolatedValue(at: time, index: index)
+    }
 
-        return nil
+    func value(at time: CMTime, cursor: inout Int) -> Float? {
+        guard orderedKeyTimes, values.count == keyTimes.count, values.count > 1, time.isNumeric else { return value(at: time) }
+        if time <= keyTimes[0] { cursor = 0; return values[0] }
+        if time > keyTimes[keyTimes.count - 1] { cursor = keyTimes.count - 2; return values.last }
+        if cursor >= 0, cursor + 1 < keyTimes.count, time > keyTimes[cursor], time <= keyTimes[cursor + 1] {
+            return interpolatedValue(at: time, index: cursor)
+        }
+        if cursor >= 0, cursor + 2 < keyTimes.count, time > keyTimes[cursor + 1], time <= keyTimes[cursor + 2] {
+            cursor += 1
+            return interpolatedValue(at: time, index: cursor)
+        }
+        var low = 1
+        var high = keyTimes.count - 1
+        while low < high {
+            let middle = (low + high) / 2
+            if keyTimes[middle] < time { low = middle + 1 } else { high = middle }
+        }
+        cursor = low - 1
+        return interpolatedValue(at: time, index: cursor)
+    }
+
+    private func interpolatedValue(at time: CMTime, index: Int) -> Float {
+        let duration = keyTimes[index + 1] - keyTimes[index]
+        let progress = duration > .zero ? Float((time - keyTimes[index]).seconds / duration.seconds) : 0
+        let timingFunction = timingFunctions[safe: index] ?? timingFunctions.last ?? .linear
+        return values[index] + timingFunction.value(at: progress) * (values[index + 1] - values[index])
+    }
+
+    private static func areOrdered(_ times: [CMTime]) -> Bool {
+        times.allSatisfy(\.isNumeric) && zip(times, times.dropFirst()).allSatisfy { $0 <= $1 }
     }
 
     public static func value(for keyPath: String, at time: CMTime, animations: [KeyframeAnimation]) -> Float? {

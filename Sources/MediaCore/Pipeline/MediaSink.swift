@@ -133,22 +133,41 @@ public final class PreviewSink: MediaSink {
         case cancelled
     }
 
-    private let handler: Handler
+    private let handler: Handler?
+    private let frameHandler: ((MediaFrame) -> Void)?
+    private let conversionLock = NSLock()
+    private let deliveryFence = NSRecursiveLock()
     private let callbackQueue: DispatchQueue
     private let lock = NSLock()
     private var pendingFrame: MediaFrame?
-    private var pendingCallback: (image: CGImage, metadata: FrameMetadata)?
+    private var pendingCallback: (frame: MediaFrame, version: UInt64, completion: (Result<Void, Error>) -> Void)?
+    private var lastFrameVersion: UInt64 = 0
+    private var imageVersion: UInt64?
+    private var imageStorage: CGImage?
+    private var convertedFrameCount = 0
+    private var coalescedFrameCount = 0
     private var isCallbackScheduled = false
     private var finishRequested = false
     private var finishCompletions: [(Result<Void, Error>) -> Void] = []
 
     public private(set) var state: State = .idle
     public private(set) var lastFrame: MediaFrame?
-    public private(set) var lastImage: CGImage?
+    /// 显式读取时按需物化；帧回调路径不会主动转换为 CGImage。
+    public var lastImage: CGImage? {
+        lock.lock()
+        let frame = lastFrame
+        let version = lastFrameVersion
+        lock.unlock()
+        guard let frame else { return nil }
+        return try? image(for: frame, version: version)
+    }
     public var stateChangedHandler: ((State) -> Void)?
 
     public var snapshot: Snapshot {
         lock.lock()
+        let buffer = lastFrame.flatMap { extractPixelBuffer($0) }
+        let width = handler != nil ? buffer.map(CVPixelBufferGetWidth) : (imageVersion == lastFrameVersion ? imageStorage?.width : nil)
+        let height = handler != nil ? buffer.map(CVPixelBufferGetHeight) : (imageVersion == lastFrameVersion ? imageStorage?.height : nil)
         let snapshot = Snapshot(
             state: state,
             lastFrameIndex: lastFrame?.metadata.frameIndex,
@@ -159,8 +178,8 @@ public final class PreviewSink: MediaSink {
             pendingFramePresentationTime: pendingFrame?.metadata.presentationTime,
             pendingFrameSourceTime: pendingFrame?.metadata.sourceTime ?? pendingFrame?.metadata.presentationTime,
             pendingFrameRequestReason: pendingFrame?.metadata.userInfo[MetadataKey.frameRequestReason] as? String,
-            lastImageWidth: lastImage?.width,
-            lastImageHeight: lastImage?.height,
+            lastImageWidth: width,
+            lastImageHeight: height,
             hasPendingFrame: pendingFrame != nil
         )
         lock.unlock()
@@ -195,54 +214,71 @@ public final class PreviewSink: MediaSink {
     ) {
         self.callbackQueue = callbackQueue
         self.handler = handler
+        self.frameHandler = nil
+    }
+
+    /// 接收原生帧供纹理或像素缓冲宿主显示；可同时保留图像回调。
+    public init(callbackQueue: DispatchQueue = .main, frameHandler: @escaping (MediaFrame) -> Void, handler: Handler? = nil) {
+        self.callbackQueue = callbackQueue
+        self.frameHandler = frameHandler
+        self.handler = handler
+    }
+
+    var conversionCountsForTesting: (converted: Int, coalesced: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (convertedFrameCount, coalescedFrameCount)
     }
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
         lock.lock()
-        let currentState = state
-        let isPaused = currentState == .paused
-        let isTerminal = currentState == .finished || currentState == .cancelled || finishRequested
-        if isTerminal {
+        if state == .finished || state == .cancelled || finishRequested {
             lock.unlock()
             completion(.success(()))
             return
         }
-        if isPaused {
+        if state == .paused {
             pendingFrame = frame
             lock.unlock()
             completion(.success(()))
             return
         }
-        lock.unlock()
-
-        guard let pixelBuffer = extractPixelBuffer(frame) else {
+        guard handler == nil || extractPixelBuffer(frame) != nil else {
+            lock.unlock()
             completion(.failure(MediaCoreError.pixelBufferUnavailable))
             return
         }
-        var previewImage: CGImage?
-        let status = VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &previewImage)
-        guard status == noErr, let previewImage else {
-            completion(.failure(MediaCoreError.pixelBufferUnavailable))
-            return
-        }
-        updateState(.active)
-        lock.lock()
+        let replaced = pendingCallback
+        if replaced != nil { coalescedFrameCount += 1 }
+        lastFrameVersion &+= 1
         lastFrame = frame
-        lastImage = previewImage
+        pendingCallback = (frame, lastFrameVersion, completion)
+        let schedule = !isCallbackScheduled
+        isCallbackScheduled = true
+        let becameActive = state == .idle
+        if becameActive { state = .active }
         lock.unlock()
+        replaced?.completion(.success(()))
+        if becameActive { callbackQueue.async { self.stateChangedHandler?(.active) } }
+        if schedule { callbackQueue.async { self.drainLatestCallback() } }
+    }
+
+    private func image(for frame: MediaFrame, version: UInt64) throws -> CGImage {
+        conversionLock.lock()
+        defer { conversionLock.unlock() }
         lock.lock()
-        pendingCallback = (previewImage, frame.metadata)
-        let shouldScheduleCallback = isCallbackScheduled == false
-        if shouldScheduleCallback {
-            isCallbackScheduled = true
-        }
+        if imageVersion == version, let imageStorage { lock.unlock(); return imageStorage }
         lock.unlock()
-        if shouldScheduleCallback {
-            callbackQueue.async { [weak self] in
-                self?.drainLatestCallback()
-            }
+        guard let buffer = extractPixelBuffer(frame) else { throw MediaCoreError.pixelBufferUnavailable }
+        var image: CGImage?
+        guard VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &image) == noErr, let image else {
+            throw MediaCoreError.pixelBufferUnavailable
         }
-        completion(.success(()))
+        lock.lock()
+        convertedFrameCount += 1
+        if lastFrameVersion == version { imageVersion = version; imageStorage = image }
+        lock.unlock()
+        return image
     }
 
     public func pause() {
@@ -265,14 +301,18 @@ public final class PreviewSink: MediaSink {
     }
 
     public func cancel() {
+        updateState(.cancelled)
+        deliveryFence.lock()
+        deliveryFence.unlock()
         lock.lock()
         pendingFrame = nil
+        let pending = pendingCallback
         pendingCallback = nil
         finishRequested = false
         let completions = finishCompletions
         finishCompletions.removeAll()
         lock.unlock()
-        updateState(.cancelled)
+        pending?.completion(.success(()))
         completions.forEach { $0(.success(())) }
     }
 
@@ -287,48 +327,58 @@ public final class PreviewSink: MediaSink {
         finishRequested = true
         let shouldFinishImmediately = isCallbackScheduled == false && pendingCallback == nil
         if shouldFinishImmediately {
+            state = .finished
             finishRequested = false
         } else {
             finishCompletions.append(completion)
         }
         lock.unlock()
         if shouldFinishImmediately {
-            updateState(.finished)
+            callbackQueue.async { self.stateChangedHandler?(.finished) }
             completion(.success(()))
         }
     }
 
     private func drainLatestCallback() {
         lock.lock()
-        let isTerminal = state == .finished || state == .cancelled
-        let callback = isTerminal ? nil : pendingCallback
+        let callback = (state == .finished || state == .cancelled) ? nil : pendingCallback
         pendingCallback = nil
         lock.unlock()
-
         if let callback {
-            handler(callback.image, callback.metadata)
+            do {
+                let image = handler == nil ? nil : try self.image(for: callback.frame, version: callback.version)
+                deliveryFence.lock()
+                lock.lock()
+                let accepts = state != .cancelled && state != .finished && callback.version == lastFrameVersion
+                lock.unlock()
+                if accepts {
+                    frameHandler?(callback.frame)
+                    lock.lock()
+                    let stillAccepts = state != .cancelled && state != .finished
+                    lock.unlock()
+                    if stillAccepts, let image { handler?(image, callback.frame.metadata) }
+                }
+                deliveryFence.unlock()
+                callback.completion(.success(()))
+            } catch { callback.completion(.failure(error)) }
         }
-
         lock.lock()
         let shouldFinish = finishRequested && pendingCallback == nil
-        let shouldContinue = pendingCallback != nil && state != .finished && state != .cancelled && finishRequested == false
-        var finishCallbacks: [(Result<Void, Error>) -> Void] = []
+        let shouldContinue = pendingCallback != nil && state != .finished && state != .cancelled
+        var completions: [(Result<Void, Error>) -> Void] = []
         if shouldFinish {
+            state = .finished
             finishRequested = false
-            finishCallbacks = finishCompletions
+            completions = finishCompletions
             finishCompletions.removeAll()
-            isCallbackScheduled = false
-        } else if shouldContinue == false {
-            isCallbackScheduled = false
         }
+        if !shouldContinue { isCallbackScheduled = false }
         lock.unlock()
         if shouldFinish {
-            updateState(.finished)
-            finishCallbacks.forEach { $0(.success(())) }
+            callbackQueue.async { self.stateChangedHandler?(.finished) }
+            completions.forEach { $0(.success(())) }
         } else if shouldContinue {
-            callbackQueue.async { [weak self] in
-                self?.drainLatestCallback()
-            }
+            callbackQueue.async { self.drainLatestCallback() }
         }
     }
 

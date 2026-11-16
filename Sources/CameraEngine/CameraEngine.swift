@@ -28,6 +28,7 @@ public final class CameraEngine {
         let processors: [FrameProcessor]
         let callbackQueue: DispatchQueue
         let handler: PreviewSink.Handler?
+        let frameHandler: ((MediaFrame) -> Void)?
     }
 
     public let source: CameraSource
@@ -119,21 +120,34 @@ public final class CameraEngine {
             mode: mode,
             processors: processors,
             callbackQueue: callbackQueue,
-            handler: handler
+            handler: handler,
+            frameHandler: nil
         )
         previewRecipe = recipe
         return installPreviewController(from: recipe)
     }
 
+    public func makePreviewController(
+        mode: CameraPreviewController.Mode = .processed,
+        processors: [FrameProcessor] = [],
+        callbackQueue: DispatchQueue = .main,
+        frameHandler: @escaping (MediaFrame) -> Void
+    ) -> CameraPreviewController {
+        let recipe = PreviewRecipe(mode: mode, processors: processors, callbackQueue: callbackQueue,
+            handler: nil, frameHandler: frameHandler)
+        previewRecipe = recipe
+        return installPreviewController(from: recipe)
+    }
+
     private func installPreviewController(from recipe: PreviewRecipe) -> CameraPreviewController {
-        let controller = CameraPreviewController(
-            source: source,
-            mode: recipe.mode,
-            processors: recipe.processors,
-            callbackQueue: recipe.callbackQueue,
-            controlsSourceLifecycle: false,
-            handler: recipe.handler
-        )
+        let controller: CameraPreviewController
+        if let frameHandler = recipe.frameHandler {
+            controller = CameraPreviewController(source: source, mode: recipe.mode, processors: recipe.processors,
+                callbackQueue: recipe.callbackQueue, controlsSourceLifecycle: false, frameHandler: frameHandler)
+        } else {
+            controller = CameraPreviewController(source: source, mode: recipe.mode, processors: recipe.processors,
+                callbackQueue: recipe.callbackQueue, controlsSourceLifecycle: false, handler: recipe.handler)
+        }
         previewController = controller
         return controller
     }

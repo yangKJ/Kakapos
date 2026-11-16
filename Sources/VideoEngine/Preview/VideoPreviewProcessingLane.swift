@@ -33,6 +33,7 @@ final class VideoPreviewProcessingLane: @unchecked Sendable {
     private var currentOperation: FrameProcessingOperation?
     private var currentOperationToken: UInt64 = 0
     private var currentFrameStartedAt: UInt64?
+    private var currentFrameReceivedHostTime: TimeInterval?
 
     var performanceSnapshot: VideoPreviewPerformanceSnapshot {
         performanceAccumulator.snapshot
@@ -103,6 +104,7 @@ final class VideoPreviewProcessingLane: @unchecked Sendable {
     private func begin(_ frame: MediaFrame) {
         lock.lock()
         currentFrameStartedAt = DispatchTime.now().uptimeNanoseconds
+        currentFrameReceivedHostTime = frame.metadata.receivedHostTimeSeconds ?? ProcessInfo.processInfo.systemUptime
         lock.unlock()
         performanceAccumulator.recordStarted()
         processingQueue.async { [weak self] in
@@ -152,11 +154,19 @@ final class VideoPreviewProcessingLane: @unchecked Sendable {
             finishCurrentWork()
             return
         }
-        output(frame, generation, identity)
+        var deliveredFrame = frame
+        lock.lock()
+        deliveredFrame.metadata.receivedHostTimeSeconds = currentFrameReceivedHostTime
+        lock.unlock()
+        output(deliveredFrame, generation, identity)
         let duration = elapsedCurrentFrameDuration()
         performanceAccumulator.recordCompleted(duration: duration)
         frameCompleted?(duration)
         finishCurrentWork()
+    }
+
+    func recordPresentation(duration: TimeInterval) {
+        performanceAccumulator.recordPresentation(duration: duration)
     }
 
     private func isSupportedOutput(_ frame: MediaFrame) -> Bool {
@@ -173,6 +183,7 @@ final class VideoPreviewProcessingLane: @unchecked Sendable {
         lock.lock()
         currentOperation = nil
         currentFrameStartedAt = nil
+        currentFrameReceivedHostTime = nil
         if acceptsFrames {
             next = pendingFrame
             pendingFrame = nil

@@ -363,6 +363,7 @@ public final class PlayerFrameSource: NSObject, MediaSource, MediaFrameSourceNod
             trackTransform: frame.preferredTrackTransform,
             frameIndex: frameIndex,
             format: FrameFormat(pixelBuffer: frame.pixelBuffer),
+            receivedHostTimeSeconds: ProcessInfo.processInfo.systemUptime,
             userInfo: userInfo
         )
         let mediaFrame = PixelBufferFrame(pixelBuffer: frame.pixelBuffer, metadata: metadata)

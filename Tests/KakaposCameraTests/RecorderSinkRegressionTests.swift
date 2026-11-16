@@ -249,6 +249,7 @@ final class RecorderSinkRegressionTests: XCTestCase {
     }
 
     func testCancelDuringFinishKeepsCancelledTerminalState() throws {
+        #if DEBUG
         let sink = try RecorderSink(outputURL: makeOutputURL())
         let firstFrame = expectation(description: "first frame")
         sink.consume(
@@ -274,6 +275,9 @@ final class RecorderSinkRegressionTests: XCTestCase {
         wait(for: [finishCallbacks], timeout: 5)
         XCTAssertEqual(sink.state, .cancelled)
         XCTAssertNil(sink.recordedClip)
+        #else
+        throw XCTSkip("Release 不提供 Writer 收尾注入钩子；该确定性时序场景在 Debug 验证。")
+        #endif
     }
 
     func testUnsupportedVideoPayloadFailsInsteadOfReportingDeliverySuccess() throws {

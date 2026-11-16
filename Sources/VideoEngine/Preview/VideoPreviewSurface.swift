@@ -24,10 +24,12 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
         let frame: MediaFrame
         let generation: VideoPreviewGeneration
         let identity: VideoPreviewModeIdentity
+        let serial: UInt64
 
         var metadata: FrameMetadata { frame.metadata }
     }
 
+    var presentationCompleted: ((VideoPreviewGeneration, VideoPreviewModeIdentity, TimeInterval) -> Void)?
     public var framePresented: PresentationHandler?
     public var framePresentationFailed: ((VideoPreviewGeneration, VideoPreviewModeIdentity) -> Void)?
 
@@ -36,6 +38,8 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
     private var acceptedIdentity = VideoPreviewModeIdentity.original
     private var displayedSubmission: Submission?
     private var pendingSubmission: Submission?
+    private var submissionSerial: UInt64 = 0
+    private var measuredSubmissionSerial: UInt64 = 0
     private var context: CIContext!
     private var colorSpace: CGColorSpace!
     private var commandQueue: MTLCommandQueue?
@@ -75,10 +79,12 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
             stateLock.unlock()
             return
         }
+        submissionSerial &+= 1
         pendingSubmission = Submission(
             frame: frame,
             generation: generation,
-            identity: identity
+            identity: identity,
+            serial: submissionSerial
         )
         stateLock.unlock()
         requestDisplay()
@@ -127,6 +133,10 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
             guard let self, self.accepts(submission) else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.accepts(submission) else { return }
+                if self.claimPresentationMeasurement(submission), let received = submission.metadata.receivedHostTimeSeconds {
+                    self.presentationCompleted?(submission.generation, submission.identity,
+                        max(0, ProcessInfo.processInfo.systemUptime - received))
+                }
                 self.framePresented?(
                     submission.generation,
                     submission.identity,
@@ -200,6 +210,14 @@ public final class VideoPreviewSurface: MTKView, MTKViewDelegate {
             guard let self, self.accepts(submission) else { return }
             self.framePresentationFailed?(submission.generation, submission.identity)
         }
+    }
+
+    private func claimPresentationMeasurement(_ submission: Submission) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard submission.serial > measuredSubmissionSerial else { return false }
+        measuredSubmissionSerial = submission.serial
+        return true
     }
 
     private func fittedImage(for submission: Submission, in bounds: CGRect) -> CIImage? {

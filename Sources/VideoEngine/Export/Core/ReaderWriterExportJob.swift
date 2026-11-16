@@ -405,8 +405,14 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
 
         do {
             removePartialOutputIfNeeded()
-            let configuration = try makeConfiguration()
-            let session = try sessionFactory(asset, outputURL, configuration)
+            var configuration = try makeConfiguration()
+            let session: ReaderWriterExportSession
+            do { session = try sessionFactory(asset, outputURL, configuration) }
+            catch {
+                guard configuration.videoEncodingStrategy == .compressedCopy else { throw error }
+                configuration.videoEncodingStrategy = .encoded
+                session = try sessionFactory(asset, outputURL, configuration)
+            }
             let shouldStartSession = stateQueue.sync { () -> Bool in
                 guard _status == .exporting, _didDeliverCompletion == false else { return false }
                 exportSession = session
@@ -531,10 +537,26 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             audioMix: audioMix,
             videoProcessors: exportProfile.colorPolicy.isHDR ? [VideoColorConversionProcessor(policy: exportProfile.colorPolicy)] + videoProcessors : videoProcessors,
             videoFrameProcessingTimeout: videoFrameProcessingTimeout,
-            videoEncodingStrategy: videoProcessors.isEmpty ? .automatic : .encoded,
+            videoEncodingStrategy: canCopyCompressedSamples() ? .compressedCopy : (videoProcessors.isEmpty ? .automatic : .encoded),
             performanceAccumulator: performanceAccumulator,
-            colorPolicy: exportProfile.colorPolicy
+            colorPolicy: exportProfile.colorPolicy,
+            videoPrefetchCapacity: exportProfile.videoReadAheadFrameCount
         )
+    }
+
+    private func canCopyCompressedSamples() -> Bool {
+        guard exportProfile.copiesSamplesWhenCompatible, let urlAsset = asset as? AVURLAsset, urlAsset.url.isFileURL, !asset.hasProtectedContent,
+              videoProcessors.isEmpty, videoComposition == nil, audioMix == nil,
+              exportProfile.colorPolicy == .sourceCompatible, exportProfile.averageVideoBitRate == nil,
+              fileType == .mp4 || fileType == .mov,
+              asset.tracks(withMediaType: .video).count == 1,
+              let track = asset.tracks(withMediaType: .video).first,
+              let description = track.formatDescriptions.first else { return false }
+        let format = description as! CMFormatDescription
+        if let timeRange, timeRange.start != .zero || timeRange.duration != asset.duration { return false }
+        let codec = CMFormatDescriptionGetMediaSubType(format)
+        return (preferredVideoCodec() == .h264 && codec == kCMVideoCodecType_H264)
+            || (preferredVideoCodec() == .hevc && codec == kCMVideoCodecType_HEVC)
     }
 
     private func makeVideoSettings() throws -> [String: Any] {

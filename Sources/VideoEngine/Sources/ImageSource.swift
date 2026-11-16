@@ -36,7 +36,7 @@ public struct StillImageFrame {
     }
 }
 
-public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Sendable {
+public final class ImageSource: MediaSource, MediaFrameSourceNode, MediaSourceSnapshotProviding, @unchecked Sendable {
     public enum MetadataKey {
         public static let imageIndex = "kakapos.image-source.index"
         public static let imageCount = "kakapos.image-source.count"
@@ -115,13 +115,35 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Se
     private var hasStarted = false
     private var isRunning = false
     private var didScheduleTerminalCallback = false
+    private var inFlightFrames = 0
+    private var peakInFlightFrames = 0
+    private var failureDescription: String?
+    private var cachedImageBytes = 0
+    private var rasterizationCount = 0
+    public let maximumInFlightFrameCount: Int
+    public let imageCacheBudgetBytes: Int
+
+    public var sourceSnapshot: MediaSourceSnapshot {
+        pauseCondition.lock()
+        defer { pauseCondition.unlock() }
+        return MediaSourceSnapshot(stateDescription: failureDescription != nil ? "failed" : (isCancelled ? "cancelled" : (isRunning ? (isPaused ? "paused" : "reading") : (hasStarted ? "finished" : "idle"))),
+            lastFrameIndex: nil, lastPresentationTime: nil, lastErrorDescription: failureDescription, details: [
+                "inFlightFrames": String(inFlightFrames), "peakInFlightFrames": String(peakInFlightFrames),
+                "maximumInFlightFrames": String(maximumInFlightFrameCount), "cachedImageBytes": String(cachedImageBytes),
+                "rasterizationCount": String(rasterizationCount)
+            ])
+    }
 
     public init(
         frames: [StillImageFrame],
         renderSize: CGSize? = nil,
         isLooping: Bool = false,
-        callbackQueue: DispatchQueue = .main
+        callbackQueue: DispatchQueue = .main,
+        maximumInFlightFrameCount: Int = 2,
+        imageCacheBudgetBytes: Int = 32 * 1024 * 1024
     ) {
+        self.maximumInFlightFrameCount = max(1, maximumInFlightFrameCount)
+        self.imageCacheBudgetBytes = max(0, imageCacheBudgetBytes)
         configuredFrames = frames
         configuredRenderSize = renderSize
         configuredIsLooping = isLooping
@@ -232,12 +254,21 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Se
     }
 
     private func consumeFrames(_ run: RunConfiguration, generation expectedGeneration: UInt64) {
+        let rasterizer = ImageSourceRasterizer()
         repeat {
             while currentIndex < run.frames.count && waitUntilReady(for: expectedGeneration) {
 
                 let item = run.frames[currentIndex]
                 do {
-                    let pixelBuffer = try Self.makePixelBuffer(from: item.image, renderSize: run.renderSize)
+                    let pixelBuffer = try rasterizer.makeBuffer(image: item.image, size: run.renderSize,
+                        budget: imageCacheBudgetBytes)
+                    pauseCondition.lock()
+                    guard isActiveRun(expectedGeneration) else { pauseCondition.unlock(); return }
+                    inFlightFrames += 1
+                    peakInFlightFrames = max(peakInFlightFrames, inFlightFrames)
+                    cachedImageBytes = rasterizer.cachedBytes
+                    rasterizationCount = rasterizer.rasterizationCount
+                    pauseCondition.unlock()
                     let metadata = FrameMetadata(
                         presentationTime: currentPresentationTime,
                         duration: item.duration,
@@ -254,13 +285,22 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Se
                     run.deliveryQueue.async {
                         self.deliveryFence.lock()
                         defer { self.deliveryFence.unlock() }
-                        guard self.canDeliverFrame(for: expectedGeneration) else { return }
-                        self.delegate?.mediaSource(self, didOutput: frame)
-                        guard self.canDeliverFrame(for: expectedGeneration) else { return }
-                        self.outputNode.transmit(
-                            frame,
-                            shouldContinue: { self.canDeliverFrame(for: expectedGeneration) }
-                        ) { _ in }
+                        guard self.canDeliverFrame(for: expectedGeneration) else {
+                            self.acknowledgeFrame(expectedGeneration)
+                            return
+                        }
+                        let group = DispatchGroup()
+                        group.enter()
+                        let acknowledgeDelegate = FrameProcessingCancellation { group.leave() }
+                        if let delegate = self.delegate {
+                            delegate.mediaSource(self, didOutput: frame) { _ in acknowledgeDelegate.cancel() }
+                        } else { acknowledgeDelegate.cancel() }
+                        group.enter()
+                        let acknowledgeNode = FrameProcessingCancellation { group.leave() }
+                        self.outputNode.transmit(frame, shouldContinue: { self.canDeliverFrame(for: expectedGeneration) }) { _ in
+                            acknowledgeNode.cancel()
+                        }
+                        group.notify(queue: .global(qos: .userInitiated)) { self.acknowledgeFrame(expectedGeneration) }
                     }
                     currentPresentationTime = currentPresentationTime + item.duration
                     currentIndex += 1
@@ -282,7 +322,7 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Se
 
     private func waitUntilReady(for expectedGeneration: UInt64) -> Bool {
         pauseCondition.lock()
-        while isPaused && generation == expectedGeneration && !shouldStop && !isCancelled {
+        while (isPaused || inFlightFrames >= maximumInFlightFrameCount) && generation == expectedGeneration && !shouldStop && !isCancelled {
             pauseCondition.wait()
         }
         let isReady = isActiveRun(expectedGeneration)
@@ -319,6 +359,8 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Se
             return
         }
         shouldStop = true
+        inFlightFrames = 0
+        cachedImageBytes = 0
         isCancelled = cancelled
         isRunning = false
         generation &+= 1
@@ -340,6 +382,9 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Se
             return
         }
         shouldStop = true
+        failureDescription = error.localizedDescription
+        inFlightFrames = 0
+        cachedImageBytes = 0
         isRunning = false
         generation &+= 1
         didScheduleTerminalCallback = true
@@ -354,11 +399,13 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Se
 
     private func completeNaturally(expectedGeneration: UInt64) {
         pauseCondition.lock()
+        while inFlightFrames > 0 && generation == expectedGeneration && !shouldStop && !isCancelled { pauseCondition.wait() }
         guard generation == expectedGeneration, didScheduleTerminalCallback == false else {
             pauseCondition.unlock()
             return
         }
         shouldStop = true
+        cachedImageBytes = 0
         isRunning = false
         didScheduleTerminalCallback = true
         let deliveryQueue = makeDeliveryQueueIfNeeded()
@@ -382,45 +429,11 @@ public final class ImageSource: MediaSource, MediaFrameSourceNode, @unchecked Se
         return queue
     }
 
-    private static func makePixelBuffer(from image: CGImage, renderSize: CGSize?) throws -> CVPixelBuffer {
-        let width = max(Int(renderSize?.width ?? CGFloat(image.width)), 1)
-        let height = max(Int(renderSize?.height ?? CGFloat(image.height)), 1)
-        var pixelBuffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
-            nil,
-            &pixelBuffer
-        )
-        guard status == kCVReturnSuccess, let pixelBuffer else {
-            throw VideoX.Error.newRenderedPixelBufferForRequestFailure
-        }
-
-        CVPixelBufferLockBaseAddress(pixelBuffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
-
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            throw VideoX.Error.newRenderedPixelBufferForRequestFailure
-        }
-
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        guard let context = CGContext(
-            data: baseAddress,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        ) else {
-            throw VideoX.Error.newRenderedPixelBufferForRequestFailure
-        }
-
-        context.clear(CGRect(x: 0, y: 0, width: width, height: height))
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return pixelBuffer
+    private func acknowledgeFrame(_ expectedGeneration: UInt64) {
+        pauseCondition.lock()
+        if generation == expectedGeneration { inFlightFrames = max(0, inFlightFrames - 1) }
+        pauseCondition.broadcast()
+        pauseCondition.unlock()
     }
 
     @discardableResult

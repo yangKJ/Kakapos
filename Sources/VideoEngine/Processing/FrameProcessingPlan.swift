@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AVFoundation
 import KakaposMediaCore
 
 public struct FrameProcessingPlan: @unchecked Sendable {
@@ -41,4 +42,16 @@ public struct FrameProcessingPlan: @unchecked Sendable {
 
 public enum FrameProcessingPlanError: Error, Equatable {
     case emptyProcessorChain
+}
+
+/// 只有每个处理器显式接纳原生格式，且源编码不含 alpha 时才协商为 YUV。
+func negotiatedVideoPixelFormat(processors: [FrameProcessor], fallback: OSType, sourceCodec: FourCharCode?, sourceDynamicRange: FrameDynamicRange = .standard) -> OSType {
+    guard fallback == kCVPixelFormatType_32BGRA, sourceDynamicRange == .standard, !processors.isEmpty,
+          sourceCodec == kCMVideoCodecType_H264 || sourceCodec == kCMVideoCodecType_HEVC else { return fallback }
+    for candidate in [kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] {
+        if processors.allSatisfy({ ($0 as? FrameProcessorCapabilityProviding)?.capabilities.acceptedPixelFormats.contains(FramePixelFormat(ostype: candidate)) == true }) {
+            return candidate
+        }
+    }
+    return fallback
 }

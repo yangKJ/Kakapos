@@ -3059,10 +3059,12 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testVideoPreviewLanePropagatesCancellationAndFinalizesMetrics() throws {
+        let processorCancelled = expectation(description: "preview operation cancellation delivered")
         let processorStarted = expectation(description: "preview cancellable processor started")
         let processor = TestCancellableFrameProcessor {
             processorStarted.fulfill()
         }
+        processor.onCancel = { processorCancelled.fulfill() }
         let plan = FrameProcessingPlan(identity: .init(identifier: "cancel", revision: "1")) {
             [processor]
         }
@@ -3079,6 +3081,7 @@ final class MediaEngineTests: XCTestCase {
 
         wait(for: [processorStarted], timeout: 1)
         lane.cancel()
+        wait(for: [processorCancelled], timeout: 1)
 
         XCTAssertEqual(processor.cancelCount, 1)
         XCTAssertEqual(lane.performanceSnapshot.submittedFrameCount, 1)
@@ -3357,6 +3360,7 @@ final class MediaEngineTests: XCTestCase {
     }
 
     func testProcessedReaderWriterSessionReadsTheSourceTrackWithoutImplicitVideoComposition() throws {
+        #if DEBUG
         let asset = AVAsset(url: try makeSampleAssetURL())
         let track = try XCTUnwrap(asset.tracks(withMediaType: .video).first)
         let presentationSize = track.naturalSize.applying(track.preferredTransform)
@@ -3387,6 +3391,9 @@ final class MediaEngineTests: XCTestCase {
         )
 
         XCTAssertFalse(session._usesImplicitVideoCompositionForTesting)
+        #else
+        throw XCTSkip("Release 不提供隐式合成诊断入口；实际编码产物由独立回归验证。")
+        #endif
     }
 
     func testProcessedReaderWriterSessionExportsARealEncodedArtifact() throws {
@@ -7166,6 +7173,7 @@ final class MediaEngineTests: XCTestCase {
 private final class TestCancellableFrameProcessor: CancellableFrameProcessor, @unchecked Sendable {
     private let lock = NSLock()
     private let onProcess: (() -> Void)?
+    var onCancel: (() -> Void)?
     private var storedCancelCount = 0
 
     var cancelCount: Int {
@@ -7192,6 +7200,7 @@ private final class TestCancellableFrameProcessor: CancellableFrameProcessor, @u
             self.lock.lock()
             self.storedCancelCount += 1
             self.lock.unlock()
+            self.onCancel?()
         }
     }
 }

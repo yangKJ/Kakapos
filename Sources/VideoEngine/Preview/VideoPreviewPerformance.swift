@@ -18,6 +18,9 @@ public struct VideoPreviewPerformanceSnapshot: Equatable, Sendable {
     public let maximumProcessingDuration: TimeInterval
     public let peakPendingFrameCount: Int
     public let lastFrameIndex: Int64?
+    public let presentedFrameCount: Int
+    public let averagePresentationLatency: TimeInterval
+    public let maximumPresentationLatency: TimeInterval
     public let isFinal: Bool
 
     public var completionRatio: Double {
@@ -38,6 +41,9 @@ final class VideoPreviewPerformanceAccumulator: @unchecked Sendable {
     private var maximumProcessingDuration: TimeInterval = 0
     private var peakPendingFrameCount = 0
     private var lastFrameIndex: Int64?
+    private var presentedFrameCount = 0
+    private var totalPresentationLatency: TimeInterval = 0
+    private var maximumPresentationLatency: TimeInterval = 0
     private var isFinal = false
 
     var snapshot: VideoPreviewPerformanceSnapshot {
@@ -53,6 +59,9 @@ final class VideoPreviewPerformanceAccumulator: @unchecked Sendable {
                 maximumProcessingDuration: maximumProcessingDuration,
                 peakPendingFrameCount: peakPendingFrameCount,
                 lastFrameIndex: lastFrameIndex,
+                presentedFrameCount: presentedFrameCount,
+                averagePresentationLatency: presentedFrameCount > 0 ? totalPresentationLatency / Double(presentedFrameCount) : 0,
+                maximumPresentationLatency: maximumPresentationLatency,
                 isFinal: isFinal
             )
         }
@@ -81,6 +90,15 @@ final class VideoPreviewPerformanceAccumulator: @unchecked Sendable {
             completedFrameCount += 1
             totalProcessingDuration += max(duration, 0)
             maximumProcessingDuration = max(maximumProcessingDuration, duration)
+        }
+    }
+
+    func recordPresentation(duration: TimeInterval) {
+        lock.withLock {
+            guard !isFinal, duration.isFinite, duration >= 0 else { return }
+            presentedFrameCount += 1
+            totalPresentationLatency += duration
+            maximumPresentationLatency = max(maximumPresentationLatency, duration)
         }
     }
 

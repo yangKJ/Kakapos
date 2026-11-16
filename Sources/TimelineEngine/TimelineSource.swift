@@ -251,7 +251,8 @@ public struct TimelineProcessorSegment {
     public var source: EffectSource
     public var destinationTimeRange: CMTimeRange
     public var layerLevel: Int
-    public var keyframes: [KeyframeAnimation]
+    public var keyframes: [KeyframeAnimation] { didSet { keyframeIndex = TimelineKeyframeIndex(keyframes) } }
+    private var keyframeIndex: TimelineKeyframeIndex
 
     public init(
         source: EffectSource,
@@ -263,11 +264,12 @@ public struct TimelineProcessorSegment {
         self.destinationTimeRange = destinationTimeRange
         self.layerLevel = layerLevel
         self.keyframes = keyframes
+        self.keyframeIndex = TimelineKeyframeIndex(keyframes)
     }
 
     public func intensity(at time: CMTime) -> Float {
-        KeyframeAnimation.value(for: "effect.intensity", at: time, animations: keyframes)
-            ?? KeyframeAnimation.value(for: "intensity", at: time, animations: keyframes)
+        keyframeIndex.value(for: "effect.intensity", at: time)
+            ?? keyframeIndex.value(for: "intensity", at: time)
             ?? source.intensity
     }
 }
@@ -475,30 +477,19 @@ struct TimelineRenderPlanBuilder {
             transitionSegments: transitionSegments
         )
 
-        // 区间筛选保留稳定的层级顺序，顶层片段数组仍维持原顺序。
-        let orderedAssets = assetSegments.sorted { $0.layerLevel < $1.layerLevel }
-        let orderedImages = imageSegments.sorted { $0.layerLevel < $1.layerLevel }
-        let orderedTexts = textSegments.sorted { $0.layerLevel < $1.layerLevel }
-        let orderedProcessors = processorSegments.sorted { $0.layerLevel < $1.layerLevel }
+        var assets = TimelineIntervalIndex(assetSegments, range: { $0.destinationTimeRange }, level: { $0.layerLevel })
+        var images = TimelineIntervalIndex(imageSegments, range: { $0.destinationTimeRange }, level: { $0.layerLevel })
+        var texts = TimelineIntervalIndex(textSegments, range: { $0.destinationTimeRange }, level: { $0.layerLevel })
+        var processors = TimelineIntervalIndex(processorSegments, range: { $0.destinationTimeRange }, level: { $0.layerLevel })
+        var transitionIndex = TimelineIntervalIndex(transitionSegments, range: { $0.timeRange }, level: { _ in 0 })
         let visualIntervals = renderInstructions.map { instruction in
-            let assetSegmentsForInstruction = orderedAssets
-                .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
-            let imageSegmentsForInstruction = orderedImages
-                .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
-            let textSegmentsForInstruction = orderedTexts
-                .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
-            let processorSegmentsForInstruction = orderedProcessors
-                .filter { $0.destinationTimeRange.start < instruction.timeRange.end && $0.destinationTimeRange.end > instruction.timeRange.start }
-
-            return TimelineRenderPlan.VisualInterval(
+            TimelineRenderPlan.VisualInterval(
                 timeRange: instruction.timeRange,
-                assetSegments: assetSegmentsForInstruction,
-                imageSegments: imageSegmentsForInstruction,
-                textSegments: textSegmentsForInstruction,
-                processorSegments: processorSegmentsForInstruction,
-                transitionSegments: transitionSegments.filter {
-                    $0.timeRange.start < instruction.timeRange.end && $0.timeRange.end > instruction.timeRange.start
-                }
+                assetSegments: assets.elements(overlapping: instruction.timeRange),
+                imageSegments: images.elements(overlapping: instruction.timeRange),
+                textSegments: texts.elements(overlapping: instruction.timeRange),
+                processorSegments: processors.elements(overlapping: instruction.timeRange),
+                transitionSegments: transitionIndex.elements(overlapping: instruction.timeRange)
             )
         }
 
@@ -564,18 +555,24 @@ struct TimelineRenderPlanBuilder {
         transitionSegments: [TimelineTransitionSegment]
     ) -> [TimelineAudioMixSegment] {
         let layerRampSegments = audioSegments.flatMap { segment in
-            segment.ramps.compactMap { ramp -> TimelineAudioMixSegment? in
-                let clippedRange = CMTimeRangeGetIntersection(ramp.timeRange, otherRange: segment.destinationTimeRange)
-                guard clippedRange.isValid, !clippedRange.isEmpty else { return nil }
-                return TimelineAudioMixSegment(
-                    kind: .layerRamp,
-                    compositionTrackID: segment.compositionTrackID,
-                    timeRange: clippedRange,
-                    layerLevel: segment.layerLevel,
-                    startVolume: ramp.startVolume * segment.volume,
-                    endVolume: ramp.endVolume * segment.volume,
-                    timingFunction: ramp.timingFunction
-                )
+            segment.ramps.flatMap { ramp -> [TimelineAudioMixSegment] in
+                let range = CMTimeRangeGetIntersection(ramp.timeRange, otherRange: segment.destinationTimeRange)
+                guard range.isValid, !range.isEmpty else { return [] }
+                func value(_ time: CMTime) -> Float {
+                    let fraction = ramp.timingFunction.value(at: TimelineCurveSampling.progress(at: time, in: ramp.timeRange))
+                    return (ramp.startVolume + fraction * (ramp.endVolume - ramp.startVolume)) * segment.volume
+                }
+                if range == ramp.timeRange {
+                    return [TimelineAudioMixSegment(kind: .layerRamp, compositionTrackID: segment.compositionTrackID,
+                        timeRange: range, layerLevel: segment.layerLevel, startVolume: value(range.start),
+                        endVolume: value(range.end), timingFunction: ramp.timingFunction)]
+                }
+                let times = TimelineCurveSampling.times(in: range, minimumStep: CMTime(value: 1, timescale: 48_000)) { [Double(value($0))] }
+                return zip(times, times.dropFirst()).map { start, end in
+                    TimelineAudioMixSegment(kind: .layerRamp, compositionTrackID: segment.compositionTrackID,
+                        timeRange: CMTimeRange(start: start, end: end), layerLevel: segment.layerLevel,
+                        startVolume: value(start), endVolume: value(end), timingFunction: .linear)
+                }
             }
         }
 
@@ -596,26 +593,26 @@ struct TimelineRenderPlanBuilder {
                 return nil
             }
 
-            return [
-                TimelineAudioMixSegment(
-                    kind: .transitionFadeOut,
-                    compositionTrackID: sourceSegment.compositionTrackID,
-                    timeRange: transitionSegment.timeRange,
-                    layerLevel: sourceLayerLevel,
-                    startVolume: sourceSegment.volume,
-                    endVolume: 0,
-                    timingFunction: transitionSegment.transition.timingFunction
-                ),
-                TimelineAudioMixSegment(
-                    kind: .transitionFadeIn,
-                    compositionTrackID: destinationSegment.compositionTrackID,
-                    timeRange: transitionSegment.timeRange,
-                    layerLevel: destinationLayerLevel,
-                    startVolume: 0,
-                    endVolume: destinationSegment.volume,
-                    timingFunction: transitionSegment.transition.timingFunction
-                )
-            ]
+            let range = transitionSegment.timeRange
+            let transition = transitionSegment.transition
+            return [(sourceSegment, TimelineAudioMixSegment.Kind.transitionFadeOut, false),
+                (destinationSegment, TimelineAudioMixSegment.Kind.transitionFadeIn, true)].flatMap { segment, kind, fadesIn in
+                func value(_ time: CMTime) -> Float {
+                    let progress = transition.timingFunction.value(at: TimelineCurveSampling.progress(at: time, in: transition.timeRange))
+                    return segment.volume * (fadesIn ? progress : 1 - progress)
+                }
+                if range == transition.timeRange {
+                    return [TimelineAudioMixSegment(kind: kind, compositionTrackID: segment.compositionTrackID,
+                        timeRange: range, layerLevel: segment.layerLevel, startVolume: value(range.start),
+                        endVolume: value(range.end), timingFunction: transition.timingFunction)]
+                }
+                let times = TimelineCurveSampling.times(in: range, minimumStep: CMTime(value: 1, timescale: 48_000)) { [Double(value($0))] }
+                return zip(times, times.dropFirst()).map { start, end in
+                    TimelineAudioMixSegment(kind: kind, compositionTrackID: segment.compositionTrackID,
+                        timeRange: CMTimeRange(start: start, end: end), layerLevel: segment.layerLevel,
+                        startVolume: value(start), endVolume: value(end), timingFunction: .linear)
+                }
+            }
         }.flatMap { $0 }
 
         return (layerRampSegments + transitionAudioSegments).sorted {

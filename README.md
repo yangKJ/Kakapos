@@ -452,3 +452,14 @@ Kakapos is available under the [MIT](LICENSE) license. See the [LICENSE](LICENSE
 `exposureBiasRange` 返回设备当前曝光补偿上下限，消费者不应把所有相机固定为相同范围。手势密集更新可继续使用现有会话串行变焦接口；界面倍率与设备倍率不能直接混用。
 
 2026-11-13：iOS 消费者构建与无设备/无效值的聚焦合同测试通过。此记录不等同于实体多镜头切换、持续性能或相机画质验收。
+
+
+### Bounded frames and export optimizations
+
+`ImageSource` waits for downstream acknowledgements before producing more frames. Its default capacity is two frames; `imageCacheBudgetBytes` bounds private raster templates. Each delivered pixel buffer remains independently mutable.
+
+For a native pixel-buffer or texture display host, use `PreviewPipeline(source: source, processors: processors, frameHandler: { frame in /* 显示帧 */ })`, or pass `frameHandler` to the processed camera preview controller. The existing image callback remains available; requesting `lastImage` explicitly materializes an image.
+
+`VideoExportProfile(copiesSamplesWhenCompatible: true)` opts into retaining compatible compressed video samples and their original bitrate. Admission requires an entire local source, a matching requested codec and container, source-compatible color, no video processors/composition/audio mix, and no explicit video bitrate. Other inputs use the encoding path. Compatible AAC audio can also retain compressed samples when its channel count, sample rate, and bitrate match the profile.
+
+Processed export keeps processor calls serial. Set `VideoExportProfile(videoReadAheadFrameCount: 2)` to opt into at most two frames of read-ahead; the default is zero because throughput benefits depend on the workload. Native SDR YUV is selected only when every processor explicitly declares support; HDR and alpha content do not enter this optimization. Performance snapshots report read-ahead high-water count and preview presentation latency separately from processor execution time.

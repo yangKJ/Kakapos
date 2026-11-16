@@ -54,6 +54,10 @@ public enum VideoExportColorPolicy: Equatable, Hashable, Sendable {
 }
 
 public struct VideoExportProfile: Equatable, Sendable {
+    /// 允许完整、未处理且编码兼容的本地素材保留原压缩样本与码率；默认继续重编码。
+    public let copiesSamplesWhenCompatible: Bool
+    /// 可选视频读取预取，范围 0...2；默认不增加缓冲和跨队列调度。
+    public let videoReadAheadFrameCount: Int
     public let videoCodec: VideoExportCodec
     public let averageVideoBitRate: Int?
     public let colorPolicy: VideoExportColorPolicy
@@ -67,8 +71,12 @@ public struct VideoExportProfile: Equatable, Sendable {
         colorPolicy: VideoExportColorPolicy = .sourceCompatible,
         audioBitRate: Int = 128_000,
         audioSampleRate: Double = 44_100,
-        audioChannelCount: Int = 2
+        audioChannelCount: Int = 2,
+        copiesSamplesWhenCompatible: Bool = false,
+        videoReadAheadFrameCount: Int = 0
     ) {
+        self.videoReadAheadFrameCount = min(max(videoReadAheadFrameCount, 0), 2)
+        self.copiesSamplesWhenCompatible = copiesSamplesWhenCompatible
         self.videoCodec = videoCodec
         self.averageVideoBitRate = averageVideoBitRate.flatMap { $0 > 0 ? $0 : nil }
         self.colorPolicy = colorPolicy

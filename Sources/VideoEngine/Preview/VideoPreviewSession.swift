@@ -36,6 +36,7 @@ public final class VideoPreviewSession: @unchecked Sendable {
     private var isStarted = false
     private var adaptiveFramesPerSecond: Int
     private var consecutiveUnderBudgetSamples = 0
+    private var smoothedFrameDuration: TimeInterval?
     private var lastPerformanceSnapshot: VideoPreviewPerformanceSnapshot?
 
     public var performanceSnapshot: VideoPreviewPerformanceSnapshot? {
@@ -72,6 +73,11 @@ public final class VideoPreviewSession: @unchecked Sendable {
                 identity: identity,
                 presentationTime: time
             ))
+        }
+        surface.presentationCompleted = { [weak self] generation, identity, duration in
+            guard let self, self.accepts(generation: generation, identity: identity) else { return }
+            self.currentLane()?.recordPresentation(duration: duration)
+            self.adaptPreviewFrameRate(after: duration, generation: generation, identity: identity)
         }
         surface.framePresentationFailed = { [weak self] generation, identity in
             guard let self, self.accepts(generation: generation, identity: identity) else { return }
@@ -131,10 +137,7 @@ public final class VideoPreviewSession: @unchecked Sendable {
             ))
             self.errorHandler?(error)
         }
-        nextLane.frameCompleted = { [weak self, weak nextLane] duration in
-            guard let nextLane else { return }
-            self?.adaptPreviewFrameRate(after: duration, generation: nextLane.generation, identity: nextLane.identity)
-        }
+
 
         stateLock.lock()
         guard !isCancelled else {
@@ -145,6 +148,8 @@ public final class VideoPreviewSession: @unchecked Sendable {
         generationRawValue = nextRawValue
         let previousLane = lane
         lane = nextLane
+        smoothedFrameDuration = nil
+        consecutiveUnderBudgetSamples = 0
         reportedReadyGeneration = nil
         let isStarted = self.isStarted
         stateLock.unlock()
@@ -156,7 +161,8 @@ public final class VideoPreviewSession: @unchecked Sendable {
         }
         surface.awaitFirstFrame(generation: generation, identity: mode.identity)
         readinessHandler?(.awaitingFirstFrame(generation: generation, identity: mode.identity))
-        if let lastFrame = source.lastFrame {
+        if var lastFrame = source.lastFrame {
+            lastFrame.metadata.receivedHostTimeSeconds = ProcessInfo.processInfo.systemUptime
             nextLane.consume(lastFrame)
         }
         if isStarted {
@@ -177,7 +183,8 @@ public final class VideoPreviewSession: @unchecked Sendable {
 
     public func requestCurrentFrame() {
         guard !isCancelled else { return }
-        if let lastFrame = source.lastFrame {
+        if var lastFrame = source.lastFrame {
+            lastFrame.metadata.receivedHostTimeSeconds = ProcessInfo.processInfo.systemUptime
             currentLane()?.consume(lastFrame)
         }
         source.requestFrameUpdate()
@@ -246,15 +253,19 @@ public final class VideoPreviewSession: @unchecked Sendable {
             stateLock.unlock()
             return
         }
+        guard processingDuration.isFinite, processingDuration >= 0 else { stateLock.unlock(); return }
+        let smoothed = smoothedFrameDuration.map { $0 * 0.8 + processingDuration * 0.2 } ?? processingDuration
+        smoothedFrameDuration = smoothed
+        let observed = max(processingDuration, smoothed)
         let budget = adaptivePolicy.overloadBudgetRatio / Double(max(adaptiveFramesPerSecond, 1))
-        if processingDuration <= budget {
+        if observed <= budget {
             consecutiveUnderBudgetSamples += 1
         } else {
             consecutiveUnderBudgetSamples = 0
         }
         recommendation = adaptivePolicy.recommendation(
             currentFramesPerSecond: adaptiveFramesPerSecond,
-            processingDuration: processingDuration,
+            processingDuration: observed,
             consecutiveUnderBudgetSamples: consecutiveUnderBudgetSamples
         )
         if recommendation > adaptiveFramesPerSecond {

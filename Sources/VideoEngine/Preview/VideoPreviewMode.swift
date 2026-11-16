@@ -97,7 +97,10 @@ public struct VideoPreviewAdaptivePolicy: Equatable, Sendable {
         if processingDuration > frameBudget * overloadBudgetRatio {
             return max(minimumFramesPerSecond, current - 5)
         }
-        guard consecutiveUnderBudgetSamples >= recoverySampleCount else { return current }
-        return min(maximumFramesPerSecond, current + 5)
+        let candidate = min(maximumFramesPerSecond, current + 5)
+        let recoveryBudget = overloadBudgetRatio * 0.85 / Double(max(candidate, 1))
+        guard consecutiveUnderBudgetSamples >= recoverySampleCount,
+              processingDuration.isFinite, processingDuration <= recoveryBudget else { return current }
+        return candidate
     }
 }

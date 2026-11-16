@@ -20,6 +20,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             case automatic
             case encoded
             case passthrough
+            case compressedCopy
         }
 
         var fileType: AVFileType
@@ -35,6 +36,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         var videoEncodingStrategy: VideoEncodingStrategy = .automatic
         var performanceAccumulator = ReaderWriterExportPerformanceAccumulator()
         var colorPolicy: VideoExportColorPolicy = .sourceCompatible
+        var videoPrefetchCapacity = 0
     }
 
     enum Status: Equatable {
@@ -86,17 +88,17 @@ final class VideoAssetExportSession: @unchecked Sendable {
 
         func updateVideoEncodingProgress(fractionCompleted: Double) {
             phase = .videoEncoding
-            videoProgress?.completedUnitCount = Int64(Double(childProgressTotalUnitCount) * fractionCompleted)
+            if fractionCompleted.isFinite { videoProgress?.completedUnitCount = max(videoProgress?.completedUnitCount ?? 0, Int64(Double(childProgressTotalUnitCount) * min(max(fractionCompleted, 0), 1))) }
         }
 
         func updateAudioEncodingProgress(fractionCompleted: Double) {
             phase = .audioEncoding
-            audioProgress?.completedUnitCount = Int64(Double(childProgressTotalUnitCount) * fractionCompleted)
+            if fractionCompleted.isFinite { audioProgress?.completedUnitCount = max(audioProgress?.completedUnitCount ?? 0, Int64(Double(childProgressTotalUnitCount) * min(max(fractionCompleted, 0), 1))) }
         }
 
         func updateFinishWritingProgress(fractionCompleted: Double) {
             phase = .finishing
-            finishWritingProgress.completedUnitCount = Int64(Double(childProgressTotalUnitCount) * fractionCompleted)
+            if fractionCompleted.isFinite { finishWritingProgress.completedUnitCount = max(finishWritingProgress.completedUnitCount, Int64(Double(childProgressTotalUnitCount) * min(max(fractionCompleted, 0), 1))) }
         }
 
         func makeSnapshot() -> ExportProgress {
@@ -118,7 +120,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
     private let reader: AVAssetReader
     private let writer: AVAssetWriter
     private let videoOutput: AVAssetReaderOutput?
-    private let audioOutput: AVAssetReaderAudioMixOutput?
+    private let audioOutput: AVAssetReaderOutput?
     private let videoInput: AVAssetWriterInput?
     private let audioInput: AVAssetWriterInput?
     private let videoPixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
@@ -154,6 +156,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
     private var processedVideoFrameCount = 0
     private var videoCompleted = false
     private var audioCompleted = false
+    private var videoPrefetcher: VideoSamplePrefetcher?
     private var videoProcessingInFlight = false
     private var videoProcessingGeneration: UInt64 = 0
     private var videoProcessingTimeoutTimer: DispatchSourceTimer?
@@ -168,6 +171,10 @@ final class VideoAssetExportSession: @unchecked Sendable {
     private static let progressDeliveryInterval: TimeInterval = 0.1
 
     init(asset: AVAsset, outputURL: URL, configuration: Configuration) throws {
+        if configuration.videoEncodingStrategy == .compressedCopy,
+            (!configuration.videoProcessors.isEmpty || configuration.videoComposition != nil || configuration.colorPolicy != .sourceCompatible) {
+            throw SessionError.invalidStatus
+        }
         self.asset = (asset.copy() as? AVAsset) ?? asset
         self.configuration = configuration
         self.outputURL = outputURL
@@ -195,28 +202,33 @@ final class VideoAssetExportSession: @unchecked Sendable {
             // 部分来自屏幕录制或照片图库的合法 H.264 素材会被这条隐式合成路径
             // 判为 invalidSourceMedia；直接读取轨道并把 preferredTransform 写回输出即可。
             let readerVideoComposition = configuration.videoComposition
+            let sourcePixelFormat = negotiatedVideoPixelFormat(processors: configuration.videoProcessors,
+                fallback: configuration.colorPolicy.pixelBufferFormat, sourceCodec: CMFormatDescriptionGetMediaSubType(sourceFormatHint),
+                sourceDynamicRange: (try? VideoAssetProfileInspector().inspect(self.asset).frameFormat.dynamicRange) ?? .unknown)
             if let videoComposition = readerVideoComposition {
                 let compositionOutput = AVAssetReaderVideoCompositionOutput(
                     videoTracks: videoTracks,
-                    videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: configuration.colorPolicy.pixelBufferFormat]
+                    videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: sourcePixelFormat]
                 )
                 compositionOutput.alwaysCopiesSampleData = false
                 compositionOutput.videoComposition = videoComposition
                 output = compositionOutput
                 inputTransform = nil
             } else {
-                let outputSettings: [String: Any]
-                if configuration.videoProcessors.isEmpty {
+                let outputSettings: [String: Any]?
+                if configuration.videoEncodingStrategy == .compressedCopy {
+                    outputSettings = nil
+                } else if configuration.videoProcessors.isEmpty {
                     outputSettings = [
                         kCVPixelBufferPixelFormatTypeKey as String: [
                             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-                            configuration.colorPolicy.pixelBufferFormat,
+                            sourcePixelFormat,
                             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
                         ]
                     ]
                 } else {
                     outputSettings = [
-                        kCVPixelBufferPixelFormatTypeKey as String: configuration.colorPolicy.pixelBufferFormat
+                        kCVPixelBufferPixelFormatTypeKey as String: sourcePixelFormat
                     ]
                 }
                 let trackOutput = AVAssetReaderTrackOutput(
@@ -236,7 +248,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             let input: AVAssetWriterInput
             let processedPixelBufferSize: CGSize?
             let pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
-            let usePassthrough = configuration.videoEncodingStrategy == .passthrough
+            let usePassthrough = configuration.videoEncodingStrategy == .passthrough || configuration.videoEncodingStrategy == .compressedCopy
                 || (configuration.videoEncodingStrategy == .automatic
                     && !configuration.colorPolicy.isHDR
                     && !configuration.videoProcessors.isEmpty
@@ -284,7 +296,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
                     assetWriterInput: input,
                     sourcePixelBufferAttributes: [
-                        kCVPixelBufferPixelFormatTypeKey as String: configuration.colorPolicy.pixelBufferFormat,
+                        kCVPixelBufferPixelFormatTypeKey as String: sourcePixelFormat,
                         kCVPixelBufferWidthKey as String: processedPixelBufferSize.width,
                         kCVPixelBufferHeightKey as String: processedPixelBufferSize.height
                     ]
@@ -304,19 +316,30 @@ final class VideoAssetExportSession: @unchecked Sendable {
 
         let audioTracks = self.asset.tracks(withMediaType: .audio)
         if audioTracks.count > 0 {
-            let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: nil)
-            output.alwaysCopiesSampleData = false
-            output.audioMix = configuration.audioMix
-            guard reader.canAdd(output) else {
-                throw SessionError.cannotAddAudioOutput
+            let output: AVAssetReaderOutput
+            let sourceAudioFormat = audioTracks.first?.formatDescriptions.first.map { $0 as! CMAudioFormatDescription }
+            let audioDescription = sourceAudioFormat.flatMap(CMAudioFormatDescriptionGetStreamBasicDescription)?.pointee
+            let requestedAudioBitRate = Double(configuration.audioSettings[AVEncoderBitRateKey] as? Int ?? 0)
+            let compatibleAudioBitRate = abs(Double(audioTracks[0].estimatedDataRate) - requestedAudioBitRate) <= max(1, requestedAudioBitRate * 0.02)
+            let copiesAudio = configuration.videoEncodingStrategy == .compressedCopy && audioTracks.count == 1
+                && compatibleAudioBitRate && audioTracks[0].preferredVolume == 1
+                && audioDescription?.mFormatID == kAudioFormatMPEG4AAC
+                && audioDescription?.mSampleRate == configuration.audioSettings[AVSampleRateKey] as? Double
+                && Int(audioDescription?.mChannelsPerFrame ?? 0) == configuration.audioSettings[AVNumberOfChannelsKey] as? Int
+            if copiesAudio {
+                output = AVAssetReaderTrackOutput(track: audioTracks[0], outputSettings: nil)
+            } else {
+                let mixed = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: nil)
+                mixed.audioMix = configuration.audioMix
+                output = mixed
             }
+            output.alwaysCopiesSampleData = false
+            guard reader.canAdd(output) else { throw SessionError.cannotAddAudioOutput }
             reader.add(output)
             audioOutput = output
-
-            let input = AVAssetWriterInput(
-                mediaType: .audio,
-                outputSettings: configuration.audioSettings
-            )
+            let input = AVAssetWriterInput(mediaType: .audio,
+                outputSettings: copiesAudio ? nil : configuration.audioSettings,
+                sourceFormatHint: copiesAudio ? sourceAudioFormat : nil)
             input.expectsMediaDataInRealTime = false
             // AVAssetReaderAudioMixOutput(nil) 输出的是方便编码的未压缩 PCM，
             // 不能把原始 AAC 轨道的 format description 当成这些样本的 source hint。
@@ -388,6 +411,19 @@ final class VideoAssetExportSession: @unchecked Sendable {
         dispatchStatus(.exporting)
         writer.startSession(atSourceTime: configuration.timeRange.start)
 
+        if let videoOutput, videoPixelBufferAdaptor != nil, configuration.videoPrefetchCapacity > 0 {
+            let prefetcher = VideoSamplePrefetcher(reader: reader, output: videoOutput, capacity: configuration.videoPrefetchCapacity,
+                pressure: { [weak self] count in self?.configuration.performanceAccumulator.recordVideoPrefetchCount(count) },
+                available: { [weak self] in
+                    self?.queue.async { [weak self] in
+                        guard let self, let input = self.videoInput, let output = self.videoOutput else { return }
+                        self.pumpVideo(from: output, to: input)
+                    }
+                })
+            videoPrefetcher = prefetcher
+            prefetcher.start()
+        }
+
         if let videoInput, let videoOutput {
             videoInput.requestMediaDataWhenReady(on: queue) { [weak self, unowned videoInput] in
                 self?.pumpVideo(from: videoOutput, to: videoInput)
@@ -409,6 +445,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self, self.status == .exporting, self.cancelled == false, self.didBeginFinishing == false else { return }
             self.status = .paused
+            self.videoPrefetcher?.setPaused(true)
             self.dispatchStatus(.paused)
         }
     }
@@ -417,6 +454,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self, self.status == .paused, self.cancelled == false, self.didBeginFinishing == false else { return }
             self.status = .exporting
+            self.videoPrefetcher?.setPaused(false)
             self.dispatchStatus(.exporting)
             if let videoOutput = self.videoOutput, let videoInput = self.videoInput {
                 self.pumpVideo(from: videoOutput, to: videoInput)
@@ -438,9 +476,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             self.cancelVideoProcessingOperation()
             self.cancelVideoProcessingTimeout()
             self.dispatchStatus(.cancelled)
-            if self.reader.status == .reading {
-                self.reader.cancelReading()
-            }
+            self.stopReading()
             self.completeAllInputs()
             if self.didBeginFinishing {
                 self.writer.cancelWriting()
@@ -484,11 +520,19 @@ final class VideoAssetExportSession: @unchecked Sendable {
         var sampleCount = 0
         while input.isReadyForMoreMediaData && sampleCount < Self.maximumSamplesPerPump {
             guard status == .exporting, cancelled == false, didBeginFinishing == false else { return }
-            guard reader.status == .reading, writer.status == .writing else {
+            guard reader.status == .reading || reader.status == .completed, writer.status == .writing else {
                 handleInactiveReaderWriter()
                 return
             }
-            guard let sampleBuffer = output.copyNextSampleBuffer() else {
+            let nextSample: CMSampleBuffer?
+            if let videoPrefetcher {
+                switch videoPrefetcher.take() {
+                case .sample(let sample): nextSample = sample
+                case .waiting: return
+                case .finished: nextSample = nil
+                }
+            } else { nextSample = output.copyNextSampleBuffer() }
+            guard let sampleBuffer = nextSample else {
                 dispatchProgressCallback { $0.updateVideoEncodingProgress(fractionCompleted: 1) }
                 finishTrack(.video, input: input)
                 return
@@ -547,7 +591,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         var sampleCount = 0
         while input.isReadyForMoreMediaData && sampleCount < Self.maximumSamplesPerPump {
             guard status == .exporting, cancelled == false, didBeginFinishing == false else { return }
-            guard reader.status == .reading, writer.status == .writing else {
+            guard reader.status == .reading || reader.status == .completed, writer.status == .writing else {
                 handleInactiveReaderWriter()
                 return
             }
@@ -602,15 +646,19 @@ final class VideoAssetExportSession: @unchecked Sendable {
     }
 
     private func failExport(_ error: Error) {
+        videoPrefetcher?.cancel()
         guard didBeginFinishing == false else { return }
         videoProcessingInFlight = false
         cancelVideoProcessingTimeout()
         processorError = error
-        if reader.status == .reading {
-            reader.cancelReading()
-        }
+        stopReading()
         completeAllInputs()
         finishIfPossible()
+    }
+
+    private func stopReading() {
+        if let videoPrefetcher { videoPrefetcher.cancel() }
+        else if reader.status == .reading { reader.cancelReading() }
     }
 
     private func handleInactiveReaderWriter() {
@@ -641,7 +689,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
             return
         }
 
-        if reader.status == .cancelled || writer.status == .cancelled {
+        if cancelled || reader.status == .cancelled || writer.status == .cancelled {
             if writer.status != .cancelled {
                 writer.cancelWriting()
             }
@@ -967,6 +1015,8 @@ final class VideoAssetExportSession: @unchecked Sendable {
     }
 
     private func dispatchCallback(with error: Error?, _ completionHandler: @escaping (Error?) -> Void) {
+        videoPrefetcher?.cancel()
+        videoPrefetcher = nil
         dispatchPrecondition(condition: .onQueue(queue))
         guard didDeliverCallback == false else { return }
         didDeliverCallback = true
