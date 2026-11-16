@@ -17,6 +17,16 @@ import XCTest
 @testable import KakaposVideo
 
 final class HDRArtifactContractTests: XCTestCase {
+    func testSDRP3PolicyDeclaresItsActualPrimariesAndTransfer() {
+        let policy = VideoExportColorPolicy.standardDisplayP3
+        XCTAssertFalse(policy.isHDR)
+        XCTAssertEqual(policy.requestedDynamicRange, .standard)
+        XCTAssertEqual(policy.pixelBufferFormat, kCVPixelFormatType_32BGRA)
+        XCTAssertEqual(policy.colorProperties?[AVVideoColorPrimariesKey] as? String, kCVImageBufferColorPrimaries_P3_D65 as String)
+        XCTAssertEqual(policy.colorProperties?[AVVideoTransferFunctionKey] as? String, kCVImageBufferTransferFunction_sRGB as String)
+        XCTAssertEqual(VideoExportProfile.standardDelivery.colorPolicy, .standardBT709)
+    }
+
     func testReaderWriterReencodesHLGArtifactWithRealHDRPixels() throws {
         try assertHDRExport(policy: .hdrHLG, transfer: kCVImageBufferTransferFunction_ITU_R_2100_HLG)
     }

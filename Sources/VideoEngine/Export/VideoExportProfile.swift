@@ -21,6 +21,7 @@ public enum VideoExportCodec: Equatable, Sendable {
 public enum VideoExportColorPolicy: Equatable, Hashable, Sendable {
     case sourceCompatible
     case standardBT709
+    case standardDisplayP3
     case hdrHLG
     case hdrPQ
 
@@ -30,7 +31,7 @@ public enum VideoExportColorPolicy: Equatable, Hashable, Sendable {
         switch self {
         case .hdrHLG: return .hdr(.hlg)
         case .hdrPQ: return .hdr(.pq)
-        case .standardBT709: return .standard
+        case .standardBT709, .standardDisplayP3: return .standard
         case .sourceCompatible: return nil
         }
     }
@@ -42,6 +43,10 @@ public enum VideoExportColorPolicy: Equatable, Hashable, Sendable {
         case .sourceCompatible: return nil
         case .standardBT709:
             return [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2, AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2, AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2]
+        case .standardDisplayP3:
+            return [AVVideoColorPrimariesKey: kCVImageBufferColorPrimaries_P3_D65 as String,
+                    AVVideoTransferFunctionKey: kCVImageBufferTransferFunction_sRGB as String,
+                    AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2]
         case .hdrHLG, .hdrPQ:
             return [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_2020, AVVideoTransferFunctionKey: self == .hdrHLG ? AVVideoTransferFunction_ITU_R_2100_HLG : AVVideoTransferFunction_SMPTE_ST_2084_PQ, AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_2020]
         }

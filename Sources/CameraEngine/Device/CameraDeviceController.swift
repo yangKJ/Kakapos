@@ -159,6 +159,21 @@ public final class CameraDeviceController {
         }
     }
 
+    /// 交互调度使用的压力分档；未知设备或不支持的平台保留nil。
+    public var systemPressureLevel: Int? {
+        #if os(iOS)
+        guard let state = deviceProvider()?.systemPressureState else { return nil }
+        switch state.level {
+        case .nominal, .fair: return 0
+        case .serious: return 1
+        case .critical, .shutdown: return 2
+        default: return nil
+        }
+        #else
+        return nil
+        #endif
+    }
+
     public var exposureBiasRange: ClosedRange<Float>? {
         guard let device = deviceProvider() else { return nil }
         return device.minExposureTargetBias...device.maxExposureTargetBias
