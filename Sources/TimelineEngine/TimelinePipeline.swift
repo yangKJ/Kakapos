@@ -237,7 +237,7 @@ public extension TimelinePipeline {
         PreviewPipeline(
             player: AVPlayer(playerItem: makePlayerItem()),
             preferredFramesPerSecond: preferredFramesPerSecond,
-            processors: processors.isEmpty ? currentCompilation().timelineProcessors : processors,
+            processors: processors.isEmpty ? currentCompilation().scheduledTimelineProcessors : processors,
             callbackQueue: callbackQueue,
             handler: handler
         )
@@ -253,7 +253,7 @@ public extension CompiledTimelineComposition {
             configuration: VideoPreviewConfiguration(preferredFramesPerSecond: preferredFramesPerSecond, colorPolicy: exportProfile.colorPolicy))
         if !renderPlan.processorSegments.isEmpty {
             let snapshot = self
-            let plan = FrameProcessingPlan(identity: .init(identifier: "kakapos.timeline", revision: UUID().uuidString), makeProcessors: { snapshot.timelineProcessors })
+            let plan = FrameProcessingPlan(identity: .init(identifier: "kakapos.timeline", revision: UUID().uuidString), makeProcessors: { snapshot.scheduledTimelineProcessors })
             _ = try session.setMode(.processed(plan))
         }
         return session

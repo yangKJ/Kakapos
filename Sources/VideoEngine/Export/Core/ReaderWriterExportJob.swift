@@ -563,7 +563,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         guard let videoTrack = asset.tracks(withMediaType: .video).first else {
             throw VideoX.Error.videoTrackEmpty
         }
-        let size = videoTrack.naturalSize.applying(videoTrack.preferredTransform)
+        let size = videoComposition?.renderSize ?? videoTrack.naturalSize.applying(videoTrack.preferredTransform)
         return [
             AVVideoCodecKey: preferredVideoCodec(),
             AVVideoWidthKey: abs(size.width),

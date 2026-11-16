@@ -11,6 +11,7 @@ import KakaposMediaCore
 
 public struct VideoArtifactValidationExpectation: @unchecked Sendable {
     public let sourceDuration: CMTime
+    public let expectedVideoSize: CGSize?
     public let expectsAudio: Bool
     public let durationTolerance: CMTime
     public let expectedVideoCodec: VideoAssetCodec?
@@ -23,8 +24,10 @@ public struct VideoArtifactValidationExpectation: @unchecked Sendable {
         durationTolerance: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600),
         expectedVideoCodec: VideoAssetCodec? = nil,
         expectedDynamicRange: FrameDynamicRange? = nil,
-        maximumAudioVideoDurationDrift: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600)
+        maximumAudioVideoDurationDrift: CMTime = CMTime(seconds: 0.12, preferredTimescale: 600),
+        expectedVideoSize: CGSize? = nil
     ) {
+        self.expectedVideoSize = expectedVideoSize
         self.sourceDuration = sourceDuration
         self.expectsAudio = expectsAudio
         self.durationTolerance = durationTolerance
@@ -103,6 +106,10 @@ public enum VideoArtifactValidator {
             throw VideoArtifactValidationError.invalidDimensions
         }
 
+        if let size = expectation.expectedVideoSize,
+           abs(abs(transformedSize.width) - size.width) > 0.5 || abs(abs(transformedSize.height) - size.height) > 0.5 {
+            throw VideoArtifactValidationError.invalidDimensions
+        }
         let profile = try VideoAssetProfileInspector().inspect(asset)
         if let expectedVideoCodec = expectation.expectedVideoCodec,
            profile.videoCodec != expectedVideoCodec {

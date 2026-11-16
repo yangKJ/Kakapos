@@ -24,6 +24,7 @@ open class TimelineLayer {
     public var opacity: Float
     public var transform: CGAffineTransform
     public var keyframes: [KeyframeAnimation]
+    var evaluationComponents: [TimelineLayerComponent] = []
 
     public init(timeRange: CMTimeRange, layerLevel: Int = 0, opacity: Float = 1, transform: CGAffineTransform = .identity, keyframes: [KeyframeAnimation] = []) {
         self.timeRange = timeRange
@@ -127,15 +128,17 @@ public final class ClipLayer: TimelineLayer {
 
     public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
         let shifted = ClipLayer(
-            source: clipSource,
+            asset: asset,
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
+            sourceTimeRange: sourceTimeRange,
             layerLevel: layerLevel + inheritedLevel,
             volume: volume,
             audioRamps: audioRamps.map { $0.applyingOffset(offset) }
         )
         shifted.opacity = opacity
         shifted.transform = transform
-        shifted.keyframes = keyframes
+        shifted.keyframes = keyframes.map { $0.applyingOffset(offset) }
+        shifted.evaluationComponents = evaluationComponents.map { $0.shifted(by: offset) }
         return shifted
     }
 }
@@ -164,7 +167,8 @@ public final class ImageLayer: TimelineLayer {
         )
         shifted.opacity = opacity
         shifted.transform = transform
-        shifted.keyframes = keyframes
+        shifted.keyframes = keyframes.map { $0.applyingOffset(offset) }
+        shifted.evaluationComponents = evaluationComponents.map { $0.shifted(by: offset) }
         return shifted
     }
 }
@@ -222,7 +226,8 @@ public final class TextLayer: TimelineLayer {
         )
         shifted.opacity = opacity
         shifted.transform = transform
-        shifted.keyframes = keyframes
+        shifted.keyframes = keyframes.map { $0.applyingOffset(offset) }
+        shifted.evaluationComponents = evaluationComponents.map { $0.shifted(by: offset) }
         return shifted
     }
 
@@ -318,14 +323,16 @@ public final class AudioLayer: TimelineLayer {
 
     public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
         let shifted = AudioLayer(
-            source: audioSource,
+            asset: asset,
             timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
+            sourceTimeRange: sourceTimeRange,
             volume: volume,
             audioRamps: audioRamps.map { $0.applyingOffset(offset) }
         )
         shifted.opacity = opacity
         shifted.transform = transform
-        shifted.keyframes = keyframes
+        shifted.keyframes = keyframes.map { $0.applyingOffset(offset) }
+        shifted.evaluationComponents = evaluationComponents.map { $0.shifted(by: offset) }
         shifted.layerLevel = layerLevel + inheritedLevel
         return shifted
     }
@@ -364,7 +371,8 @@ public final class EffectLayer: TimelineLayer {
         )
         shifted.opacity = opacity
         shifted.transform = transform
-        shifted.keyframes = keyframes
+        shifted.keyframes = keyframes.map { $0.applyingOffset(offset) }
+        shifted.evaluationComponents = evaluationComponents.map { $0.shifted(by: offset) }
         return shifted
     }
 }
@@ -378,44 +386,21 @@ public final class GroupLayer: TimelineLayer {
     }
 
     public override func applyingOffset(_ offset: CMTime, inheritedLevel: Int = 0) -> TimelineLayer {
-        let shiftedChildren = layers.map { child in
-            child.applyingOffset(offset + timeRange.start, inheritedLevel: layerLevel + inheritedLevel)
-        }
-        let shifted = GroupLayer(
-            timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
-            layers: shiftedChildren,
-            layerLevel: layerLevel + inheritedLevel
-        )
+        let shifted = GroupLayer(timeRange: CMTimeRange(start: timeRange.start + offset, duration: timeRange.duration),
+            layers: layers.map { $0.applyingOffset(.zero) }, layerLevel: layerLevel + inheritedLevel)
         shifted.opacity = opacity
         shifted.transform = transform
         shifted.keyframes = keyframes
         return shifted
     }
 
-    internal func flattenedLayers(
-        offset: CMTime = .zero,
-        inheritedLevel: Int = 0,
-        inheritedState: TimelineLayerInheritance = .identity
-    ) -> [TimelineLayer] {
-        let shiftedStart = offset + timeRange.start
-        let combinedState = inheritedState.appending(layer: self)
-
-        return layers.flatMap { child -> [TimelineLayer] in
-            if let group = child as? GroupLayer {
-                return group.flattenedLayers(
-                    offset: shiftedStart,
-                    inheritedLevel: layerLevel + inheritedLevel,
-                    inheritedState: combinedState
-                )
-            }
-
-            let shifted = child.applyingOffset(shiftedStart, inheritedLevel: layerLevel + inheritedLevel)
-            shifted.opacity *= combinedState.opacity
-            shifted.transform = combinedState.transform.concatenating(shifted.transform)
-            shifted.keyframes = combinedState.keyframes + shifted.keyframes
-            return [shifted]
-        }
+    internal func flattenedLayers(offset: CMTime = .zero, inheritedLevel: Int = 0,
+        inheritedState: TimelineLayerInheritance = .identity) -> [TimelineLayer] {
+        let component = TimelineLayerComponent(timeOffset: offset, opacity: inheritedState.opacity,
+            transform: inheritedState.transform, keyframes: inheritedState.keyframes)
+        return TimelineLayerNormalizer.flatten([self], offset: offset, level: inheritedLevel, ancestors: [component])
     }
+
 }
 
 public struct AudioVolumeRamp {

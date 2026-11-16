@@ -307,13 +307,20 @@ public final class RecordingPipeline {
 #endif
     }
 
+    private var previewBranch: RecordingPreviewBranch?
+    public var previewErrorHandler: ((Error) -> Void)? {
+        didSet { previewBranch?.errorHandler = previewErrorHandler }
+    }
+
     public init(
         source: MediaSource,
         outputURL: URL,
         fileType: AVFileType = .mp4,
         processors: [FrameProcessor] = [],
         recorderConfiguration: RecorderSink.Configuration = .init(),
-        controlsSourceLifecycle: Bool = true
+        controlsSourceLifecycle: Bool = true,
+        sharingPreview previewSink: PreviewSink? = nil,
+        frameProcessingTimeout: TimeInterval? = nil
     ) throws {
         self.source = source
         var effectiveConfiguration = recorderConfiguration
@@ -325,14 +332,17 @@ public final class RecordingPipeline {
         }
         #endif
         self.recorderSink = try RecorderSink(outputURL: outputURL, fileType: fileType, configuration: effectiveConfiguration)
+        let previewBranch = previewSink.map(RecordingPreviewBranch.init(preview:))
+        self.previewBranch = previewBranch
         self.pipeline = MediaPipeline(
             source: source,
             processors: processors,
-            sinks: [recorderSink],
+            sinks: [recorderSink] + (previewBranch.map { [$0 as MediaSink] } ?? []),
             deliveryPolicy: .boundedDropNewest(maximumInFlightFrames: 6),
             controlsSourceLifecycle: controlsSourceLifecycle,
             maximumInFlightAudioFrameCount: 12,
-            processesAudioFrames: false
+            processesAudioFrames: false,
+            frameProcessingTimeout: frameProcessingTimeout
         )
     }
 

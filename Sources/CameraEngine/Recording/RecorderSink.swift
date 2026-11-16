@@ -259,6 +259,9 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         self.writer = try AVAssetWriter(outputURL: outputURL, fileType: fileType)
     }
 
+    /// 离线夹具在断言暂停时序前等待编码器就绪，避免把合法实时背压当成时序错误。
+    var _videoInputReadyForTesting: Bool { queue.sync { videoInput?.isReadyForMoreMediaData ?? true } }
+
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
         guard enqueueAcceptedFrame(frame, completion: completion) else {
             droppedFrameHandler?(frame.metadata)

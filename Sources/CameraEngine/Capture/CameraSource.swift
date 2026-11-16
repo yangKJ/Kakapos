@@ -1351,18 +1351,10 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
         processingQueue.async {
             guard self.frameIngressGate.isActive(ingressToken) else { return }
-            let group = DispatchGroup()
-            for delegate in self.mediaSourceDelegatesSnapshot(delivery: .processing) {
-                group.enter()
-                let acknowledge = FrameProcessingCancellation { group.leave() }
-                delegate.mediaSource(self, didOutput: frameTransfer.value) { _ in acknowledge.cancel() }
-            }
-            group.enter()
-            let acknowledge = FrameProcessingCancellation { group.leave() }
-            self.outputNode.transmit(frameTransfer.value, shouldContinue: { self.frameIngressGate.isActive(ingressToken) }) { _ in
-                acknowledge.cancel()
-            }
-            group.notify(queue: self.processingQueue) { self.frameIngressGate.completeBranch(for: ingressToken) }
+            CameraFrameDistributor.deliver(frameTransfer.value, source: self,
+                delegates: self.mediaSourceDelegatesSnapshot(delivery: .processing), output: self.outputNode,
+                shouldContinue: { self.frameIngressGate.isActive(ingressToken) },
+                completion: { self.frameIngressGate.completeBranch(for: ingressToken) })
         }
     }
 

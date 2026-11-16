@@ -13,11 +13,14 @@ import AVFoundation
 #if canImport(UIKit) && !os(watchOS)
 public enum CameraEngineError: Error, LocalizedError, Equatable {
     case recordingControllerUnavailable
+    case recordingAlreadyActive
 
     public var errorDescription: String? {
         switch self {
         case .recordingControllerUnavailable:
             return "Recording controller unavailable"
+        case .recordingAlreadyActive:
+            return "录制正在进行，不能替换处理链。"
         }
     }
 }
@@ -262,6 +265,39 @@ public final class CameraEngine {
             controller.start()
             source.start()
         }
+        return controller
+    }
+
+    /// 同一处理结果供录制和只读预览使用；不同配方继续使用独立控制器。
+    @discardableResult
+    public func startSharedRecording(
+        outputURL: URL,
+        fileType: AVFileType = .mp4,
+        processors: [FrameProcessor] = [],
+        frameProcessingTimeout: TimeInterval? = nil,
+        previewSink: PreviewSink
+    ) throws -> CameraRecordingController {
+        if let controller = recordingController, [.preparing, .recording, .paused].contains(controller.state) {
+            throw CameraEngineError.recordingAlreadyActive
+        }
+        let config = source.configuration
+        let recorder = RecorderSink.Configuration(dimensions: config.video.dimensions, bitRate: config.video.bitRate,
+            codec: config.video.codec, scalingMode: config.video.scalingMode, transform: config.video.transform,
+            includesAudio: config.captureMode.includesAudio, audioBitRate: config.audio.bitRate,
+            audioSampleRate: config.audio.sampleRate, audioChannelCount: config.audio.channelCount, colorPolicy: config.video.colorPolicy)
+        let pipeline = try RecordingPipeline(source: source, outputURL: outputURL, fileType: fileType,
+            processors: processors, recorderConfiguration: recorder, controlsSourceLifecycle: false, sharingPreview: previewSink, frameProcessingTimeout: frameProcessingTimeout)
+        let previous = recordingController
+        let controller = CameraRecordingController(existingPipeline: pipeline)
+        previewController?.previewPipeline?.cancel()
+        previewController = nil
+        previewRecipe = nil
+        recordingController = controller
+        source.isRecordingActiveProvider = { [weak controller] in controller?.isRecordingActive ?? false }
+        wireRecordingDiagnostics(for: controller, previousController: previous)
+        audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
+        controller.start()
+        source.start()
         return controller
     }
 

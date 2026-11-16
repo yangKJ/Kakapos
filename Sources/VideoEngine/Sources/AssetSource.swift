@@ -64,6 +64,8 @@ public final class AssetSource: MediaSource, MediaSourceSnapshotProviding, @unch
     private var reader: AVAssetReader?
     private var videoOutput: AVAssetReaderTrackOutput?
     private var audioOutput: AVAssetReaderTrackOutput?
+    private var sourceTrackIDs: [AVMediaType: CMPersistentTrackID] = [:]
+    private var trackTransforms: [AVMediaType: CGAffineTransform] = [:]
     private var isCancelled = false
     private var shouldStop = false
     private var frameIndex: Int64 = 0
@@ -192,6 +194,8 @@ public final class AssetSource: MediaSource, MediaSourceSnapshotProviding, @unch
             }
             reader.add(output)
             configuredVideoOutput = output
+            sourceTrackIDs[.video] = track.trackID
+            trackTransforms[.video] = track.preferredTransform
         }
 
         if let track = asset.tracks(withMediaType: .audio).first {
@@ -202,6 +206,8 @@ public final class AssetSource: MediaSource, MediaSourceSnapshotProviding, @unch
             }
             reader.add(output)
             configuredAudioOutput = output
+            sourceTrackIDs[.audio] = track.trackID
+            trackTransforms[.audio] = track.preferredTransform
         }
 
         pauseCondition.lock()
@@ -320,11 +326,11 @@ public final class AssetSource: MediaSource, MediaSourceSnapshotProviding, @unch
     }
 
     private func sourceTrackID(for mediaType: AVMediaType) -> CMPersistentTrackID? {
-        asset.tracks(withMediaType: mediaType).first?.trackID
+        sourceTrackIDs[mediaType]
     }
 
     private func trackTransform(for mediaType: AVMediaType) -> CGAffineTransform {
-        asset.tracks(withMediaType: mediaType).first?.preferredTransform ?? .identity
+        trackTransforms[mediaType] ?? .identity
     }
 
     private func completeReading(expectedGeneration: UInt64) {

@@ -174,9 +174,17 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, 
         var operation: FrameProcessingOperation?
         var stage: UInt64 = 0
         var completed = false
+        var processingEnded = false
+        var cancellationRequested = false
+        var timeout: DispatchWorkItem?
+        var ordinal: UInt64?
+        var input: MediaFrame?
+        var processing = false
+        let concurrencyLimit: Int
 
         init(processors: [FrameProcessor], consumers: [MediaFrameConsumerNode], completion: @escaping (Result<Void, Error>) -> Void) {
             self.processors = processors
+            self.concurrencyLimit = processors.compactMap { ($0 as? FrameProcessorCapabilityProviding)?.capabilities.maximumConcurrentFrameCount }.min() ?? Int.max
             self.consumers = consumers
             self.completion = completion
         }
@@ -191,6 +199,9 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, 
             lock.lock()
             guard !completed else { lock.unlock(); return }
             completed = true
+            if case .failure = result { cancellationRequested = true }
+            timeout?.cancel()
+            timeout = nil
             let operation = self.operation
             self.operation = nil
             lock.unlock()
@@ -204,8 +215,22 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, 
     private var processorStorage: [FrameProcessor]
     private var works: [UUID: Work] = [:]
     private var cancelled = false
+    private var nextOrdinal: UInt64 = 0
+    private var nextDeliveryOrdinal: UInt64 = 0
+    private var ready: [UInt64: (Work, Result<MediaFrame, Error>)] = [:]
+    private var draining = false
+    private var pending: [Work] = []
+    private var pendingCursor = 0
+    private var processingCount = 0
+    private var processingLimits: [UUID: Int] = [:]
     public var errorHandler: ((Error) -> Void)?
     public var processesAudioFrames = true
+    var queuedWorkStorageCount: Int { configurationLock.withKakaposLock { pending.count } }
+    private var processingTimeoutStorage: TimeInterval?
+    public var frameProcessingTimeout: TimeInterval? {
+        get { configurationLock.withKakaposLock { processingTimeoutStorage } }
+        set { configurationLock.withKakaposLock { processingTimeoutStorage = newValue.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } } }
+    }
 
     public var processors: [FrameProcessor] {
         get { configurationLock.withKakaposLock { processorStorage } }
@@ -226,16 +251,31 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, 
         let work = Work(processors: activeProcessors, consumers: consumers, completion: completion)
         let accepted = configurationLock.withKakaposLock { () -> Bool in
             guard !cancelled else { return false }
+            if processesAudioFrames || !isAudioMediaFrame(frame) {
+                work.ordinal = nextOrdinal
+                nextOrdinal &+= 1
+            }
             works[work.id] = work
             return true
         }
         guard accepted else { work.finish(.failure(MediaCoreError.processingCancelled)); return }
+        if !activeProcessors.isEmpty, let duration = frameProcessingTimeout, duration.isFinite, duration > 0 {
+            let timer = DispatchWorkItem { [weak self, weak work] in
+                guard let self, let work else { return }
+                self.failTimedOut(work)
+            }
+            work.lock.lock(); work.timeout = timer; let completed = work.completed; work.lock.unlock()
+            if completed { timer.cancel() }
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + duration, execute: timer)
+        }
         // 无处理器的直通路径不增加排队；有处理器时只在专用队列执行。
         if activeProcessors.isEmpty {
             process(frame, at: 0, work: work)
         } else {
-            let frameBox = ProcessingTransfer(value: frame)
-            processingQueue.async { self.process(frameBox.value, at: 0, work: work) }
+            configurationLock.withKakaposLock {
+                if !cancelled, works[work.id] != nil { work.input = frame; pending.append(work) }
+            }
+            schedulePending()
         }
     }
 
@@ -244,6 +284,12 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, 
             cancelled = true
             let pending = Array(works.values)
             works.removeAll()
+            self.pending.removeAll()
+            pendingCursor = 0
+            ready.removeAll()
+            nextDeliveryOrdinal = nextOrdinal
+            processingCount = 0
+            processingLimits.removeAll()
             return pending
         }
         let sinks = pending.flatMap { $0.consumers.compactMap { ($0 as? MediaSinkNode)?.sink } }
@@ -252,17 +298,17 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, 
     }
 
     private func complete(_ work: Work, result: Result<Void, Error>) {
-        configurationLock.withKakaposLock { _ = works.removeValue(forKey: work.id) }
+        let active = configurationLock.withKakaposLock { works.removeValue(forKey: work.id) != nil }
+        guard active else { return }
         work.finish(result)
         if case .failure(let error) = result { errorHandler?(error) }
     }
 
     private func process(_ frame: MediaFrame, at index: Int, work: Work) {
-        guard work.isActive else { return }
+        work.lock.lock(); let accepts = !work.completed && !work.processingEnded; work.lock.unlock()
+        guard accepts else { return }
         guard index < work.processors.count else {
-            transmit(frame, consumers: work.consumers, shouldContinue: { work.isActive }) { result in
-                self.complete(work, result: result)
-            }
+            enqueue(.success(frame), work: work)
             return
         }
         work.lock.lock()
@@ -272,7 +318,7 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, 
         let operation = processFrame(using: work.processors[index], frame: frame) { [weak self, weak work] result in
             guard let self, let work else { return }
             work.lock.lock()
-            guard !work.completed, work.stage == stage else { work.lock.unlock(); return }
+            guard !work.completed, !work.processingEnded, work.stage == stage else { work.lock.unlock(); return }
             work.stage &+= 1
             work.operation = nil
             work.lock.unlock()
@@ -281,16 +327,112 @@ public final class MediaProcessorNode: MediaOutputNode, MediaFrameConsumerNode, 
                 let outputBox = ProcessingTransfer(value: output)
                 self.processingQueue.async { self.process(outputBox.value, at: index + 1, work: work) }
             case .failure(let error):
-                self.complete(work, result: .failure(error))
+                self.enqueue(.failure(error), work: work)
             }
         }
         work.lock.lock()
-        let shouldInstall = !work.completed && work.stage == stage
+        let shouldInstall = !work.completed && !work.processingEnded && work.stage == stage
         if shouldInstall { work.operation = operation }
-        let wasCancelled = work.completed
+        let wasCancelled = work.cancellationRequested
         work.lock.unlock()
         if wasCancelled { operation?.cancel() }
     }
+    private func failTimedOut(_ work: Work) {
+        let pending = configurationLock.withKakaposLock { () -> [Work] in
+            guard works[work.id] != nil else { return [] }
+            work.lock.lock()
+            let active = !work.completed && !work.processingEnded
+            work.lock.unlock()
+            guard active else { return [] }
+            cancelled = true
+            let values = Array(works.values)
+            works.removeAll(); ready.removeAll(); self.pending.removeAll()
+            pendingCursor = 0; processingCount = 0; processingLimits.removeAll()
+            nextDeliveryOrdinal = nextOrdinal
+            return values
+        }
+        guard !pending.isEmpty else { return }
+        pending.forEach { $0.finish(.failure(MediaCoreError.frameProcessingTimedOut)) }
+        errorHandler?(MediaCoreError.frameProcessingTimedOut)
+    }
+
+    private func schedulePending() {
+        while true {
+            let next = configurationLock.withKakaposLock { () -> (Work, MediaFrame)? in
+                guard !cancelled, pendingCursor < pending.count else { return nil }
+                let work = pending[pendingCursor]
+                let limit = min(work.concurrencyLimit, processingLimits.values.min() ?? Int.max)
+                guard processingCount < limit, let frame = work.input else { return nil }
+                pendingCursor += 1
+                if pendingCursor == pending.count {
+                    pending.removeAll(keepingCapacity: true); pendingCursor = 0
+                } else if pendingCursor >= 64 && pendingCursor >= pending.count / 2 {
+                    // 持续背压时队尾不断加入新帧，也必须释放已经消费的队列前缀。
+                    pending.removeFirst(pendingCursor); pendingCursor = 0
+                }
+                work.input = nil
+                work.processing = true
+                processingCount += 1
+                if work.concurrencyLimit != Int.max { processingLimits[work.id] = work.concurrencyLimit }
+                return (work, frame)
+            }
+            guard let (work, frame) = next else { return }
+            let box = ProcessingTransfer(value: frame)
+            processingQueue.async { self.process(box.value, at: 0, work: work) }
+        }
+    }
+
+    private func enqueue(_ result: Result<MediaFrame, Error>, work: Work) {
+        var cancellation: FrameProcessingOperation?
+        let action = configurationLock.withKakaposLock { () -> (accepted: Bool, drain: Bool) in
+            guard works[work.id] != nil else { return (false, false) }
+            work.lock.lock()
+            guard !work.completed, !work.processingEnded else { work.lock.unlock(); return (false, false) }
+            work.processingEnded = true
+            work.timeout?.cancel(); work.timeout = nil
+            if case .failure = result { work.cancellationRequested = true }
+            let operation = work.operation
+            work.operation = nil
+            work.lock.unlock()
+            if case .failure = result { cancellation = operation }
+            if work.processing {
+                work.processing = false
+                processingCount -= 1
+                processingLimits.removeValue(forKey: work.id)
+            }
+            guard let ordinal = work.ordinal else { return (true, false) }
+            ready[ordinal] = (work, result)
+            guard !draining else { return (true, false) }
+            draining = true
+            return (true, true)
+        }
+        cancellation?.cancel()
+        guard action.accepted else { return }
+        if work.ordinal == nil { deliver(result, work: work) }
+        if action.drain { drainReady() }
+        schedulePending()
+    }
+
+    private func drainReady() {
+        while true {
+            let next = configurationLock.withKakaposLock { () -> (Work, Result<MediaFrame, Error>)? in
+                guard let value = ready.removeValue(forKey: nextDeliveryOrdinal) else { draining = false; return nil }
+                nextDeliveryOrdinal &+= 1
+                return value
+            }
+            guard let (work, result) = next else { return }
+            deliver(result, work: work)
+        }
+    }
+
+    private func deliver(_ result: Result<MediaFrame, Error>, work: Work) {
+        switch result {
+        case .success(let frame):
+            transmit(frame, consumers: work.consumers, shouldContinue: { work.isActive }) { self.complete(work, result: $0) }
+        case .failure(let error): complete(work, result: .failure(error))
+        }
+    }
+
 }
 
 private struct ProcessingTransfer<Value>: @unchecked Sendable {
@@ -309,7 +451,7 @@ public final class MediaSinkNode: MediaFrameConsumerNode {
     }
 }
 
-public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaFrameSourceNode {
+public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaFrameSourceNode, BoundedMediaSourceDelegate {
     public let source: MediaSource
     public var errorHandler: ((Error) -> Void)?
     public var finishHandler: (() -> Void)?
@@ -318,6 +460,10 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
     public var frameTransmissionCompletedHandler: ((Result<Void, Error>) -> Void)?
     public var shouldAcceptSourceCallbacks: (() -> Bool)?
     public var deliveryPolicy: MediaSourceDeliveryPolicy = .unbounded
+    public var acceptsAudioFrames = true
+    public var managesFrameBackpressure: Bool {
+        deliveryPolicy.normalizedMaximumInFlightFrames != nil && (!acceptsAudioFrames || maximumInFlightAudioFrameCount != nil)
+    }
     public var droppedFrameHandler: ((MediaFrame) -> Void)?
 
     /// 供同模块内需要原子登记在途帧的编排器使用。
@@ -375,6 +521,7 @@ public final class MediaSourceNodeAdapter: NSObject, MediaSourceDelegate, MediaF
 
     public func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
         guard shouldAcceptSourceCallbacks?() ?? true else { completion(.success(())); return }
+        if !acceptsAudioFrames && isAudioMediaFrame(frame) { completion(.success(())); return }
         if isAudioMediaFrame(frame), let audioCapacity = maximumInFlightAudioFrameCount {
             let accepted = deliveryLock.withKakaposLock { () -> Bool in
                 guard inFlightAudioCount < audioCapacity else { return false }

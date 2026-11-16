@@ -27,6 +27,11 @@ public enum MediaSourceDeliveryPolicy: Equatable, Sendable {
     }
 }
 
+/// 声明订阅者在异步分发前完成有界准入，源只等待同步交接。
+public protocol BoundedMediaSourceDelegate: AnyObject {
+    var managesFrameBackpressure: Bool { get }
+}
+
 public protocol MediaSourceDelegate: AnyObject {
     func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame)
     func mediaSource(_ source: MediaSource, didOutput frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void)

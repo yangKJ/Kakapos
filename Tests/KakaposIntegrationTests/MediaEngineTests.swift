@@ -5693,6 +5693,9 @@ final class MediaEngineTests: XCTestCase {
             }
             appendExpectation.fulfill()
         }
+        let secondDeadline = Date().addingTimeInterval(2)
+        while !sink._videoInputReadyForTesting && Date() < secondDeadline { Thread.sleep(forTimeInterval: 0.001) }
+        XCTAssertTrue(sink._videoInputReadyForTesting)
         sink.consume(second) { result in
             if case .failure(let error) = result {
                 XCTFail("Unexpected recorder failure: \(error)")
@@ -5713,6 +5716,9 @@ final class MediaEngineTests: XCTestCase {
         sink.resumeRecording()
         XCTAssertEqual(sink.state, .recording)
 
+        let resumeDeadline = Date().addingTimeInterval(2)
+        while !sink._videoInputReadyForTesting && Date() < resumeDeadline { Thread.sleep(forTimeInterval: 0.001) }
+        XCTAssertTrue(sink._videoInputReadyForTesting)
         sink.consume(resumedFrame) { result in
             if case .failure(let error) = result {
                 XCTFail("Unexpected resumed recorder failure: \(error)")

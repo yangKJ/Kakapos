@@ -258,13 +258,17 @@ public final class MediaPipeline: @unchecked Sendable {
         deliveryPolicy: MediaSourceDeliveryPolicy = .unbounded,
         controlsSourceLifecycle: Bool = true,
         maximumInFlightAudioFrameCount: Int? = nil,
-        processesAudioFrames: Bool = true
+        processesAudioFrames: Bool = true,
+        acceptsAudioFrames: Bool = true,
+        frameProcessingTimeout: TimeInterval? = nil
     ) {
         self.source = source
         self.chain = MediaProcessorChain(processors: processors, sinks: sinks)
         self.sourceAdapter = MediaSourceNodeAdapter(source: source)
         self.controlsSourceLifecycle = controlsSourceLifecycle
+        self.sourceAdapter.acceptsAudioFrames = acceptsAudioFrames
         self.chain.node.processorNode.processesAudioFrames = processesAudioFrames
+        self.chain.node.processorNode.frameProcessingTimeout = frameProcessingTimeout
         self.sourceAdapter.maximumInFlightAudioFrameCount = maximumInFlightAudioFrameCount.map { max(1, $0) }
         self.sourceAdapter.deliveryPolicy = deliveryPolicy
         self.sourceAdapter.add(consumer: chain.node)

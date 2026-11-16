@@ -14,11 +14,14 @@ public enum MediaCoreError: LocalizedError {
     case processingNodeUnavailable
     case processingCancelled
     case audioDeliveryOverflow
+    case frameProcessingTimedOut
 
     public var errorDescription: String? {
         switch self {
         case .pixelBufferUnavailable:
             return "A pixel buffer is required for this media operation."
+        case .frameProcessingTimedOut:
+            return "帧处理超过允许的完成期限。"
         case .audioDeliveryOverflow:
             return "Audio delivery capacity was exceeded."
         case .processingCancelled:

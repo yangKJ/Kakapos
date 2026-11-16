@@ -92,7 +92,7 @@ public struct VideoExportProfile: Equatable, Sendable {
         colorPolicy: .standardBT709
     )
 
-    func resolvedAssetCodec(fileType: AVFileType) -> VideoAssetCodec {
+    public func resolvedAssetCodec(fileType: AVFileType) -> VideoAssetCodec {
         switch videoCodec {
         case .automatic:
             if colorPolicy.isHDR { return .hevc }

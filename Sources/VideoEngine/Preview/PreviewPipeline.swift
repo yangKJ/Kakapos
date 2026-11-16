@@ -218,7 +218,7 @@ public final class PreviewPipeline: @unchecked Sendable {
         self.source = source
         self.previewSink = PreviewSink(callbackQueue: callbackQueue, handler: handler)
         self.pipeline = MediaPipeline(source: source, processors: processors, sinks: [previewSink],
-            deliveryPolicy: .latestOnly, controlsSourceLifecycle: controlsSourceLifecycle)
+            deliveryPolicy: .latestOnly, controlsSourceLifecycle: controlsSourceLifecycle, acceptsAudioFrames: false)
     }
 
     public init(
@@ -231,7 +231,7 @@ public final class PreviewPipeline: @unchecked Sendable {
         self.source = source
         self.previewSink = PreviewSink(callbackQueue: callbackQueue, frameHandler: frameHandler)
         self.pipeline = MediaPipeline(source: source, processors: processors, sinks: [previewSink],
-            deliveryPolicy: .latestOnly, controlsSourceLifecycle: controlsSourceLifecycle)
+            deliveryPolicy: .latestOnly, controlsSourceLifecycle: controlsSourceLifecycle, acceptsAudioFrames: false)
     }
 
     public func start() {

@@ -295,6 +295,10 @@ public struct KeyframeAnimation {
         times.allSatisfy(\.isNumeric) && zip(times, times.dropFirst()).allSatisfy { $0 <= $1 }
     }
 
+    func applyingOffset(_ offset: CMTime) -> KeyframeAnimation {
+        KeyframeAnimation(keyPath: keyPath, values: values, keyTimes: keyTimes.map { $0 + offset }, timingFunctions: timingFunctions)
+    }
+
     public static func value(for keyPath: String, at time: CMTime, animations: [KeyframeAnimation]) -> Float? {
         for animation in animations where animation.keyPath == keyPath {
             if let value = animation.value(at: time) {

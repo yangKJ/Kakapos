@@ -82,24 +82,9 @@ internal final class TimelineRenderGroupNode: TimelineRenderLayerNode {
         inheritedState: TimelineRenderInheritanceState = .identity
     ) -> [TimelineLayer] {
         guard let groupLayer else { return [] }
-        let shiftedStart = offset + groupLayer.timeRange.start
-        let combinedState = inheritedState.appending(layer: groupLayer)
-
-        return children.flatMap { node -> [TimelineLayer] in
-            if let groupNode = node as? TimelineRenderGroupNode {
-                return groupNode.flattenedLayers(
-                    offset: shiftedStart,
-                    inheritedLevel: groupLayer.layerLevel + inheritedLevel,
-                    inheritedState: combinedState
-                )
-            }
-
-            let shifted = node.layer.applyingOffset(shiftedStart, inheritedLevel: groupLayer.layerLevel + inheritedLevel)
-            shifted.opacity *= combinedState.opacity
-            shifted.transform = combinedState.transform.concatenating(shifted.transform)
-            shifted.keyframes = combinedState.keyframes + shifted.keyframes
-            return [shifted]
-        }
+        let component = TimelineLayerComponent(timeOffset: offset, opacity: inheritedState.opacity,
+            transform: inheritedState.transform, keyframes: inheritedState.keyframes)
+        return TimelineLayerNormalizer.flatten([groupLayer], offset: offset, level: inheritedLevel, ancestors: [component])
     }
 }
 
@@ -124,12 +109,7 @@ internal struct TimelineRenderCompositionNode {
     let transitions: [Transition]
 
     func flattenedLayers() -> [TimelineLayer] {
-        layerNodes.flatMap { node -> [TimelineLayer] in
-            if let groupNode = node as? TimelineRenderGroupNode {
-                return groupNode.flattenedLayers()
-            }
-            return [node.layer]
-        }
+        TimelineLayerNormalizer.flatten(layerNodes.map(\.layer))
     }
 }
 

@@ -28,12 +28,16 @@ public struct FrameProcessorCapabilities: Equatable, Sendable {
     public let supportedDynamicRanges: Set<FrameDynamicRange>
     /// 描述处理结果是否保留输入色彩信息；这是供编排与诊断使用的事实字段，不参与输入准入。
     public let preservesColorInformation: Bool
+    /// 每条处理链的帧并发上限；nil 保留由上游容量决定的并行方式。
+    public let maximumConcurrentFrameCount: Int?
 
     public init(
         acceptedPixelFormats: Set<FramePixelFormat> = [],
         supportedDynamicRanges: Set<FrameDynamicRange> = [],
-        preservesColorInformation: Bool = true
+        preservesColorInformation: Bool = true,
+        maximumConcurrentFrameCount: Int? = nil
     ) {
+        self.maximumConcurrentFrameCount = maximumConcurrentFrameCount.map { max(1, $0) }
         self.acceptedPixelFormats = acceptedPixelFormats
         self.supportedDynamicRanges = supportedDynamicRanges
         self.preservesColorInformation = preservesColorInformation

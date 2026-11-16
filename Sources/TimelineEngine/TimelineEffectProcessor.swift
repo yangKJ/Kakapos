@@ -28,16 +28,11 @@ final class TimelineEffectProcessor: CancellableFrameProcessor, FrameProcessorCa
     private let hasKeyframes: Bool
     private var keyframeSampler: TimelineKeyframeIndex
     private let processor: FrameProcessor
-    private let context = CIContext(options: [
-        .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)!,
-        .workingFormat: CIFormat.RGBAh,
-        .cacheIntermediates: false,
-    ])
-    private let poolLock = NSLock()
-    private var pool: CVPixelBufferPool?
-    private var poolKey: [Int] = []
+    private let resources: TimelineEffectResources
+    var blendContextCount: Int { resources.contextCount }
 
-    init(segment: TimelineProcessorSegment, processor: FrameProcessor) {
+    init(segment: TimelineProcessorSegment, processor: FrameProcessor, resources: TimelineEffectResources = TimelineEffectResources()) {
+        self.resources = resources
         self.segment = segment
         self.hasKeyframes = !segment.keyframes.isEmpty
         self.keyframeSampler = TimelineKeyframeIndex(segment.keyframes)
@@ -138,10 +133,44 @@ final class TimelineEffectProcessor: CancellableFrameProcessor, FrameProcessorCa
             }
         default: throw TimelineEffectError.incompatibleOutput
         }
+        let (buffer, context) = try resources.destination(for: input)
+        let image = CIImage(cvPixelBuffer: input).applyingFilter(
+            "CIDissolveTransition",
+            parameters: [
+                kCIInputTargetImageKey: CIImage(cvPixelBuffer: output),
+                kCIInputTimeKey: intensity,
+            ])
+        context.render(image, to: buffer, bounds: image.extent, colorSpace: destinationSpace)
+        // 只复制色彩合同，不继承经过效果处理后可能已经失真的 HDR 内容统计。
+        for key in [kCVImageBufferColorPrimariesKey, kCVImageBufferTransferFunctionKey, kCVImageBufferYCbCrMatrixKey] {
+            if let value = CVBufferGetAttachment(input, key, nil)?.takeUnretainedValue() {
+                CVBufferSetAttachment(buffer, key, value, .shouldPropagate)
+            }
+        }
+        CVBufferSetAttachment(buffer, kCVImageBufferCGColorSpaceKey, destinationSpace, .shouldPropagate)
+        var metadata = metadata
+        metadata.format = FrameFormat(pixelBuffer: buffer)
+        return PixelBufferFrame(pixelBuffer: buffer, metadata: metadata)
+    }
+}
+
+final class TimelineEffectResources {
+    private let poolLock = NSLock()
+    private var pool: CVPixelBufferPool?
+    private var poolKey: [Int] = []
+    private var contextStorage: CIContext?
+    var contextCount: Int { poolLock.lock(); defer { poolLock.unlock() }; return contextStorage == nil ? 0 : 1 }
+
+    func destination(for input: CVPixelBuffer) throws -> (CVPixelBuffer, CIContext) {
         let key = [
             CVPixelBufferGetWidth(input), CVPixelBufferGetHeight(input), Int(CVPixelBufferGetPixelFormatType(input)),
         ]
         poolLock.lock()
+        if contextStorage == nil {
+            contextStorage = CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)!,
+                .workingFormat: CIFormat.RGBAh, .cacheIntermediates: false])
+        }
+        let context = contextStorage!
         if poolKey != key {
             var created: CVPixelBufferPool?
             let status = CVPixelBufferPoolCreate(
@@ -169,22 +198,6 @@ final class TimelineEffectProcessor: CancellableFrameProcessor, FrameProcessorCa
                 kCVPixelBufferPoolAllocationThresholdKey: 4
             ] as CFDictionary, &buffer)
         guard status == kCVReturnSuccess, let buffer else { throw TimelineEffectError.bufferAllocationFailed(status) }
-        let image = CIImage(cvPixelBuffer: input).applyingFilter(
-            "CIDissolveTransition",
-            parameters: [
-                kCIInputTargetImageKey: CIImage(cvPixelBuffer: output),
-                kCIInputTimeKey: intensity,
-            ])
-        context.render(image, to: buffer, bounds: image.extent, colorSpace: destinationSpace)
-        // 只复制色彩合同，不继承经过效果处理后可能已经失真的 HDR 内容统计。
-        for key in [kCVImageBufferColorPrimariesKey, kCVImageBufferTransferFunctionKey, kCVImageBufferYCbCrMatrixKey] {
-            if let value = CVBufferGetAttachment(input, key, nil)?.takeUnretainedValue() {
-                CVBufferSetAttachment(buffer, key, value, .shouldPropagate)
-            }
-        }
-        CVBufferSetAttachment(buffer, kCVImageBufferCGColorSpaceKey, destinationSpace, .shouldPropagate)
-        var metadata = metadata
-        metadata.format = FrameFormat(pixelBuffer: buffer)
-        return PixelBufferFrame(pixelBuffer: buffer, metadata: metadata)
+        return (buffer, context)
     }
 }
