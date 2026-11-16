@@ -37,6 +37,7 @@ final class VideoAssetExportSession: @unchecked Sendable {
         var performanceAccumulator = ReaderWriterExportPerformanceAccumulator()
         var colorPolicy: VideoExportColorPolicy = .sourceCompatible
         var videoPrefetchCapacity = 0
+        var preservesCompatibleAudio = false
     }
 
     enum Status: Equatable {
@@ -113,6 +114,8 @@ final class VideoAssetExportSession: @unchecked Sendable {
             return snapshot
         }
     }
+
+    var copiesAudioSamples: Bool { audioOutput is AVAssetReaderTrackOutput }
 
     private let asset: AVAsset
     private let configuration: Configuration
@@ -316,16 +319,27 @@ final class VideoAssetExportSession: @unchecked Sendable {
 
         let audioTracks = self.asset.tracks(withMediaType: .audio)
         if audioTracks.count > 0 {
-            let output: AVAssetReaderOutput
+            var output: AVAssetReaderOutput
             let sourceAudioFormat = audioTracks.first?.formatDescriptions.first.map { $0 as! CMAudioFormatDescription }
             let audioDescription = sourceAudioFormat.flatMap(CMAudioFormatDescriptionGetStreamBasicDescription)?.pointee
             let requestedAudioBitRate = Double(configuration.audioSettings[AVEncoderBitRateKey] as? Int ?? 0)
             let compatibleAudioBitRate = abs(Double(audioTracks[0].estimatedDataRate) - requestedAudioBitRate) <= max(1, requestedAudioBitRate * 0.02)
-            let copiesAudio = configuration.videoEncodingStrategy == .compressedCopy && audioTracks.count == 1
+            // 本地整段AAC可独立保留，画面滤镜和色域转换不要求重编码声音。
+            let fullRange = configuration.timeRange.start == .zero
+                && (configuration.timeRange.duration.isPositiveInfinity || configuration.timeRange.duration == asset.duration)
+            let localSource = (asset as? AVURLAsset)?.url.isFileURL == true && !asset.hasProtectedContent
+            let unscaled = audioTracks[0].segments.allSatisfy {
+                $0.isEmpty || $0.timeMapping.source.duration == $0.timeMapping.target.duration
+            }
+            let preservesAudio = configuration.preservesCompatibleAudio && localSource && fullRange && unscaled
+                && configuration.audioMix == nil && (configuration.fileType == .mp4 || configuration.fileType == .mov)
+            let legacyCopy = configuration.videoEncodingStrategy == .compressedCopy
                 && compatibleAudioBitRate && audioTracks[0].preferredVolume == 1
-                && audioDescription?.mFormatID == kAudioFormatMPEG4AAC
                 && audioDescription?.mSampleRate == configuration.audioSettings[AVSampleRateKey] as? Double
                 && Int(audioDescription?.mChannelsPerFrame ?? 0) == configuration.audioSettings[AVNumberOfChannelsKey] as? Int
+            var copiesAudio = (preservesAudio || legacyCopy) && audioTracks.count == 1
+                && audioTracks[0].preferredVolume == 1 && configuration.audioMix == nil
+                && audioDescription?.mFormatID == kAudioFormatMPEG4AAC
             if copiesAudio {
                 output = AVAssetReaderTrackOutput(track: audioTracks[0], outputSettings: nil)
             } else {
@@ -333,13 +347,20 @@ final class VideoAssetExportSession: @unchecked Sendable {
                 mixed.audioMix = configuration.audioMix
                 output = mixed
             }
+            var input = AVAssetWriterInput(mediaType: .audio,
+                outputSettings: copiesAudio ? nil : configuration.audioSettings,
+                sourceFormatHint: copiesAudio ? sourceAudioFormat : nil)
+            if copiesAudio && (!reader.canAdd(output) || !writer.canAdd(input)) {
+                copiesAudio = false
+                let mixed = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: nil)
+                mixed.audioMix = configuration.audioMix
+                output = mixed
+                input = AVAssetWriterInput(mediaType: .audio, outputSettings: configuration.audioSettings)
+            }
             output.alwaysCopiesSampleData = false
             guard reader.canAdd(output) else { throw SessionError.cannotAddAudioOutput }
             reader.add(output)
             audioOutput = output
-            let input = AVAssetWriterInput(mediaType: .audio,
-                outputSettings: copiesAudio ? nil : configuration.audioSettings,
-                sourceFormatHint: copiesAudio ? sourceAudioFormat : nil)
             input.expectsMediaDataInRealTime = false
             // AVAssetReaderAudioMixOutput(nil) 输出的是方便编码的未压缩 PCM，
             // 不能把原始 AAC 轨道的 format description 当成这些样本的 source hint。

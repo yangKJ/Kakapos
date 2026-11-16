@@ -462,6 +462,8 @@ For a native pixel-buffer or texture display host, use `PreviewPipeline(source: 
 
 `VideoExportProfile(copiesSamplesWhenCompatible: true)` opts into retaining compatible compressed video samples and their original bitrate. Admission requires an entire local source, a matching requested codec and container, source-compatible color, no video processors/composition/audio mix, and no explicit video bitrate. Other inputs use the encoding path. Compatible AAC audio can also retain compressed samples when its channel count, sample rate, and bitrate match the profile.
 
+`VideoExportProfile(audioPolicy: .preserveCompatible)` 允许在处理画面的同时独立保留声音。只接纳本地完整单AAC音轨、MP4/MOV容器、无混音/音量修改和无时间缩放；显式保留时沿用源采样率、声道和码率。其余输入按请求参数编码；直通初始化失败会清理本任务局部文件后重试编码。默认`.encoded`保留原有行为。`allowsVideoFrameReordering`默认nil沿用系统，有限输出缓冲的消费者可显式设为false；显式重排设置不进入压缩视频复制路径。
+
 Processed export keeps processor calls serial. Set `VideoExportProfile(videoReadAheadFrameCount: 2)` to opt into at most two frames of read-ahead; the default is zero because throughput benefits depend on the workload. Native SDR YUV is selected only when every processor explicitly declares support; HDR and alpha content do not enter this optimization. Performance snapshots report read-ahead high-water count and preview presentation latency separately from processor execution time.
 
 

@@ -409,8 +409,10 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             let session: ReaderWriterExportSession
             do { session = try sessionFactory(asset, outputURL, configuration) }
             catch {
-                guard configuration.videoEncodingStrategy == .compressedCopy else { throw error }
+                guard configuration.videoEncodingStrategy == .compressedCopy || configuration.preservesCompatibleAudio else { throw error }
                 configuration.videoEncodingStrategy = .encoded
+                configuration.preservesCompatibleAudio = false
+                removePartialOutputIfNeeded()
                 session = try sessionFactory(asset, outputURL, configuration)
             }
             let shouldStartSession = stateQueue.sync { () -> Bool in
@@ -540,7 +542,8 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
             videoEncodingStrategy: canCopyCompressedSamples() ? .compressedCopy : (videoProcessors.isEmpty ? .automatic : .encoded),
             performanceAccumulator: performanceAccumulator,
             colorPolicy: exportProfile.colorPolicy,
-            videoPrefetchCapacity: exportProfile.videoReadAheadFrameCount
+            videoPrefetchCapacity: exportProfile.videoReadAheadFrameCount,
+            preservesCompatibleAudio: exportProfile.audioPolicy == .preserveCompatible
         )
     }
 
@@ -548,6 +551,7 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         guard exportProfile.copiesSamplesWhenCompatible, let urlAsset = asset as? AVURLAsset, urlAsset.url.isFileURL, !asset.hasProtectedContent,
               videoProcessors.isEmpty, videoComposition == nil, audioMix == nil,
               exportProfile.colorPolicy == .sourceCompatible, exportProfile.averageVideoBitRate == nil,
+              exportProfile.allowsVideoFrameReordering == nil,
               fileType == .mp4 || fileType == .mov,
               asset.tracks(withMediaType: .video).count == 1,
               let track = asset.tracks(withMediaType: .video).first,
@@ -589,6 +593,11 @@ public final class ReaderWriterExportJob: @unchecked Sendable {
         var settings: [String: Any] = [:]
         if let bitRate = exportProfile.averageVideoBitRate {
             settings[AVVideoCompressionPropertiesKey] = [AVVideoAverageBitRateKey: bitRate]
+        }
+        if let reorders = exportProfile.allowsVideoFrameReordering {
+            var compression = settings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
+            compression[AVVideoAllowFrameReorderingKey] = reorders
+            settings[AVVideoCompressionPropertiesKey] = compression
         }
         if let colors = exportProfile.colorPolicy.colorProperties { settings[AVVideoColorPropertiesKey] = colors }
         if exportProfile.colorPolicy.isHDR {

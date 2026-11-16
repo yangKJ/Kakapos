@@ -80,8 +80,12 @@ final class RuntimeContractTests: XCTestCase {
         let source = ContractSource()
         let processor = CapabilityLimitedProcessor()
         let pipeline = MediaPipeline(source: source, processors: [processor], sinks: [])
+        let rejected = expectation(description: "格式错误已交付")
+        pipeline.errorHandler = { _ in rejected.fulfill() }
         pipeline.start()
         source.emit(frameIndex: 3)
+        // 帧交付是异步的；先等拒绝结果，避免stop抢先结束尚未处理的帧。
+        wait(for: [rejected], timeout: 2)
         let stopped = expectation(description: "unsupported format rejected")
         pipeline.stop { result in
             if case .success = result { XCTFail("不支持的格式必须失败") }

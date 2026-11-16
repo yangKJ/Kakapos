@@ -98,12 +98,12 @@ final class ExportAlgorithmTests: XCTestCase {
         XCTAssertEqual(job.performanceSnapshot.processorInvocationCount, 0)
     }
     func testCopyAdmissionRejectsProcessingTrimmingAndExplicitBitrate() {
-        for scenario in 0..<4 {
+        for scenario in 0..<5 {
             let source = asset()
             let stub = ExportAdmissionStub()
             var strategy: VideoAssetExportSession.Configuration.VideoEncodingStrategy?
             let profile = VideoExportProfile(videoCodec: .h264, averageVideoBitRate: scenario == 2 ? 1_000_000 : nil,
-                copiesSamplesWhenCompatible: scenario != 3)
+                copiesSamplesWhenCompatible: scenario != 3, allowsVideoFrameReordering: scenario == 4 ? false : nil)
             let job = ReaderWriterExportJob(asset: source, outputURL: url(),
                 timeRange: scenario == 1 ? CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600)) : nil,
                 videoProcessors: scenario == 0 ? [PassthroughFrameProcessor()] : [], exportProfile: profile,

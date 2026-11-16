@@ -53,6 +53,12 @@ public enum VideoExportColorPolicy: Equatable, Hashable, Sendable {
     }
 }
 
+/// 音频保留策略独立于视频处理；默认沿用请求参数重编码。
+public enum VideoExportAudioPolicy: Equatable, Sendable {
+    case encoded
+    case preserveCompatible
+}
+
 public struct VideoExportProfile: Equatable, Sendable {
     /// 允许完整、未处理且编码兼容的本地素材保留原压缩样本与码率；默认继续重编码。
     public let copiesSamplesWhenCompatible: Bool
@@ -61,6 +67,9 @@ public struct VideoExportProfile: Equatable, Sendable {
     public let videoCodec: VideoExportCodec
     public let averageVideoBitRate: Int?
     public let colorPolicy: VideoExportColorPolicy
+    /// nil沿用系统编码重排；有限缓冲的逐帧处理器可显式关闭。
+    public let allowsVideoFrameReordering: Bool?
+    public let audioPolicy: VideoExportAudioPolicy
     public let audioBitRate: Int
     public let audioSampleRate: Double
     public let audioChannelCount: Int
@@ -73,8 +82,12 @@ public struct VideoExportProfile: Equatable, Sendable {
         audioSampleRate: Double = 44_100,
         audioChannelCount: Int = 2,
         copiesSamplesWhenCompatible: Bool = false,
-        videoReadAheadFrameCount: Int = 0
+        videoReadAheadFrameCount: Int = 0,
+        audioPolicy: VideoExportAudioPolicy = .encoded,
+        allowsVideoFrameReordering: Bool? = nil
     ) {
+        self.allowsVideoFrameReordering = allowsVideoFrameReordering
+        self.audioPolicy = audioPolicy
         self.videoReadAheadFrameCount = min(max(videoReadAheadFrameCount, 0), 2)
         self.copiesSamplesWhenCompatible = copiesSamplesWhenCompatible
         self.videoCodec = videoCodec
