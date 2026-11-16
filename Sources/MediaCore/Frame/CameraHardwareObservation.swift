@@ -24,6 +24,8 @@ public struct CameraHardwareObservation: Codable, Equatable, Sendable {
     public let torchActive: Bool
     public let deviceModelIdentifier: String?
     public let cameraIdentifier: String?
+    /// 虚拟多摄当前主实体镜头；不参与设备控制或标定机型键。
+    public let primaryCameraIdentifier: String?
     public let zoomFactor: Double?
 
     public init(
@@ -41,7 +43,8 @@ public struct CameraHardwareObservation: Codable, Equatable, Sendable {
         torchActive: Bool,
         deviceModelIdentifier: String? = nil,
         cameraIdentifier: String? = nil,
-        zoomFactor: Double? = nil
+        zoomFactor: Double? = nil,
+        primaryCameraIdentifier: String? = nil
     ) {
         self.point = point
         self.hostTimeSeconds = hostTimeSeconds
@@ -58,5 +61,6 @@ public struct CameraHardwareObservation: Codable, Equatable, Sendable {
         self.deviceModelIdentifier = deviceModelIdentifier
         self.cameraIdentifier = cameraIdentifier
         self.zoomFactor = zoomFactor
+        self.primaryCameraIdentifier = primaryCameraIdentifier
     }
 }

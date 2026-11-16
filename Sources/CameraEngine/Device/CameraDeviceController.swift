@@ -136,6 +136,12 @@ public final class CameraDeviceController {
         guard let device = deviceProvider() else { return nil }
         let gains = device.deviceWhiteBalanceGains
         let white = device.temperatureAndTintValues(for: gains)
+        let primary: String?
+        if #available(iOS 15.0, *) {
+            primary = device.activePrimaryConstituent?.uniqueID
+        } else {
+            primary = nil
+        }
         return CameraHardwareObservation(point: point, hostTimeSeconds: ProcessInfo.processInfo.systemUptime,
             iso: Double(device.iso), minimumISO: Double(device.activeFormat.minISO),
             exposureSeconds: device.exposureDuration.seconds, exposureBiasEV: Double(device.exposureTargetBias),
@@ -144,7 +150,7 @@ public final class CameraDeviceController {
             whiteBalanceIsManual: device.whiteBalanceMode == .locked, torchActive: device.isTorchActive,
             deviceModelIdentifier: Self.hardwareModelIdentifier,
             cameraIdentifier: device.deviceType.rawValue + ":" + String(device.position.rawValue),
-            zoomFactor: Double(device.videoZoomFactor))
+            zoomFactor: Double(device.videoZoomFactor), primaryCameraIdentifier: primary)
     }
 
     @discardableResult

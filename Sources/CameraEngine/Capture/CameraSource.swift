@@ -151,7 +151,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             runLock.lock()
             defer { runLock.unlock() }
             guard let generation = activeRunGeneration else { return nil }
-            return device.uniqueID + ":" + String(generation)
+            return device.uniqueID + ":" + String(generation) + ":" + String(controlConfigurationRevision)
         }
     }
 
@@ -354,6 +354,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
     private var isSessionConfigured = false
+    // 会话队列持有；同一设备在媒体服务恢复后也必须重放硬件意图。
+    private var controlConfigurationRevision: UInt64 = 0
     private let hardwareObservationLock = NSLock()
     private var cachedHardwareObservation: CameraHardwareObservation?
     private var hardwareObservationRequestedAt: Double = 0
@@ -1255,6 +1257,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private func applyInitialDeviceConfigurationIfNeeded() throws {
         guard let device = videoInput?.device else { return }
         prepareMaximumPhotoDimensions()
+        controlConfigurationRevision &+= 1
+        setLastVideoSampleBuffer(nil)
         do {
             try device.lockForConfiguration()
         } catch {
@@ -1788,7 +1792,25 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         if isRecoverable {
             guard let runGeneration = currentActiveRunGeneration(),
                   authorizationStatus == .authorized else { return }
-            _ = startSessionIfRunIsActive(generation: runGeneration)
+            do {
+                session.beginConfiguration()
+                do {
+                    try configureVideoColorPolicy()
+                    try configureVideoPixelFormat()
+                    applyCurrentConnections()
+                    try applyInitialDeviceConfigurationIfNeeded()
+                    installDeviceObservers()
+                } catch {
+                    session.commitConfiguration()
+                    throw error
+                }
+                session.commitConfiguration()
+                guard startSessionIfRunIsActive(generation: runGeneration), session.isRunning else { return }
+                publish(.didStartRunning)
+            } catch {
+                publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
+                DispatchQueue.main.async { self.notifyDelegatesOfFailure(error) }
+            }
             return
         }
         guard let error, let terminalGeneration = beginTerminalIfNeeded() else { return }
