@@ -121,6 +121,7 @@ public final class TimelinePipeline {
     public func compile(exportProfile: VideoExportProfile = .legacyCompatible) -> CompiledTimelineComposition {
         var compiled = composition.compile()
         compiled.exportProfile = exportProfile
+        compiled.videoComposition.configureTimelineColor(exportProfile.colorPolicy)
         if exportProfile.colorPolicy.isHDR {
             compiled.videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
             compiled.videoComposition.colorTransferFunction = exportProfile.colorPolicy == .hdrHLG ? AVVideoTransferFunction_ITU_R_2100_HLG : AVVideoTransferFunction_SMPTE_ST_2084_PQ

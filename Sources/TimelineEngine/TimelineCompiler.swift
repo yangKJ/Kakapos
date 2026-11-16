@@ -57,24 +57,36 @@ internal final class TimelineCompiler {
         insertVideoLayers(resolvedLayers.videoLayers, allocation: videoAllocation, into: composition, diagnostics: &diagnostics)
         audioMix.inputParameters = insertAudioLayers(clipLayers: resolvedLayers.videoLayers, audioLayers: resolvedLayers.audioLayers,
             allocation: audioAllocation, into: composition, diagnostics: &diagnostics)
-        videoComposition.instructions = makeVideoInstructions(from: renderInstructions, composition: composition,
-            videoLayers: resolvedLayers.videoLayers, allocation: videoAllocation)
+        let visualLayers = (resolvedLayers.videoLayers as [TimelineLayer]) + resolvedLayers.imageLayers + resolvedLayers.textLayers
+        let customVisuals = !resolvedLayers.imageLayers.isEmpty || !resolvedLayers.textLayers.isEmpty || !normalizedTransitions.bindings.isEmpty
+        if customVisuals {
+            videoComposition.customVideoCompositorClass = TimelineVideoCompositor.self
+            let duration = visualLayers.map(\.timeRange.end).filter(\.isNumeric).max() ?? .zero
+            if resolvedLayers.videoLayers.isEmpty || duration > composition.duration {
+                do { try TimelineCanvasSource.extend(composition, to: max(duration, composition.duration)) }
+                catch { diagnostics.append(.init(layerKind: .image, layerLevel: 0, mediaType: AVMediaType.video.rawValue, description: error.localizedDescription)) }
+            }
+        }
+        if customVisuals {
+            do {
+                if let silence = try TimelineCanvasSource.padAudioIfNeeded(composition) {
+                    let parameters = AVMutableAudioMixInputParameters(track: silence)
+                    parameters.setVolume(1, at: .zero)
+                    audioMix.inputParameters.append(parameters)
+                }
+            } catch { diagnostics.append(.init(layerKind: .audio, layerLevel: 0, mediaType: AVMediaType.audio.rawValue, description: error.localizedDescription)) }
+        }
+        do {
+            videoComposition.instructions = try makeVideoInstructions(from: renderInstructions, composition: composition,
+                videoLayers: resolvedLayers.videoLayers, allocation: videoAllocation,
+                visualLayers: customVisuals ? visualLayers : nil)
+        } catch {
+            diagnostics.append(.init(layerKind: .text, layerLevel: 0, mediaType: AVMediaType.video.rawValue, description: error.localizedDescription))
+        }
         let overlayLayer = makeOverlayLayer(
-            textLayers: resolvedLayers.textLayers,
+            textLayers: diagnostics.isEmpty ? resolvedLayers.textLayers : [],
             renderSize: compositionModel.renderSize
         )
-        if let overlayLayer, !resolvedLayers.videoLayers.isEmpty {
-            let videoLayer = CALayer()
-            videoLayer.frame = CGRect(origin: .zero, size: compositionModel.renderSize)
-            let parentLayer = CALayer()
-            parentLayer.frame = videoLayer.frame
-            parentLayer.addSublayer(videoLayer)
-            parentLayer.addSublayer(overlayLayer)
-            videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
-                postProcessingAsVideoLayer: videoLayer,
-                in: parentLayer
-            )
-        }
 
         return CompiledTimelineComposition(
             composition: composition,
@@ -451,17 +463,34 @@ internal final class TimelineCompiler {
         from renderInstructions: [TimelineRenderInstruction],
         composition: AVMutableComposition,
         videoLayers: [ClipLayer],
-        allocation: [ObjectIdentifier: CMPersistentTrackID]
-    ) -> [AVVideoCompositionInstructionProtocol] {
+        allocation: [ObjectIdentifier: CMPersistentTrackID],
+        visualLayers: [TimelineLayer]?
+    ) throws -> [AVVideoCompositionInstructionProtocol] {
         var index = TimelineIntervalIndex(videoLayers, range: { $0.timeRange }, level: { $0.layerLevel })
         var result: [AVVideoCompositionInstructionProtocol] = []
+        let frozen = try visualLayers?.sorted { $0.layerLevel < $1.layerLevel }.map { try TimelineVisualLayer($0, trackID: allocation[ObjectIdentifier($0)]) }
+        var visualIndex = frozen.map { TimelineIntervalIndex($0, range: { $0.range }, level: { $0.level }) }
+        let bindings = executionPlan?.transitionPlan.bindings ?? []
+        let grouped = Dictionary(grouping: bindings, by: \.index)
+        var transitionsByLayer: [ObjectIdentifier: Set<Int>] = [:]
+        for binding in bindings {
+            transitionsByLayer[ObjectIdentifier(binding.source), default: []].insert(binding.index)
+            transitionsByLayer[ObjectIdentifier(binding.destination), default: []].insert(binding.index)
+        }
         for instruction in renderInstructions {
-            let layers = index.elements(overlapping: instruction.timeRange)
-            let times = visualSampleTimes(in: instruction.timeRange, layers: layers, allocation: allocation)
+            let range = visualLayers == nil ? instruction.timeRange : CMTimeRangeGetIntersection(instruction.timeRange,
+                otherRange: CMTimeRange(start: .zero, duration: composition.duration))
+            guard range.isValid, range.duration > .zero else { continue }
+            let layers = index.elements(overlapping: range)
+            let times = visualSampleTimes(in: range, layers: layers, allocation: allocation)
             for (start, end) in zip(times, times.dropFirst()) {
                 let range = CMTimeRange(start: start, end: end)
                 let active = activeVideoLayerEntries(for: range, from: layers, allocation: allocation)
-                let output = AVMutableVideoCompositionInstruction()
+                let output: AVMutableVideoCompositionInstruction
+                if let activeVisuals = visualIndex?.elements(overlapping: range) {
+                    let indices = Set(activeVisuals.flatMap { transitionsByLayer[$0.identity] ?? [] }).sorted()
+                    output = TimelineVideoInstruction(visuals: activeVisuals, transitions: indices.map { grouped[$0]! })
+                } else { output = AVMutableVideoCompositionInstruction() }
                 output.timeRange = range
                 let layerInstructions = instruction.sourceTrackIDs.compactMap { trackID -> AVMutableVideoCompositionLayerInstruction? in
                     guard let track = composition.track(withTrackID: trackID), let layer = active[trackID] else { return nil }
@@ -481,7 +510,24 @@ internal final class TimelineCompiler {
                 result.append(output)
             }
         }
-        return result
+        guard visualLayers != nil else { return result }
+        var covered: [AVVideoCompositionInstructionProtocol] = []
+        var cursor = CMTime.zero
+        for entry in result {
+            if entry.timeRange.start > cursor {
+                let gap = TimelineVideoInstruction(visuals: [], transitions: [])
+                gap.timeRange = CMTimeRange(start: cursor, end: entry.timeRange.start)
+                covered.append(gap)
+            }
+            covered.append(entry)
+            cursor = entry.timeRange.end
+        }
+        if cursor < composition.duration {
+            let gap = TimelineVideoInstruction(visuals: [], transitions: [])
+            gap.timeRange = CMTimeRange(start: cursor, end: composition.duration)
+            covered.append(gap)
+        }
+        return covered
     }
 
     private func activeVideoLayerEntries(

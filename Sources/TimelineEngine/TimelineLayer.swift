@@ -267,14 +267,14 @@ public final class TextLayer: TimelineLayer {
         container.position = frame.origin
         container.setAffineTransform(transform)
 
-        let beginTime = AVCoreAnimationBeginTimeAtZero + timeRange.start.seconds
-        let endTime = beginTime + timeRange.duration.seconds
-        let visibility = CAKeyframeAnimation(keyPath: "opacity")
-        visibility.keyTimes = [0, NSNumber(value: beginTime / max(duration, 0.0001)), NSNumber(value: endTime / max(duration, 0.0001)), 1]
-        visibility.values = [0, opacity, opacity, 0]
-        visibility.duration = duration
-        visibility.beginTime = AVCoreAnimationBeginTimeAtZero
-        visibility.fillMode = .both
+        // 模型层始终隐藏；可见区间使用常量动画，避免时间窗被线性插值成渐显。
+        container.opacity = 0
+        let visibility = CABasicAnimation(keyPath: "opacity")
+        visibility.fromValue = opacity
+        visibility.toValue = opacity
+        visibility.duration = timeRange.duration.seconds
+        visibility.beginTime = AVCoreAnimationBeginTimeAtZero + timeRange.start.seconds
+        visibility.fillMode = .removed
         visibility.isRemovedOnCompletion = false
         container.add(visibility, forKey: "timelineVisibility")
         return container

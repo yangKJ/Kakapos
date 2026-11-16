@@ -66,18 +66,18 @@ enum Round2Fixtures {
         XCTAssertEqual(reader.status, .completed)
         return values
     }
-    static func movie(_ test: XCTestCase) throws -> URL {
+    static func movie(_ test: XCTestCase, framesPerSecond: Int = 30, colorIndex: Int = 0) throws -> URL {
         let output = url()
         let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: 64, AVVideoHeightKey: 64, AVVideoColorPropertiesKey: VideoExportColorPolicy.standardBT709.colorProperties!])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
         writer.add(input); XCTAssertTrue(writer.startWriting()); writer.startSession(atSourceTime: .zero)
-        let frame = try self.frame(0)
-        for i in 0..<60 {
+        let frame = try self.frame(colorIndex)
+        for i in 0..<(framesPerSecond * 2) {
             let end = Date().addingTimeInterval(5)
             while !input.isReadyForMoreMediaData && Date() < end { Thread.sleep(forTimeInterval: 0.001) }
-            XCTAssertTrue(adaptor.append(frame.pixelBuffer, withPresentationTime: CMTime(value: Int64(i), timescale: 30)))
+            XCTAssertTrue(adaptor.append(frame.pixelBuffer, withPresentationTime: CMTime(value: Int64(i), timescale: Int32(framesPerSecond))))
         }
         input.markAsFinished()
         let done = test.expectation(description: "离线源生成")

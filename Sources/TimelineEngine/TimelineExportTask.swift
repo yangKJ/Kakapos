@@ -111,12 +111,14 @@ public final class TimelineExportTask {
         progress: ((Float) -> Void)? = nil,
         progressInfo: ((ReaderWriterExportJob.ProgressInfo) -> Void)? = nil
     ) {
-        readerWriterJob.progressHandler = { info in
+        readerWriterJob.progressHandler = { [weak self] info in
+            guard let self else { return }
             self.progressFraction = Float(info.overallFractionCompleted)
             progress?(Float(info.overallFractionCompleted))
             progressInfo?(info)
         }
         readerWriterJob.export { result in
+            self.readerWriterJob.progressHandler = nil
             switch result {
             case .success(let outputURL):
                 if let lastProgressInfo = self.readerWriterJob.lastProgressInfo {

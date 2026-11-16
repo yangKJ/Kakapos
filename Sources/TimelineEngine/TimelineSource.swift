@@ -560,6 +560,7 @@ public extension CompiledTimelineComposition {
             videoComposition.colorTransferFunction = exportProfile.colorPolicy == .hdrHLG ? AVVideoTransferFunction_ITU_R_2100_HLG : AVVideoTransferFunction_SMPTE_ST_2084_PQ
             videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_2020
         }
+        videoComposition.configureTimelineColor(exportProfile.colorPolicy)
         playerItem.videoComposition = videoComposition
         playerItem.audioMix = audioMix
         return playerItem
@@ -573,6 +574,7 @@ public extension CompiledTimelineComposition {
         videoProcessors: [FrameProcessor] = [],
         videoFrameProcessingTimeout: TimeInterval? = nil
     ) -> ReaderWriterExportJob {
+        videoComposition.configureTimelineColor(exportProfile.colorPolicy)
         let processors = videoProcessors.isEmpty ? scheduledTimelineProcessors : videoProcessors
         return ReaderWriterExportJob(
             asset: composition,

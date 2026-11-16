@@ -1884,7 +1884,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(compiled.renderPlan.textSegments.count, 1)
         XCTAssertEqual(compiled.renderPlan.visualIntervals.first?.textSegments.count, 1)
         XCTAssertNotNil(compiled.overlayLayer)
-        XCTAssertNotNil(compiled.videoComposition.animationTool)
+        XCTAssertNotNil(compiled.videoComposition.customVideoCompositorClass)
         XCTAssertNil(textState.trackID)
         XCTAssertEqual(textState.layerLevel, 2)
     }

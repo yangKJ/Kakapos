@@ -151,6 +151,7 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
     private var playerItemOutput: AVPlayerItemVideoOutput?
     private var preferredVideoTransform: CGAffineTransform = .identity
     private var forceUpdate = false
+    private var lastDeliveredPresentationTime: CMTime?
     private let advanceInterval: TimeInterval = 1.0 / 60.0
     private let handler: (VideoFrame) -> Void
 
@@ -177,8 +178,7 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
 
     func updateIfNeeded() {
         if forceUpdate {
-            update(forced: true)
-            forceUpdate = false
+            if update(forced: true) { forceUpdate = false }
         }
     }
 
@@ -199,9 +199,11 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
         ticker?.invalidate()
         ticker = nil
 
-        if let output = playerItemOutput, let playerItem, playerItem.outputs.contains(output) {
-            playerItem.remove(output)
+        if let output = playerItemOutput {
+            output.setDelegate(nil, queue: nil)
+            if let previousItem = self.playerItem, previousItem.outputs.contains(output) { previousItem.remove(output) }
         }
+        lastDeliveredPresentationTime = nil
         playerItemOutput = nil
         playerItemStatusObservation?.invalidate()
         playerItemStatusObservation = nil
@@ -214,7 +216,7 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
     }
 
     private func handleReadyToPlay() {
-        guard let player, let playerItem else { return }
+        guard let player, let playerItem, playerItemOutput == nil else { return }
         _ = player
 
         guard let videoTrack = playerItem.asset.tracks(withMediaType: .video).first else {
@@ -272,35 +274,36 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
             handler: { [weak self] in self?.handleTick() }
         )
         #endif
+        ticker?.isPaused = false
     }
 
     private func handleTick() {
         guard ticker?.isPaused == false || forceUpdate else { return }
-        guard let player else { return }
-        if player.rate != 0 {
-            forceUpdate = true
-        }
-        update(forced: forceUpdate)
-        forceUpdate = false
+        if update(forced: forceUpdate) { forceUpdate = false }
     }
 
-    private func update(forced: Bool) {
-        guard let output = playerItemOutput, let player else { return }
+    private func update(forced: Bool) -> Bool {
+        guard let output = playerItemOutput, let player else { return false }
 
         let requestTime = output.itemTime(forHostTime: CACurrentMediaTime())
-        guard requestTime >= .zero else { return }
+        guard requestTime >= .zero else { return false }
 
         if !forced && !output.hasNewPixelBuffer(forItemTime: requestTime) {
-            ticker?.isPaused = true
-            waitingForMediaDataHandler?(requestTime)
-            output.requestNotificationOfMediaDataChange(withAdvanceInterval: advanceInterval)
-            return
+            // 正常播放时继续等待下一显示 tick；显式刷新仍可重新交付相同 PTS。
+            if player.rate == 0 {
+                ticker?.isPaused = true
+                waitingForMediaDataHandler?(requestTime)
+                output.requestNotificationOfMediaDataChange(withAdvanceInterval: advanceInterval)
+            }
+            return false
         }
 
         var presentationTime = CMTime.zero
         guard let pixelBuffer = output.copyPixelBuffer(forItemTime: requestTime, itemTimeForDisplay: &presentationTime) else {
-            return
+            return false
         }
+        guard forced || presentationTime != lastDeliveredPresentationTime else { return false }
+        lastDeliveredPresentationTime = presentationTime
         handler(
             VideoFrame(
                 preferredTrackTransform: preferredVideoTransform,
@@ -310,6 +313,7 @@ final class PlayerFrameOutputDriver: NSObject, @unchecked Sendable {
                 pixelBuffer: pixelBuffer
             )
         )
+        return true
     }
 }
 
