@@ -363,6 +363,9 @@ public final class MediaPipeline: @unchecked Sendable {
         markSourceFinished()
     }
 
+    /// 异步 sink 的持久化或编码失败进入同一个失败终态。
+    public func fail(with error: Error) { failChain(with: error) }
+
     private func failChain(with error: Error, cancelChain: Bool = true) {
         let errorDescription = Self.errorDescription(for: error)
         let allowedStates: [State] = [.running, .paused, .idle, .finishing]

@@ -78,7 +78,7 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
     private let retainsEncodedData: Bool
     private let requestedFlashMode: Int
     private let hardwareObservation: CameraHardwareObservation?
-    private let finish: @Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void
+    private var finish: (@Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void)?
     private let lock = NSLock()
     private var processedPhoto: CameraPhotoCaptureResource?
     private var rawPhoto: CameraPhotoCaptureResource?
@@ -181,8 +181,10 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
         } else {
             result = .failure(problem ?? .missingResource)
         }
+        let callback = finish; finish = nil
+        processedPhoto = nil; rawPhoto = nil; movieURL = nil; keyTime = nil
         lock.unlock()
-        finish(result)
+        callback?(result)
     }
 }
 #endif

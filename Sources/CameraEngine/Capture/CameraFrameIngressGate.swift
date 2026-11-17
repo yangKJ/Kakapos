@@ -126,6 +126,11 @@ final class CameraFrameIngressGate {
         return token
     }
 
+    func acceptsFrames(in expectedGeneration: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return acceptingFrames && expectedGeneration == generation
+    }
+
     func isActive(_ token: Token) -> Bool {
         lock.lock()
         let isActive = acceptingFrames

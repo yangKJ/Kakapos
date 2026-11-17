@@ -271,22 +271,33 @@ public struct CameraVideoConfiguration: Equatable, Sendable {
     }
 }
 
+public enum CameraAudioSessionOwnership: String, Codable, Sendable {
+    case automatic
+    case hostManaged
+}
+
 public struct CameraAudioConfiguration: Equatable, Sendable {
     public var sampleRate: Double
     public var channelCount: Int
     public var bitRate: Int
     public var prefersIndependentSession: Bool
+    public var sessionOwnership: CameraAudioSessionOwnership
 
     public init(
         sampleRate: Double = 44_100,
         channelCount: Int = 1,
         bitRate: Int = 128_000,
-        prefersIndependentSession: Bool = false
+        prefersIndependentSession: Bool = false,
+        sessionOwnership: CameraAudioSessionOwnership = .automatic
     ) {
         self.sampleRate = sampleRate
         self.channelCount = channelCount
         self.bitRate = bitRate
         self.prefersIndependentSession = prefersIndependentSession
+        self.sessionOwnership = sessionOwnership
+    }
+    func managesSession(for mode: CameraCaptureMode) -> Bool {
+        mode.includesAudio && sessionOwnership == .automatic
     }
 }
 

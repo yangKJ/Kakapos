@@ -118,8 +118,10 @@ public final class MultiCameraSource {
     }
 
     public func start() {
-        frontSource.start()
-        backSource.start()
+        let owner = frontSource.sessionOwner
+        owner.queue.async {
+            owner.batch { self.frontSource.start(); self.backSource.start() }
+        }
     }
 
     public func pause() {

@@ -42,6 +42,7 @@ public final class CameraDeviceController {
     public private(set) var preferredFlashMode: AVCaptureDevice.FlashMode = .off
     public private(set) var preferredDeviceType: CameraDeviceType?
 
+    var sessionOwner: CameraSessionOwner?
     private let deviceProvider: DeviceProvider
     private let positionProvider: PositionProvider
     private let eventDispatcher = CameraEventDispatcher<CameraDeviceEvent>()
@@ -496,9 +497,11 @@ public final class CameraDeviceController {
         operation: String,
         block: (AVCaptureDevice) throws -> Void
     ) throws -> CameraDeviceSnapshot {
-        guard let device = deviceProvider() else {
-            throw CameraDeviceControlError.deviceUnavailable
-        }
+        if let sessionOwner { return try sessionOwner.sync { try withLockedDeviceOnOwner(operation: operation, block: block) } }
+        return try withLockedDeviceOnOwner(operation: operation, block: block)
+    }
+    private func withLockedDeviceOnOwner(operation: String, block: (AVCaptureDevice) throws -> Void) throws -> CameraDeviceSnapshot {
+        guard let device = deviceProvider() else { throw CameraDeviceControlError.deviceUnavailable }
         do {
             try device.lockForConfiguration()
         } catch {

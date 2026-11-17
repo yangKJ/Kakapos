@@ -135,6 +135,13 @@ public struct RecordingCadence: Codable, Equatable, Sendable {
         videoEnd = duration.isFinite && duration > 0 && end.isFinite ? max(videoEnd ?? end, end) : nil
     }
 
+    /// 尾帧交付后校准实际媒体结束，不重复计入帧数。
+    public mutating func finalizeVideoEnd(seconds: Double) {
+        guard seconds.isFinite, let lastVideo, seconds >= lastVideo else { return }
+        if let videoEnd, seconds <= videoEnd + 1e-9 { return }
+        videoEnd = seconds
+    }
+
     public mutating func recordAudio(seconds: Double, duration: Double) {
         guard seconds.isFinite else { return }
         audioSampleBufferCount += 1

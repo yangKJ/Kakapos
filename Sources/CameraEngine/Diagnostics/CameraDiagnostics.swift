@@ -390,8 +390,19 @@ public final class CameraAdvancedOutput {
     public var arFrameHandler: ((CameraARFramePayload) -> Void)?
     public var multiCamFrameHandler: ((CameraMultiCamFramePayload) -> Void)?
     public var eventHandler: ((CameraAdvancedEvent) -> Void)?
-    public private(set) var latestEvent: CameraAdvancedEvent?
-    public private(set) var eventCount: Int = 0
+    public struct Snapshot {
+        public let latestEvent: CameraAdvancedEvent?
+        public let eventCount: Int
+    }
+    private let stateLock = NSLock()
+    private var storedLatestEvent: CameraAdvancedEvent?
+    private var storedEventCount = 0
+    public var snapshot: Snapshot {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return Snapshot(latestEvent: storedLatestEvent, eventCount: storedEventCount)
+    }
+    public var latestEvent: CameraAdvancedEvent? { snapshot.latestEvent }
+    public var eventCount: Int { snapshot.eventCount }
 
     private let eventDispatcher = CameraEventDispatcher<CameraAdvancedEvent>()
 
@@ -451,13 +462,11 @@ public final class CameraAdvancedOutput {
     }
 
     public func reset() {
-        latestEvent = nil
-        eventCount = 0
+        stateLock.lock(); storedLatestEvent = nil; storedEventCount = 0; stateLock.unlock()
     }
 
     private func record(_ event: CameraAdvancedEvent) {
-        latestEvent = event
-        eventCount += 1
+        stateLock.lock(); storedLatestEvent = event; storedEventCount += 1; stateLock.unlock()
         eventHandler?(event)
         eventDispatcher.emit(event)
     }

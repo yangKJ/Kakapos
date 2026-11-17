@@ -19,6 +19,10 @@ public final class CameraRecordingController {
     public var finishHandler: ((Result<RecordedClip, Error>) -> Void)?
 
     private let eventDispatcher = CameraEventDispatcher<CameraRecordingEvent>()
+    private let eventLock = NSLock()
+    private var terminalEventSent = false
+    private var startEventSent = false
+    private var preparingEventSent = false
 
     public var state: RecorderSink.State {
         recorderSink.state
@@ -45,7 +49,7 @@ public final class CameraRecordingController {
     }
 
     public var isRecordingActive: Bool {
-        state == .recording || state == .paused
+        state == .preparing || state == .recording || state == .paused
     }
 
     public init(
@@ -101,19 +105,16 @@ public final class CameraRecordingController {
     }
 
     public func start() {
-        emit(.willStart)
+        recorderSink.prepareToRecord()
         pipeline.start()
-        emit(.didStart)
     }
 
     public func pause() {
         recorderSink.pauseRecording()
-        emit(.didPause)
     }
 
     public func resume() {
         recorderSink.resumeRecording()
-        emit(.didResume)
     }
 
     public func stop() {
@@ -124,6 +125,7 @@ public final class CameraRecordingController {
         let recorder = recorderSink
         pipeline.stop { [weak self] terminal in
             if case .failure(let error) = terminal {
+                self?.emit(.didFail(error.localizedDescription))
                 self?.finishHandler?(.failure(error))
                 completion(.failure(error))
                 return
@@ -131,8 +133,6 @@ public final class CameraRecordingController {
             recorder.finishRecording { [weak self] result in
                 if case .success(let clip) = result {
                     clip.segments.last.map { self?.emit(.clipCompleted($0)) }
-                } else if case .failure(let error) = result {
-                    self?.emit(.didFail(error.localizedDescription))
                 }
                 self?.finishHandler?(result)
                 completion(result)
@@ -142,7 +142,6 @@ public final class CameraRecordingController {
 
     public func cancel() {
         pipeline.cancel()
-        emit(.didCancel)
     }
 
     public func finishRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
@@ -163,9 +162,7 @@ public final class CameraRecordingController {
         recorderSink.droppedFrameHandler = { [weak self] metadata in
             self?.emit(.droppedFrame(metadata))
         }
-        recorderSink.runtimeErrorHandler = { [weak self] error in
-            self?.emit(.didFail(error.localizedDescription))
-        }
+
         recorderSink.stateChangedHandler = { [weak self] state in
             self?.stateChangedHandler?(state)
             switch state {
@@ -176,13 +173,14 @@ public final class CameraRecordingController {
             case .paused:
                 self?.emit(.didPause)
             case .finishing:
-                self?.emit(.didFinish)
+                break
             case .finished:
                 self?.emit(.didFinish)
             case .cancelled:
-                self?.emit(.didCancel)
+                if let self, self.pipeline.state == .failed { self.emit(.didFail(self.pipeline.lastErrorDescription ?? "录制处理失败")) }
+                else { self?.emit(.didCancel) }
             case .failed:
-                self?.emit(.didFail("recorder failed"))
+                self?.emit(.didFail(self?.recorderSink.failureError?.localizedDescription ?? "录制失败"))
             case .idle:
                 break
             }
@@ -190,6 +188,20 @@ public final class CameraRecordingController {
     }
 
     private func emit(_ event: CameraRecordingEvent) {
+        eventLock.lock()
+        switch event {
+        case .didFinish, .didCancel, .didFail:
+            guard !terminalEventSent else { eventLock.unlock(); return }
+            terminalEventSent = true
+        case .didStart:
+            guard !startEventSent, !terminalEventSent else { eventLock.unlock(); return }
+            startEventSent = true
+        case .willStart:
+            guard !preparingEventSent, !terminalEventSent else { eventLock.unlock(); return }
+            preparingEventSent = true
+        default: break
+        }
+        eventLock.unlock()
         eventHandler?(event)
         eventDispatcher.emit(event)
     }

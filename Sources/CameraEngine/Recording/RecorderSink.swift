@@ -171,7 +171,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     public var maximumInFlightFrameCount = 6
     public var maximumInFlightAudioFrameCount = 12
     public var snapshot: Snapshot {
-        queue.sync {
+        onQueueSync {
             let recordingSnapshot = session.snapshot()
             let totalRecordedDuration = recordingSnapshot.totalDuration + recordingSnapshot.currentClipDuration
             return Snapshot(
@@ -241,18 +241,29 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
 
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
-    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private struct PendingVideo {
+        let buffer: CVPixelBuffer
+        let time: CMTime
+        let duration: CMTime
+    }
+    private var pendingVideo: PendingVideo?
+    private var videoFormatDescription: CMVideoFormatDescription?
+    private var finishingWriter = false
     private var startTime: CMTime?
     private var lastPresentationTime: CMTime?
     private var lastVideoPresentationTime: CMTime?
     private var lastAudioPresentationTime: CMTime?
     private var pausedAt: CMTime?
-    private var applyPaddingAfterResume = false
-    private var hasWrittenFirstVideoFrame = false
-    private var pendingLeadingAudioBuffers: [CMSampleBuffer] = []
+    private var lastInputEnd: CMTime?
+    private var resumeInputStart: CMTime?
+    private var pendingFrames: [MediaFrame] = []
+    private var alignmentTimer: DispatchWorkItem?
+    private var isFlushing = false
+    private var hasAcceptedVideoFrame = false
     private var finishCompletions: [(Result<RecordedClip, Error>) -> Void] = []
     private var terminalError: Error?
     private let queue = DispatchQueue(label: "com.condy.kakapos.recorder-sink")
+    private let queueKey = DispatchSpecificKey<UInt8>()
     private let lifecycleLock = NSLock()
     private var _state: State = .idle
     private var _recordedClip: RecordedClip?
@@ -270,10 +281,11 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         self.configuration = configuration
         try? FileManager.default.removeItem(at: outputURL)
         self.writer = try AVAssetWriter(outputURL: outputURL, fileType: fileType)
+        queue.setSpecific(key: queueKey, value: 1)
     }
 
     /// 离线夹具在断言暂停时序前等待编码器就绪，避免把合法实时背压当成时序错误。
-    var _videoInputReadyForTesting: Bool { queue.sync { videoInput?.isReadyForMoreMediaData ?? true } }
+    var _videoInputReadyForTesting: Bool { onQueueSync { videoInput?.isReadyForMoreMediaData ?? true } }
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
         guard enqueueAcceptedFrame(frame, completion: completion) else {
@@ -302,6 +314,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     public func finishRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
         rejectFurtherFrames()
         queue.async {
+            do { try self.flushPendingFrames(force: true) }
+            catch { self.fail(error) }
             switch self.state {
             case .cancelled:
                 completion(.failure(VideoX.Error.exportCancelled))
@@ -320,52 +334,73 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
                 break
             default:
                 let error = RecorderError.noRecordedMedia
-                self.terminalError = error
-                self.setState(.failed)
+                self.fail(error)
                 completion(.failure(error))
                 return
             }
             self.finishCompletions.append(completion)
-            let wasPaused = self.state == .paused
             self.setState(.finishing)
-            self.videoInput?.markAsFinished()
-            self.audioInput?.markAsFinished()
-            #if DEBUG
-            self._willFinishWritingForTesting?()
-            #endif
-            self.writer.finishWriting {
-                self.queue.async {
-                    guard self.state == .finishing else { return }
-                    if self.isCancellationRequested() {
-                        self.completeCancellation()
-                        return
-                    }
-                    self.session.finalizeCurrentClipIfNeeded()
-                    if wasPaused, let lastPresentationTime = self.lastPresentationTime {
-                        self.session.trimLastClipEndingIfNeeded(to: lastPresentationTime)
-                    }
-                    if self.writer.status != .completed {
-                        let error = self.writer.error ?? RecorderError.outputMissing
-                        self.terminalError = error
-                        self.setState(.failed)
-                        self.runtimeErrorHandler?(error)
-                        self.resolveFinishCompletions(with: .failure(error))
-                    } else if FileManager.default.fileExists(atPath: self.outputURL.path) {
-                        let clip = self.session.makeRecordedClip(
-                            outputURL: self.outputURL,
-                            fallbackStartedAt: self.startTime,
-                            fallbackEndedAt: self.lastPresentationTime,
-                            recordingCadence: self.recordingCadence
-                        )
-                        self.storeRecordedClip(clip)
-                        self.setState(.finished)
-                        self.resolveFinishCompletions(with: .success(clip))
-                    } else {
-                        let error = RecorderError.outputMissing
-                        self.terminalError = error
-                        self.setState(.failed)
-                        self.resolveFinishCompletions(with: .failure(error))
-                    }
+            self.finishWhenVideoReady()
+        }
+    }
+
+    private func finishWhenVideoReady() {
+        guard state == .finishing else { return }
+        guard pendingVideo != nil, let input = videoInput else { beginWriterFinish(); return }
+        input.requestMediaDataWhenReady(on: queue) {
+            guard self.state == .finishing, !self.finishingWriter else { return }
+            do {
+                guard input.isReadyForMoreMediaData else { return }
+                try self.writePendingVideo(until: self.session.mediaEnd)
+                self.beginWriterFinish()
+            } catch { self.fail(error) }
+        }
+        checkFinishingEncoder()
+    }
+    private func checkFinishingEncoder() {
+        queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self, self.state == .finishing, !self.finishingWriter else { return }
+            if self.writer.status == .failed { self.fail(self.writer.error ?? RecorderError.outputMissing) }
+            else { self.checkFinishingEncoder() }
+        }
+    }
+    private func beginWriterFinish() {
+        guard state == .finishing, !finishingWriter else { return }
+        finishingWriter = true
+        if let end = session.mediaEnd, let start = startTime, end > start { writer.endSession(atSourceTime: end) }
+        videoInput?.markAsFinished(); audioInput?.markAsFinished()
+        #if DEBUG
+        _willFinishWritingForTesting?()
+        #endif
+        self.writer.finishWriting {
+            self.queue.async {
+                guard self.state == .finishing else { return }
+                if self.isCancellationRequested() {
+                    self.completeCancellation()
+                    return
+                }
+                self.session.finalizeCurrentClipIfNeeded()
+                if self.writer.status != .completed {
+                    let error = self.writer.error ?? RecorderError.outputMissing
+                    self.terminalError = error
+                    self.setState(.failed)
+                    self.runtimeErrorHandler?(error)
+                    self.resolveFinishCompletions(with: .failure(error))
+                } else if FileManager.default.fileExists(atPath: self.outputURL.path) {
+                    let clip = self.session.makeRecordedClip(
+                        outputURL: self.outputURL,
+                        fallbackStartedAt: self.startTime,
+                        fallbackEndedAt: self.session.mediaEnd,
+                        recordingCadence: self.recordingCadence
+                    )
+                    self.storeRecordedClip(clip)
+                    self.setState(.finished)
+                    self.resolveFinishCompletions(with: .success(clip))
+                } else {
+                    let error = RecorderError.outputMissing
+                    self.terminalError = error
+                    self.setState(.failed)
+                    self.resolveFinishCompletions(with: .failure(error))
                 }
             }
         }
@@ -380,36 +415,85 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     public func pauseRecording(at time: CMTime) {
-        queue.sync {
-            guard state == .recording else { return }
-            let normalizedPauseTime = normalizedPresentationTime(for: time)
-            pausedAt = normalizedPauseTime
-            session.pause(at: normalizedPauseTime)
-            session.configureNextClipMinimumDuration(.zero)
-            session.finalizeCurrentClipIfNeeded(preferredEndTime: normalizedPauseTime)
-            applyPaddingAfterResume = false
-            setState(.paused)
-        }
+        onQueueSync { pauseOnQueue(at: time) }
     }
-
     public func pauseRecording() {
-        queue.sync {
-            guard state == .recording else { return }
-            let time = normalizedPresentationTime(for: lastPresentationTime ?? startTime ?? .zero)
-            pausedAt = time
-            session.pause(at: time)
-            session.configureNextClipMinimumDuration(CMTime(value: 1, timescale: 600))
-            session.finalizeCurrentClipIfNeeded(preferredEndTime: time)
-            applyPaddingAfterResume = true
-            setState(.paused)
+        onQueueSync { pauseOnQueue(at: lastInputEnd ?? startTime ?? .zero) }
+    }
+    private func pauseOnQueue(at inputTime: CMTime) {
+        guard state == .recording || state == .preparing || state == .idle else { return }
+        if writer.status == .unknown {
+            alignmentTimer?.cancel(); alignmentTimer = nil
+            pendingFrames.forEach { frame in updateCadence { $0.recordDrop(audio: isAudioMediaFrame(frame)) } }
+            pendingFrames.removeAll(); setState(.paused); return
+        }
+        do { try flushPendingFrames(force: true) } catch { fail(error); return }
+        let anchor = max(inputTime, lastInputEnd ?? inputTime)
+        guard anchor.isNumeric else { return }
+        let mediaTime = session.normalizedTime(for: anchor)
+        pausedAt = mediaTime; session.pause(at: anchor)
+        session.finalizeCurrentClipIfNeeded(preferredEndTime: mediaTime)
+        setState(.paused)
+    }
+    public func resumeRecording() {
+        onQueueSync {
+            guard state == .paused else { return }
+            setState(writer.status == .unknown ? .preparing : .recording)
         }
     }
+    func prepareToRecord() {
+        onQueueSync { if state == .idle { setState(.preparing) } }
+    }
 
-    public func resumeRecording() {
-        queue.sync {
-            guard state == .paused else { return }
-            setState(.recording)
+    private func frameTime(_ frame: MediaFrame) -> CMTime {
+        isAudioMediaFrame(frame) ? extractSampleBuffer(frame).map(CMSampleBufferGetPresentationTimeStamp) ?? frame.metadata.presentationTime : frame.metadata.presentationTime
+    }
+    private func flushPendingFrames(force: Bool) throws {
+        guard !isFlushing, !pendingFrames.isEmpty else { return }
+        let video = pendingFrames.first { !isAudioMediaFrame($0) }
+        let audio = pendingFrames.first { isAudioMediaFrame($0) }
+        guard video != nil || !configuration.includesVideo else { return }
+        guard force || audio != nil || !configuration.includesAudio else { return }
+        alignmentTimer?.cancel(); alignmentTimer = nil
+        if let video, let buffer = extractPixelBuffer(video) { try setupVideoIfNeeded(pixelBuffer: buffer) }
+        try setupAudioIfNeeded(sampleBuffer: audio.flatMap(extractSampleBuffer))
+        let frames = pendingFrames.enumerated().sorted {
+            let a = frameTime($0.element); let b = frameTime($1.element)
+            return a == b ? $0.offset < $1.offset : a < b
+        }.map(\.element)
+        pendingFrames.removeAll()
+        if let first = frames.first {
+            let time = frameTime(first)
+            if session.requiresResume { session.resume(at: time); resumeInputStart = time; pausedAt = nil }
+            try startIfNeeded(at: session.normalizedTime(for: time))
         }
+        isFlushing = true
+        do { for frame in frames { try consumeOnQueue(frame) } }
+        catch { isFlushing = false; throw error }
+        isFlushing = false
+        publishRecordingProgress()
+    }
+    private func stageIfNeeded(_ frame: MediaFrame) throws -> Bool {
+        guard !isFlushing, configuration.includesVideo && configuration.includesAudio,
+              !hasAcceptedVideoFrame || session.requiresResume else { return false }
+        let audio = isAudioMediaFrame(frame)
+        let count = pendingFrames.filter { isAudioMediaFrame($0) == audio }.count
+        if count >= (audio ? maximumInFlightAudioFrameCount : maximumInFlightFrameCount) {
+            if audio { throw MediaCoreError.audioDeliveryOverflow }
+            updateCadence { $0.recordDrop(audio: false) }; droppedFrameHandler?(frame.metadata)
+            return true
+        }
+        pendingFrames.append(frame)
+        if alignmentTimer == nil {
+            let timer = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.alignmentTimer = nil
+                do { try self.flushPendingFrames(force: true) } catch { self.fail(error) }
+            }
+            alignmentTimer = timer; queue.asyncAfter(deadline: .now() + 0.05, execute: timer)
+        }
+        try flushPendingFrames(force: false)
+        return true
     }
 
     private func consumeOnQueue(_ frame: MediaFrame) throws {
@@ -419,6 +503,9 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         if state == .failed { throw terminalError ?? RecorderError.noRecordedMedia }
         guard state != .paused else { return }
         guard state != .cancelled && state != .finished else { return }
+        guard frameTime(frame).isNumeric else { throw NSError(domain: "Kakapos.Recorder", code: -2101, userInfo: [NSLocalizedDescriptionKey: "录制帧时间戳必须为有限时间。"]) }
+        if try stageIfNeeded(frame) { return }
+        if let resumeInputStart, frameTime(frame) < resumeInputStart { return }
         if let sampleBuffer = extractSampleBuffer(frame), CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
             try appendAudio(sampleBuffer)
             return
@@ -432,42 +519,34 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
                 throw VideoExportProfileError.invalidHDROutput
             }
         }
-        let normalizedTime = adjustedPresentationTime(
-            normalizedPresentationTime(for: frame.metadata.presentationTime),
-            sampleDuration: frame.metadata.duration,
-            applyPadding: applyPaddingAfterResume,
-            previousTime: lastVideoPresentationTime
-        )
+        let duration = validDuration(frame.metadata.duration, fallback: CMTime(value: 1, timescale: 30))
+        let normalizedTime = adjustedPresentationTime(normalizedPresentationTime(for: frame.metadata.presentationTime),
+            sampleDuration: duration, previousTime: lastVideoPresentationTime)
         try setupAudioIfNeeded()
         try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
         try startIfNeeded(at: normalizedTime)
-        guard let adaptor = pixelBufferAdaptor, let videoInput else { throw RecorderError.writerCannotAddVideoInput }
-        // 实时编码器背压时不能调用 adaptor，否则 AVFoundation 会抛出不可捕获的异常。
+        guard let videoInput else { throw RecorderError.writerCannotAddVideoInput }
         guard videoInput.isReadyForMoreMediaData else {
-            updateCadence { $0.recordDrop(audio: false) }
-            droppedFrameHandler?(frame.metadata)
-            return
+            updateCadence { $0.recordDrop(audio: false) }; droppedFrameHandler?(frame.metadata); return
         }
-        guard adaptor.append(pixelBuffer, withPresentationTime: normalizedTime) else {
-            updateCadence { $0.recordDrop(audio: false) }
-            droppedFrameHandler?(frame.metadata)
-            return
-        }
-        updateCadence { $0.recordVideo(seconds: normalizedTime.seconds, duration: frame.metadata.duration?.seconds ?? 0) }
+        if pendingVideo != nil { try writePendingVideo(until: normalizedTime) }
+        pendingVideo = PendingVideo(buffer: pixelBuffer, time: normalizedTime, duration: duration)
+        updateCadence { $0.recordVideo(seconds: normalizedTime.seconds, duration: duration.seconds) }
         lastVideoPresentationTime = normalizedTime
-        session.markVideoFrame(at: normalizedTime)
-        if !hasWrittenFirstVideoFrame {
-            hasWrittenFirstVideoFrame = true
-            try flushPendingLeadingAudioIfPossible()
+        session.markVideoFrame(at: normalizedTime, duration: duration)
+        lastInputEnd = max(lastInputEnd ?? frame.metadata.presentationTime, frame.metadata.presentationTime + duration)
+        if !hasAcceptedVideoFrame {
+            hasAcceptedVideoFrame = true
         }
         updateLastPresentationTime(normalizedTime)
-        durationChangedHandler?(session.snapshot().totalDuration + session.snapshot().currentClipDuration)
-        if let maximumDuration {
-            let recordedDuration = session.snapshot().totalDuration + session.snapshot().currentClipDuration
-            if recordedDuration >= maximumDuration {
-                finishRecording { _ in }
-            }
-        }
+        publishRecordingProgress()
+    }
+    private func publishRecordingProgress() {
+        guard !isFlushing else { return }
+        let progress = session.snapshot()
+        let duration = progress.totalDuration + progress.currentClipDuration
+        durationChangedHandler?(duration)
+        if let maximumDuration, duration >= maximumDuration { finishRecording { _ in } }
     }
 
     private func setupVideoIfNeeded(pixelBuffer: CVPixelBuffer) throws {
@@ -492,13 +571,26 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         }
         input.transform = configuration.transform
         writer.add(input)
-        let attributes: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: CVPixelBufferGetPixelFormatType(pixelBuffer),
-            kCVPixelBufferWidthKey as String: width,
-            kCVPixelBufferHeightKey as String: height
-        ]
-        pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: attributes)
         videoInput = input
+    }
+
+    private func writePendingVideo(until end: CMTime?) throws {
+        guard let pending = pendingVideo, let input = videoInput else { return }
+        if videoFormatDescription == nil || !CMVideoFormatDescriptionMatchesImageBuffer(videoFormatDescription!, imageBuffer: pending.buffer) {
+            var format: CMVideoFormatDescription?
+            guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pending.buffer, formatDescriptionOut: &format) == noErr else {
+                throw RecorderError.unsupportedVideoPayload
+            }
+            videoFormatDescription = format
+        }
+        let duration = end.map { max($0 - pending.time, CMTime(value: 1, timescale: 60_000)) } ?? pending.duration
+        var timing = CMSampleTimingInfo(duration: duration, presentationTimeStamp: pending.time, decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        guard CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: pending.buffer,
+            formatDescription: videoFormatDescription!, sampleTiming: &timing, sampleBufferOut: &sample) == noErr,
+              let sample, input.append(sample) else { throw writer.error ?? RecorderError.outputMissing }
+        updateCadence { $0.finalizeVideoEnd(seconds: (pending.time + duration).seconds) }
+        pendingVideo = nil
     }
 
     private func appendAudio(_ sampleBuffer: CMSampleBuffer) throws {
@@ -506,24 +598,14 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
             throw RecorderError.writerCannotAddAudioInput
         }
         try setupAudioIfNeeded(sampleBuffer: sampleBuffer)
-        guard hasWrittenFirstVideoFrame || !configuration.includesVideo else {
-            pendingLeadingAudioBuffers.append(sampleBuffer)
-            if pendingLeadingAudioBuffers.count > maximumInFlightAudioFrameCount {
-                throw MediaCoreError.audioDeliveryOverflow
-            }
-            return
-        }
-        try flushPendingLeadingAudioIfPossible()
         try appendAudioSampleBuffer(sampleBuffer)
     }
 
     private func appendAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) throws {
-        let normalizedTime = adjustedPresentationTime(
-            normalizedPresentationTime(for: CMSampleBufferGetPresentationTimeStamp(sampleBuffer)),
-            sampleDuration: CMSampleBufferGetDuration(sampleBuffer),
-            applyPadding: applyPaddingAfterResume,
-            previousTime: lastAudioPresentationTime
-        )
+        let inputTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let duration = validDuration(CMSampleBufferGetDuration(sampleBuffer), fallback: .zero)
+        let normalizedTime = adjustedPresentationTime(normalizedPresentationTime(for: inputTime),
+            sampleDuration: duration, previousTime: lastAudioPresentationTime)
         try startIfNeeded(at: normalizedTime)
         guard let input = audioInput else { throw RecorderError.writerCannotAddAudioInput }
         var timingCount: CMItemCount = 0
@@ -556,17 +638,10 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         }
         updateCadence { $0.recordAudio(seconds: normalizedTime.seconds, duration: CMSampleBufferGetDuration(sampleBuffer).seconds) }
         lastAudioPresentationTime = normalizedTime
-        session.markAudioFrame(at: normalizedTime)
+        session.markAudioFrame(at: normalizedTime, duration: duration)
+        lastInputEnd = max(lastInputEnd ?? inputTime, inputTime + duration)
         updateLastPresentationTime(normalizedTime)
-    }
-
-    private func flushPendingLeadingAudioIfPossible() throws {
-        guard hasWrittenFirstVideoFrame, !pendingLeadingAudioBuffers.isEmpty else { return }
-        let buffers = pendingLeadingAudioBuffers
-        pendingLeadingAudioBuffers.removeAll()
-        for buffer in buffers {
-            try appendAudioSampleBuffer(buffer)
-        }
+        publishRecordingProgress()
     }
 
     private func setupAudioIfNeeded(sampleBuffer: CMSampleBuffer? = nil) throws {
@@ -591,8 +666,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     private func startIfNeeded(at time: CMTime) throws {
-        guard state == .idle || state == .paused else { return }
-        if state == .idle {
+        guard state == .idle || state == .preparing || state == .paused else { return }
+        if writer.status == .unknown {
             setState(.preparing)
             guard writer.startWriting() else { throw RecorderError.writerCannotStart(underlying: writer.error) }
             writer.startSession(atSourceTime: time)
@@ -604,34 +679,31 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     private func normalizedPresentationTime(for time: CMTime) -> CMTime {
-        if let pausedAt, time.isValid, pausedAt.isValid {
-            session.resume(at: time)
-            self.pausedAt = nil
+        if session.requiresResume {
+            session.resume(at: time); resumeInputStart = time; pausedAt = nil
         }
         return session.normalizedTime(for: time)
     }
-
-    private func adjustedPresentationTime(
-        _ time: CMTime,
-        sampleDuration: CMTime?,
-        applyPadding: Bool,
-        previousTime: CMTime?
-    ) -> CMTime {
-        guard time.isValid else { return time }
-        let minimumStep: CMTime
-        if let sampleDuration, sampleDuration.isValid, sampleDuration > .zero {
-            minimumStep = sampleDuration
-        } else {
-            minimumStep = CMTime(value: 1, timescale: 600)
-        }
-
-        if applyPadding, let lastPresentationTime, lastPresentationTime.isValid {
-            applyPaddingAfterResume = false
-            return lastPresentationTime + minimumStep
-        }
-
+    private func validDuration(_ duration: CMTime?, fallback: CMTime) -> CMTime {
+        guard let duration, duration.isNumeric, duration > .zero else { return fallback }
+        return duration
+    }
+    private func adjustedPresentationTime(_ time: CMTime, sampleDuration: CMTime, previousTime: CMTime?) -> CMTime {
         guard let previousTime, time <= previousTime else { return time }
-        return previousTime + minimumStep
+        return previousTime + max(sampleDuration, CMTime(value: 1, timescale: 600))
+    }
+    private func onQueueSync<T>(_ body: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: queueKey) != nil { return body() }
+        return queue.sync(execute: body)
+    }
+    var failureError: Error? { onQueueSync { terminalError } }
+    private func fail(_ error: Error) {
+        terminalError = error; rejectFurtherFrames()
+        alignmentTimer?.cancel(); alignmentTimer = nil; pendingFrames.removeAll(); pendingVideo = nil
+        if writer.status == .writing { writer.cancelWriting() }
+        try? FileManager.default.removeItem(at: outputURL)
+        setState(.failed); runtimeErrorHandler?(error)
+        resolveFinishCompletions(with: .failure(error))
     }
 
     private func updateLastPresentationTime(_ time: CMTime) {
@@ -665,7 +737,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
     }
 
     private func completeCancellation() {
-        guard state != .finished, state != .cancelled else { return }
+        guard state != .finished, state != .cancelled, state != .failed else { return }
+        alignmentTimer?.cancel(); alignmentTimer = nil; pendingFrames.removeAll(); pendingVideo = nil
         writer.cancelWriting()
         try? FileManager.default.removeItem(at: outputURL)
         setState(.cancelled)
@@ -720,12 +793,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
                 try self.consumeOnQueue(frame)
                 completion(.success(()))
             } catch {
-                self.terminalError = error
-                self.rejectFurtherFrames()
-                if self.writer.status == .writing { self.writer.cancelWriting() }
-                try? FileManager.default.removeItem(at: self.outputURL)
-                self.setState(.failed)
-                self.runtimeErrorHandler?(error)
+                self.fail(error)
                 completion(.failure(error))
             }
         }

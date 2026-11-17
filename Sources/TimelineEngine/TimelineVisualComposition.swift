@@ -62,7 +62,9 @@ enum TimelineVisualRenderer {
             let input: CIImage
             if let trackID = layer.trackID {
                 guard let buffer = source(trackID) else { throw MediaCoreError.pixelBufferUnavailable }
-                input = CIImage(cvPixelBuffer: buffer, options: [.toneMapHDRtoSDR: false])
+                if #available(iOS 14.1, tvOS 14.2, macOS 11, watchOS 7.1, *) {
+                    input = CIImage(cvPixelBuffer: buffer, options: [.toneMapHDRtoSDR: false])
+                } else { input = CIImage(cvPixelBuffer: buffer) }
             } else if let text = layer.text { input = text.image(at: (time - layer.range.start).seconds) }
             else if let image = layer.image { input = image }
             else { continue }

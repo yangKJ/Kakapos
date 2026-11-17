@@ -344,6 +344,8 @@ public final class RecordingPipeline {
             processesAudioFrames: false,
             frameProcessingTimeout: frameProcessingTimeout
         )
+        let mediaPipeline = pipeline
+        recorderSink.runtimeErrorHandler = { [weak mediaPipeline] error in mediaPipeline?.fail(with: error) }
     }
 
     public func start() {

@@ -5517,8 +5517,8 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(sink.state, .finished)
         XCTAssertEqual(recordedClip?.outputURL, outputURL)
         XCTAssertEqual(recordedClip?.startedAt, .zero)
-        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 1, timescale: 30))
-        XCTAssertEqual(recordedClip?.duration, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 2, timescale: 30))
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 2, timescale: 30))
         XCTAssertTrue(recordedClip?.fileExists == true)
         XCTAssertNotNil(recordedClip?.asset)
         XCTAssertEqual(recordedClip?.segments.first?.containsVideo, true)
@@ -5529,6 +5529,10 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recordedClip?.mergeHandoff.containsAudio, false)
         XCTAssertEqual(recordedClip?.normalizedSessionManifest["containsVideo"], "true")
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+        if let clip = recordedClip, let file = clip.outputURL {
+            XCTAssertEqual(AVURLAsset(url: file).duration.seconds, clip.duration.seconds, accuracy: 0.002)
+        }
+
     }
 
     func testRecorderSinkRejectsFinishWithoutMediaFrames() throws {
@@ -5600,12 +5604,16 @@ final class MediaEngineTests: XCTestCase {
         }
 
         wait(for: [finishExpectation], timeout: 5)
-        XCTAssertEqual(recordedClip?.duration, CMTime(value: 30, timescale: 30))
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 31, timescale: 30))
         XCTAssertEqual(recordedClip?.segments.count, 2)
         XCTAssertEqual(recordedClip?.segments.first?.duration, CMTime(value: 30, timescale: 30))
         XCTAssertEqual(recordedClip?.segments.allSatisfy(\.containsVideo), true)
         XCTAssertEqual(recordedClip?.recordingCadence?.videoFrameCount, 2)
         XCTAssertEqual(recordedClip?.recordingCadence?.maximumVideoGapSeconds ?? -1, 1, accuracy: 0.001)
+        if let clip = recordedClip, let file = clip.outputURL {
+            XCTAssertEqual(AVURLAsset(url: file).duration.seconds, clip.duration.seconds, accuracy: 0.002)
+        }
+
     }
 
     func testRecorderSinkFinishWhilePausedKeepsRecordedDuration() throws {
@@ -5655,9 +5663,13 @@ final class MediaEngineTests: XCTestCase {
         wait(for: [finishExpectation], timeout: 5)
         XCTAssertEqual(sink.state, .finished)
         XCTAssertEqual(recordedClip?.startedAt, .zero)
-        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 30, timescale: 30))
-        XCTAssertEqual(recordedClip?.duration, CMTime(value: 30, timescale: 30))
+        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 60, timescale: 30))
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 60, timescale: 30))
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+        if let clip = recordedClip, let file = clip.outputURL {
+            XCTAssertEqual(AVURLAsset(url: file).duration.seconds, clip.duration.seconds, accuracy: 0.002)
+        }
+
     }
 
     func testRecorderSinkPauseWithoutExplicitTimeDropsPausedFramesUntilResume() throws {
@@ -5741,10 +5753,14 @@ final class MediaEngineTests: XCTestCase {
         }
 
         wait(for: [finishExpectation], timeout: 5)
-        XCTAssertEqual(recordedClip?.duration, CMTime(value: 601, timescale: 600))
-        XCTAssertEqual(durations.last, CMTime(value: 601, timescale: 600))
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 32, timescale: 30))
+        XCTAssertEqual(durations.last, CMTime(value: 32, timescale: 30))
         XCTAssertEqual(recordedClip?.segments.count, 2)
         XCTAssertEqual(recordedClip?.segments.last?.containsVideo, true)
+        if let clip = recordedClip, let file = clip.outputURL {
+            XCTAssertEqual(AVURLAsset(url: file).duration.seconds, clip.duration.seconds, accuracy: 0.002)
+        }
+
     }
 
     func testRecordedClipRepresentationCanRoundTripWithoutOwningFileDeletion() throws {
@@ -6089,9 +6105,13 @@ final class MediaEngineTests: XCTestCase {
         wait(for: [finishExpectation], timeout: 5)
         XCTAssertEqual(finishedSink.state, .finished)
         XCTAssertEqual(recordedClip?.startedAt, .zero)
-        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 1, timescale: 600))
-        XCTAssertEqual(recordedClip?.duration, CMTime(value: 1, timescale: 600))
+        XCTAssertEqual(recordedClip?.endedAt, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(recordedClip?.duration, CMTime(value: 1, timescale: 30))
         XCTAssertTrue(recordedClip?.fileExists == true)
+        if let clip = recordedClip, let file = clip.outputURL {
+            XCTAssertEqual(AVURLAsset(url: file).duration.seconds, clip.duration.seconds, accuracy: 0.002)
+        }
+
     }
 
     func testRecorderSinkSnapshotTracksActiveSegmentAndPausedState() throws {
@@ -6139,7 +6159,7 @@ final class MediaEngineTests: XCTestCase {
         let sink = try RecorderSink(outputURL: outputURL)
         let pixelBuffer = try makePixelBuffer(width: 32, height: 32)
         let frame = PixelBufferFrame(pixelBuffer: pixelBuffer, metadata: FrameMetadata(presentationTime: .zero))
-        let expectedClipDuration = CMTime(value: 1, timescale: 600)
+        let expectedClipDuration = CMTime(value: 1, timescale: 30)
         let expectation = self.expectation(description: "append frame for summary")
 
         sink.consume(frame) { result in
@@ -6985,7 +7005,7 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(snapshot.clipCount, 2)
         XCTAssertEqual(snapshot.recordedVideoSegmentCount, 2)
         XCTAssertEqual(snapshot.recordedAudioSegmentCount, 1)
-        XCTAssertEqual(snapshot.totalDuration, CMTime(value: 60, timescale: 30))
+        XCTAssertEqual(snapshot.totalDuration, CMTime(value: 61, timescale: 30))
         XCTAssertEqual(session.clips.first?.containsAudio, false)
         XCTAssertEqual(session.clips.last?.containsAudio, true)
         XCTAssertEqual(session.clips.last?.containsVideo, true)

@@ -7,6 +7,7 @@
 
 import Foundation
 import KakaposMediaCore
+import KakaposVideo
 import AVFoundation
 import CoreImage
 
@@ -138,12 +139,28 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     public let session: AVCaptureSession
     public let previewLayer: AVCaptureVideoPreviewLayer
     public let advancedOutput = CameraAdvancedOutput()
-    public let audioSessionController = CameraAudioSessionController()
+    public private(set) var audioSessionController = CameraAudioSessionController()
     public private(set) var deviceController: CameraDeviceController!
-    public private(set) var isPaused: Bool = false
-    public private(set) var state: CameraSessionState = .idle
-    public private(set) var currentPosition: CameraPosition
-    public private(set) var authorizationStatus: CameraAuthorizationStatus
+    private var storedIsPaused: Bool = false
+    public private(set) var isPaused: Bool {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedIsPaused }
+        set { frameDeliveryFence.lock(); storedIsPaused = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedState: CameraSessionState = .idle
+    public private(set) var state: CameraSessionState {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedState }
+        set { frameDeliveryFence.lock(); storedState = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedCurrentPosition: CameraPosition
+    public private(set) var currentPosition: CameraPosition {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedCurrentPosition }
+        set { frameDeliveryFence.lock(); storedCurrentPosition = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedAuthorizationStatus: CameraAuthorizationStatus
+    public private(set) var authorizationStatus: CameraAuthorizationStatus {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedAuthorizationStatus }
+        set { frameDeliveryFence.lock(); storedAuthorizationStatus = newValue; frameDeliveryFence.unlock() }
+    }
     public private(set) var configuration: CameraSourceConfiguration
     public var captureControlIdentity: String? {
         onSessionQueueSync {
@@ -173,26 +190,37 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     public var frameHandler: ((MediaFrame) -> Void)?
     public var sessionEventHandler: ((CameraSessionEvent) -> Void)?
-    public var photoCaptureHandler: ((CameraPhotoCaptureResult) -> Void)?
+    private var storedPhotoCaptureHandler: ((CameraPhotoCaptureResult) -> Void)?
+    public var photoCaptureHandler: ((CameraPhotoCaptureResult) -> Void)? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedPhotoCaptureHandler }
+        set { frameDeliveryFence.lock(); storedPhotoCaptureHandler = newValue; frameDeliveryFence.unlock() }
+    }
     public var authorizationStatusChangedHandler: ((CameraAuthorizationStatus) -> Void)?
-    public var isRecordingActiveProvider: (() -> Bool)?
+    private var storedRecordingActiveProvider: (() -> Bool)?
+    public var isRecordingActiveProvider: (() -> Bool)? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedRecordingActiveProvider }
+        set { frameDeliveryFence.lock(); storedRecordingActiveProvider = newValue; frameDeliveryFence.unlock() }
+    }
 
     private weak var primaryDelegate: MediaSourceDelegate?
     private let delegateLock = NSLock()
     private var additionalDelegates: [ObjectIdentifier: WeakMediaSourceDelegateBox] = [:]
 
     public var snapshot: Snapshot {
-        Snapshot(
-            state: state,
-            position: currentPosition,
-            authorizationStatus: authorizationStatus,
-            isPaused: isPaused,
+        frameDeliveryFence.lock()
+        let values = (state, currentPosition, authorizationStatus, isPaused, currentOrientation, frameIndex, lastPresentationTime, lastMediaType)
+        frameDeliveryFence.unlock()
+        return Snapshot(
+            state: values.0,
+            position: values.1,
+            authorizationStatus: values.2,
+            isPaused: values.3,
             captureMode: configuration.captureMode,
-            deviceOrientation: currentOrientation,
+            deviceOrientation: values.4,
             isMirrored: configuration.effectiveMirroringValue(for: currentPosition),
-            lastFrameIndex: frameIndex > 0 ? frameIndex : nil,
-            lastPresentationTime: lastPresentationTime,
-            lastMediaType: lastMediaType,
+            lastFrameIndex: values.5 > 0 ? values.5 : nil,
+            lastPresentationTime: values.6,
+            lastMediaType: values.7,
             frameIngressSnapshot: frameIngressSnapshot,
             capabilitySnapshot: capabilitySnapshot
         )
@@ -237,6 +265,13 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         delegateLock.unlock()
     }
 
+    var recorderConfiguration: RecorderSink.Configuration {
+        let config = configuration
+        return RecorderSink.Configuration(dimensions: config.video.dimensions, bitRate: config.video.bitRate,
+            codec: config.video.codec, scalingMode: config.video.scalingMode, transform: config.video.transform,
+            includesAudio: config.captureMode.includesAudio, audioBitRate: config.audio.bitRate,
+            audioSampleRate: config.audio.sampleRate, audioChannelCount: config.audio.channelCount, colorPolicy: config.video.colorPolicy)
+    }
     public var sourceSnapshot: MediaSourceSnapshot {
         let currentSnapshot = snapshot
         return MediaSourceSnapshot(
@@ -316,7 +351,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private var zoomController: CameraZoomController?
     private var nativePreviewEnabled = true
 
-    private let sessionQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.session")
+    let sessionOwner: CameraSessionOwner
+    private let sessionBranchID = UUID()
+    private var sessionQueue: DispatchQueue { sessionOwner.queue }
     private let sessionQueueKey = DispatchSpecificKey<Void>()
     /// 视频与音频统一进入同一个 owner，保证 frameIndex 与最近帧元数据严格有序。
     private let mediaOutputQueue = DispatchQueue(label: "com.condy.kakapos.camera-source.media-output")
@@ -329,25 +366,78 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private let observerIngressGate = CameraFrameIngressGate(maximumInFlightFrameCount: 6)
     private var runLifecycle = CameraRunLifecycle()
     private var lifecycle: CameraSessionLifecycle
-    private var frameIndex: Int64 = 0
-    private var lastPresentationTime: CMTime?
-    private var lastMediaType: String?
-    private var currentOrientation: AVCaptureVideoOrientation = .portrait
+    private var storedFrameIndex: Int64 = 0
+    private var frameIndex: Int64 {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedFrameIndex }
+        set { frameDeliveryFence.lock(); storedFrameIndex = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedLastPresentationTime: CMTime?
+    private var lastPresentationTime: CMTime? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedLastPresentationTime }
+        set { frameDeliveryFence.lock(); storedLastPresentationTime = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedLastMediaType: String?
+    private var lastMediaType: String? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedLastMediaType }
+        set { frameDeliveryFence.lock(); storedLastMediaType = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedCurrentOrientation: AVCaptureVideoOrientation = .portrait
+    private var currentOrientation: AVCaptureVideoOrientation {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedCurrentOrientation }
+        set { frameDeliveryFence.lock(); storedCurrentOrientation = newValue; frameDeliveryFence.unlock() }
+    }
     private let ownsSession: Bool
     private let videoOutput = AVCaptureVideoDataOutput()
     private let audioOutput = AVCaptureAudioDataOutput()
-    private let photoOutput = AVCapturePhotoOutput()
+    private var photoOutput = AVCapturePhotoOutput()
+    private var configurationTransaction: CameraCaptureTransaction?
+    private var ownsRunAudioLease = false
+    private final class PhotoDelivery: @unchecked Sendable {
+        let handler: ((CameraPhotoCaptureResult) -> Void)?
+        let delegates: [MediaSourceDelegate]
+        init(handler: ((CameraPhotoCaptureResult) -> Void)?, delegates: [MediaSourceDelegate]) { self.handler = handler; self.delegates = delegates }
+    }
+    private let photoDeliveryLock = NSLock()
+    private var photoDeliveries: [Int64: PhotoDelivery] = [:]
+    private func takePhotoDelivery(_ id: Int64) -> PhotoDelivery? {
+        photoDeliveryLock.lock(); defer { photoDeliveryLock.unlock() }
+        return photoDeliveries.removeValue(forKey: id)
+    }
+    private func failPhoto(_ delivery: PhotoDelivery, error: Error) {
+        let failure = CameraCallbackTransfer(error)
+        DispatchQueue.main.async { delivery.delegates.forEach { $0.mediaSource(self, didFail: failure.value) } }
+    }
     private var nativePhotoRequests: [Int64: NativePhotoRequestDelegate] = [:]
-    private var metadataOutput: AVCaptureMetadataOutput?
-    private var depthDataOutput: AVCaptureDepthDataOutput?
-    private var outputSynchronizer: AVCaptureDataOutputSynchronizer?
+    private var storedMetadataOutput: AVCaptureMetadataOutput?
+    private var metadataOutput: AVCaptureMetadataOutput? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedMetadataOutput }
+        set { frameDeliveryFence.lock(); storedMetadataOutput = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedDepthDataOutput: AVCaptureDepthDataOutput?
+    private var depthDataOutput: AVCaptureDepthDataOutput? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedDepthDataOutput }
+        set { frameDeliveryFence.lock(); storedDepthDataOutput = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedOutputSynchronizer: AVCaptureDataOutputSynchronizer?
+    private var outputSynchronizer: AVCaptureDataOutputSynchronizer? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedOutputSynchronizer }
+        set { frameDeliveryFence.lock(); storedOutputSynchronizer = newValue; frameDeliveryFence.unlock() }
+    }
     private let ciContext = CIContext(options: nil)
     private var notificationObservers: [NSObjectProtocol] = []
     private var deviceObservers: [NSKeyValueObservation] = []
     private let sessionEventDispatcher = CameraEventDispatcher<CameraSessionEvent>()
     private let authorizationDispatcher = CameraEventDispatcher<CameraAuthorizationStatus>()
-    private var videoInput: AVCaptureDeviceInput?
-    private var audioInput: AVCaptureDeviceInput?
+    private var storedVideoInput: AVCaptureDeviceInput?
+    private var videoInput: AVCaptureDeviceInput? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedVideoInput }
+        set { frameDeliveryFence.lock(); storedVideoInput = newValue; frameDeliveryFence.unlock() }
+    }
+    private var storedAudioInput: AVCaptureDeviceInput?
+    private var audioInput: AVCaptureDeviceInput? {
+        get { frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }; return storedAudioInput }
+        set { frameDeliveryFence.lock(); storedAudioInput = newValue; frameDeliveryFence.unlock() }
+    }
     private var isSessionConfigured = false
     // 会话队列持有；同一设备在媒体服务恢复后也必须重放硬件意图。
     private var controlConfigurationRevision: UInt64 = 0
@@ -357,16 +447,21 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private var hardwareObservationEpoch = UUID()
     private let lastVideoFrameLock = NSLock()
     private var lastVideoSampleBuffer: CMSampleBuffer?
+    private var framesAreReady = false
+    private var earliestFrameTime: CMTime?
     private var shouldResumeAfterInterruption = false
     private var audioSessionEventToken: UUID?
 
     public init(configuration: CameraSourceConfiguration = CameraSourceConfiguration()) throws {
         let session = AVCaptureSession()
         self.session = session
-        self.previewLayer = AVCaptureVideoPreviewLayer(session: session)
+        self.sessionOwner = CameraSessionOwner.shared(for: session)
+        if #available(iOS 13.0, *), session is AVCaptureMultiCamSession {
+            self.previewLayer = AVCaptureVideoPreviewLayer(sessionWithNoConnection: session)
+        } else { self.previewLayer = AVCaptureVideoPreviewLayer(session: session) }
         self.configuration = configuration
-        self.currentPosition = configuration.preferredPosition
-        self.authorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
+        self.storedCurrentPosition = configuration.preferredPosition
+        self.storedAuthorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
         self.frameIngressGate = CameraFrameIngressGate(
             maximumInFlightFrameCount: configuration.maximumInFlightFrameCount
         )
@@ -378,6 +473,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: ())
         configureDeviceController()
+        deviceController.sessionOwner = sessionOwner
         configurePreviewLayer()
         applySessionPreset()
         updateCurrentOrientation()
@@ -387,10 +483,13 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     public init(session: AVCaptureSession, configuration: CameraSourceConfiguration) throws {
         self.session = session
-        self.previewLayer = AVCaptureVideoPreviewLayer(session: session)
+        self.sessionOwner = CameraSessionOwner.shared(for: session)
+        if #available(iOS 13.0, *), session is AVCaptureMultiCamSession {
+            self.previewLayer = AVCaptureVideoPreviewLayer(sessionWithNoConnection: session)
+        } else { self.previewLayer = AVCaptureVideoPreviewLayer(session: session) }
         self.configuration = configuration
-        self.currentPosition = configuration.preferredPosition
-        self.authorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
+        self.storedCurrentPosition = configuration.preferredPosition
+        self.storedAuthorizationStatus = Self.authorizationStatus(for: configuration.captureMode)
         self.frameIngressGate = CameraFrameIngressGate(
             maximumInFlightFrameCount: configuration.maximumInFlightFrameCount
         )
@@ -402,6 +501,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: ())
         configureDeviceController()
+        deviceController.sessionOwner = sessionOwner
         configurePreviewLayer()
         applySessionPreset()
         updateCurrentOrientation()
@@ -411,6 +511,21 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     deinit {
         stopObservingNotifications()
+        sessionQueue.setSpecific(key: sessionQueueKey, value: nil)
+        let owner = sessionOwner; let branch = sessionBranchID; let session = self.session
+        let outputs: [AVCaptureOutput] = [videoOutput, audioOutput, photoOutput] + ([metadataOutput, depthDataOutput] as [AVCaptureOutput?]).compactMap { $0 }
+        let inputs = [videoInput, audioInput].compactMap { $0 }
+        let preview = previewLayer.connection
+        let audio = audioSessionController; let releasesAudio = ownsRunAudioLease
+        owner.queue.async {
+            session.beginConfiguration()
+            if let preview, session.connections.contains(where: { $0 === preview }) { session.removeConnection(preview) }
+            for output in outputs where session.outputs.contains(where: { $0 === output }) { session.removeOutput(output) }
+            for input in inputs where session.inputs.contains(where: { $0 === input }) { session.removeInput(input) }
+            session.commitConfiguration()
+            owner.stop(branch)
+            if releasesAudio { audio.deactivate() }
+        }
     }
 
     public convenience init(sessionPreset: AVCaptureSession.Preset = .high, position: AVCaptureDevice.Position = .back) throws {
@@ -436,7 +551,6 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard status == .authorized else {
             guard configuration.automaticallyRequestsAuthorization, status == .notDetermined else {
                 let failureGeneration = invalidateRunForFailure()
-                waitForActiveFrameDeliveries()
                 notifyAuthorizationFailure(generation: failureGeneration)
                 return
             }
@@ -449,8 +563,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                         self.startOnSessionQueue()
                     } else {
                         let failureGeneration = self.invalidateRunForFailure()
-                        self.waitForActiveFrameDeliveries()
-                        self.notifyAuthorizationFailure(generation: failureGeneration)
+                            self.notifyAuthorizationFailure(generation: failureGeneration)
                     }
                 }
             }
@@ -460,18 +573,20 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         refreshRuntimeStateForStart()
         publish(.startRequested)
         do {
+            try acquireRunAudioLease()
             try ensureSessionConfigured()
             guard isActiveRunGeneration(runGeneration) else { return }
             applyCurrentConnections()
+            setCaptureConnectionsEnabled(true)
             let wasAlreadyRunning = session.isRunning
             guard startSessionIfRunIsActive(generation: runGeneration) else { return }
             if wasAlreadyRunning {
-                publish(.didStartRunning)
+                publishReady()
             }
         } catch {
             guard isActiveRunGeneration(runGeneration) else { return }
             let failureGeneration = invalidateRunForFailure()
-            waitForActiveFrameDeliveries()
+            releaseRunAudioLease()
             publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
             DispatchQueue.main.async {
                 guard self.frameIngressGate.isCurrentGeneration(failureGeneration) else { return }
@@ -562,26 +677,29 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     public func pause() {
         isPaused = true
-        publish(.pauseRequested)
+        onSessionQueue { self.publish(.pauseRequested) }
     }
 
     public func resume() {
-        isPaused = false
-        publish(.resumeRequested)
+        onSessionQueue {
+            if self.currentActiveRunGeneration() != nil { self.setFramesReady(true, minimumTime: self.streamClockTime()) }
+            self.isPaused = false
+            self.publish(.resumeRequested)
+        }
     }
 
     public func stop() {
         _ = zoomRequestGate.setEnabled(false)
         guard let terminalGeneration = beginTerminalIfNeeded() else { return }
         let terminalDelegates = CameraCallbackTransfer(mediaSourceDelegatesSnapshot())
-        waitForActiveFrameDeliveries()
         sessionQueue.async {
             self.zoomController?.invalidate()
+            self.setCaptureConnectionsEnabled(false)
             self.setLastVideoSampleBuffer(nil)
-            if self.session.isRunning {
+            self.sessionOwner.stop(self.sessionBranchID) {
                 self.expectStopNotification(generation: terminalGeneration)
-                self.session.stopRunning()
             }
+            self.releaseRunAudioLease()
             self.publish(.didStopRunning)
             DispatchQueue.main.async {
                 self.notifyDelegatesOfFinish(terminalDelegates.value)
@@ -605,8 +723,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard position != .unspecified else { return false }
         guard findVideoDevice(position: position) != nil else { return false }
         _ = zoomRequestGate.setEnabled(false)
-        publish(.positionSwitchRequested(position))
         sessionQueue.async {
+            self.publish(.positionSwitchRequested(position))
             self.zoomController?.invalidate()
             do {
                 try self.replaceVideoInput(position: position)
@@ -614,7 +732,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                 self.previewLayer.connection?.isEnabled = self.nativePreviewEnabled
                 self.publish(.positionChanged(position))
             } catch {
-                if let device = self.videoInput?.device, self.session.isRunning {
+                if let device = self.videoInput?.device, self.session.isRunning, self.isSessionConfigured {
                     let restored = Self.cameraPosition(from: device.position)
                     self.publish(.runtimeError(isRecoverable: true, description: error.localizedDescription))
                     self.publish(.positionChanged(restored))
@@ -627,15 +745,19 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     public func capturePhoto() {
+        if configuration.captureMode != .photo { capturePhotoFromCurrentFrame(); return }
+        let delivery = PhotoDelivery(handler: photoCaptureHandler, delegates: mediaSourceDelegatesSnapshot())
+        let generation = currentActiveRunGeneration()
         sessionQueue.async {
+            guard let generation, self.isActiveRunGeneration(generation), self.session.isRunning else {
+                self.failPhoto(delivery, error: CameraPhotoCaptureError.sessionUnavailable); return
+            }
             guard self.isSessionConfigured, self.session.isRunning else {
                 self.capturePhotoFromCurrentFrame()
                 return
             }
             guard self.photoOutput.connections.isEmpty == false else {
-                DispatchQueue.main.async {
-                    self.notifyDelegatesOfFailure(CameraSourceError.cannotCapturePhoto)
-                }
+                self.failPhoto(delivery, error: CameraSourceError.cannotCapturePhoto)
                 return
             }
             let settings: AVCapturePhotoSettings
@@ -661,6 +783,12 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                 if self.photoOutput.isPortraitEffectsMatteDeliverySupported {
                     settings.isPortraitEffectsMatteDeliveryEnabled = self.configuration.photo.deliversPortraitEffectsMatte || self.configuration.advanced.enablesPortraitEffectsMatte
                 }
+            }
+            let id = settings.uniqueID
+            self.photoDeliveryLock.lock(); self.photoDeliveries[id] = delivery; self.photoDeliveryLock.unlock()
+            self.sessionQueue.asyncAfter(deadline: .now() + 45) { [weak self] in
+                guard let self, let pending = self.takePhotoDelivery(id) else { return }
+                self.failPhoto(pending, error: CameraPhotoCaptureError.captureTimedOut)
             }
             self.photoOutput.capturePhoto(with: settings, delegate: self)
         }
@@ -697,7 +825,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async {
                 do {
-                    guard self.isSessionConfigured, self.session.isRunning else { throw CameraPhotoCaptureError.sessionUnavailable }
+                    guard self.currentActiveRunGeneration() != nil, self.isSessionConfigured, self.session.isRunning,
+                          self.photoOutput.connections.contains(where: { $0.isEnabled }) else { throw CameraPhotoCaptureError.sessionUnavailable }
                     guard self.nativePhotoRequests.count < 2 else { throw CameraPhotoCaptureError.tooManyRequests }
                     let expectsRaw = request.format == .bayerRAW || request.format == .appleProRAW
                     guard !(expectsRaw && request.includesLivePhoto) else { throw CameraPhotoCaptureError.incompatibleCombination }
@@ -815,38 +944,41 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         return lastVideoSampleBuffer
     }
 
+    private final class FramePhotoRequest: @unchecked Sendable {
+        let sample: CMSampleBuffer
+        let handler: ((CameraPhotoCaptureResult) -> Void)?
+        let delegates: [MediaSourceDelegate]
+        init(sample: CMSampleBuffer, handler: ((CameraPhotoCaptureResult) -> Void)?, delegates: [MediaSourceDelegate]) {
+            self.sample = sample; self.handler = handler; self.delegates = delegates
+        }
+    }
     public func capturePhotoFromCurrentFrame() {
-        photoQueue.async {
-            guard let sampleBuffer = self.lastVideoFrameSnapshot(),
-                  let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-                DispatchQueue.main.async {
-                    self.notifyDelegatesOfFailure(CameraSourceError.photoFrameUnavailable)
-                }
-                return
+        frameDeliveryFence.lock()
+        let sample = framesAreReady && currentActiveRunGeneration() != nil ? lastVideoFrameSnapshot() : nil
+        let handler = photoCaptureHandler
+        let delegates = mediaSourceDelegatesSnapshot()
+        frameDeliveryFence.unlock()
+        guard let sample else {
+            let delivery = CameraCallbackTransfer(delegates)
+            DispatchQueue.main.async { delivery.value.forEach { $0.mediaSource(self, didFail: CameraSourceError.photoFrameUnavailable) } }
+            return
+        }
+        let request = FramePhotoRequest(sample: sample, handler: handler, delegates: delegates)
+        photoQueue.async { self.produceFramePhoto(request) }
+    }
+    private func produceFramePhoto(_ request: FramePhotoRequest) {
+        do {
+            guard let buffer = CMSampleBufferGetImageBuffer(request.sample),
+                  let data = ciContext.jpegRepresentation(of: CIImage(cvPixelBuffer: buffer), colorSpace: CGColorSpaceCreateDeviceRGB(), options: [:]) else {
+                throw CameraSourceError.photoFrameUnavailable
             }
-            let image = CIImage(cvPixelBuffer: pixelBuffer)
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let metadata = Self.attachmentsDictionary(from: sampleBuffer)
-            guard let data = self.ciContext.jpegRepresentation(of: image, colorSpace: colorSpace, options: [:]) else {
-                DispatchQueue.main.async { self.notifyDelegatesOfFailure(CameraSourceError.photoFrameUnavailable) }
-                return
-            }
-            let resource: CameraPhotoCaptureResource
-            do {
-                resource = try CameraPhotoCaptureResource(
-                    encodedData: data, metadata: metadata,
-                    origin: .videoFrame,
-                    photoTimestampSeconds: CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
-                )
-            } catch {
-                DispatchQueue.main.async { self.notifyDelegatesOfFailure(error) }
-                return
-            }
-            let result = CameraPhotoCaptureResult(resource: resource)
-            let resultTransfer = CameraCallbackTransfer(result)
-            DispatchQueue.main.async {
-                self.photoCaptureHandler?(resultTransfer.value)
-            }
+            let resource = try CameraPhotoCaptureResource(encodedData: data, metadata: Self.attachmentsDictionary(from: request.sample),
+                origin: .videoFrame, photoTimestampSeconds: CMSampleBufferGetPresentationTimeStamp(request.sample).seconds)
+            let result = CameraCallbackTransfer(CameraPhotoCaptureResult(resource: resource))
+            DispatchQueue.main.async { request.handler?(result.value) }
+        } catch {
+            let failure = CameraCallbackTransfer(error)
+            DispatchQueue.main.async { request.delegates.forEach { $0.mediaSource(self, didFail: failure.value) } }
         }
     }
 
@@ -907,9 +1039,24 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         self.isPaused = state == .paused
         if state == .running {
             _ = beginRunIfNeeded()
+            setFramesReady(true, minimumTime: nil)
         }
     }
 
+    /// 合成流不监听模拟器空捕获会话的硬件通知；原生通知合同由独立用例验证。
+    func _detachNativeNotificationsForTesting() {
+        notificationObservers.forEach(NotificationCenter.default.removeObserver)
+        notificationObservers.removeAll()
+    }
+
+    func _setFrameTimeFenceForTesting(_ time: CMTime?) { setFramesReady(true, minimumTime: time) }
+    func _configureTransactionForTesting(_ body: (AVCaptureSession) throws -> Void) throws {
+        try onSessionQueueSync { try configureTransaction { try body(session) } }
+    }
+    func _useAudioSessionControllerForTesting(_ controller: CameraAudioSessionController) {
+        onSessionQueueSync { audioSessionController = controller; wireAudioSessionEvents() }
+    }
+    func _acquireRunAudioForTesting() throws { try onSessionQueueSync { try acquireRunAudioLease() } }
     func _drainSessionQueueForTesting() {
         onSessionQueueSync {}
     }
@@ -933,7 +1080,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     func _handleLifecycleActionForTesting(_ action: CameraLifecycleAction) {
-        publish(action)
+        onSessionQueueSync { publish(action) }
     }
 
     func _handleSessionInterruptionForTesting(recordingActive: Bool) {
@@ -989,6 +1136,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private var activeSessionPreset: AVCaptureSession.Preset {
+        if configuration.video.formatSelectionPolicy == .requireRequested || configuration.video.colorPolicy != .sourceCompatible { return .inputPriority }
         switch configuration.captureMode {
         case .photo:
             return configuration.photo.sessionPreset
@@ -997,23 +1145,85 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
     }
 
+    private func acquireRunAudioLease() throws {
+        guard configuration.audio.managesSession(for: configuration.captureMode) else { return }
+        if try audioSessionController.activateForRun(prefersIndependentSession: configuration.audio.prefersIndependentSession) { ownsRunAudioLease = true }
+    }
+
+    private func releaseRunAudioLease() {
+        if ownsRunAudioLease {
+            audioSessionController.deactivate()
+            ownsRunAudioLease = audioSessionController.isActive
+        }
+    }
+
+    private func streamClockTime() -> CMTime? {
+        if #available(iOS 15.4, macCatalyst 15.4, tvOS 17.0, *) {
+            return session.synchronizationClock.map(CMClockGetTime)
+        }
+        #if os(iOS)
+        if #available(macCatalyst 14.0, *) { return session.masterClock.map(CMClockGetTime) }
+        #endif
+        return nil
+    }
+    private func setFramesReady(_ ready: Bool, minimumTime: CMTime?) {
+        frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }
+        framesAreReady = ready; earliestFrameTime = minimumTime
+        if !ready { setLastVideoSampleBuffer(nil) }
+    }
+    private func publishReady() {
+        guard currentActiveRunGeneration() != nil else { return }
+        if configuration.video.formatSelectionPolicy == .requireRequested,
+           let actual = resolvedVideoSpecification, !configuration.video.accepts(actual) {
+            finishRuntimeFailure(CameraVideoSpecificationError.unsupportedSpecification)
+            return
+        }
+        setFramesReady(true, minimumTime: streamClockTime())
+        publish(.didStartRunning)
+    }
+    private func configureTransaction(_ body: () throws -> Void) throws {
+        frameDeliveryFence.lock(); let wasReady = framesAreReady; frameDeliveryFence.unlock()
+        setFramesReady(false, minimumTime: nil)
+        defer { if wasReady && isSessionConfigured && session.isRunning && currentActiveRunGeneration() != nil { setFramesReady(true, minimumTime: streamClockTime()) } }
+        let video = videoInput; let audio = audioInput; let position = currentPosition
+        let metadata = metadataOutput; let depth = depthDataOutput; let synchronizer = outputSynchronizer
+        let settings = videoOutput.videoSettings; let discards = videoOutput.alwaysDiscardsLateVideoFrames
+        let configured = isSessionConfigured
+        let transaction = CameraCaptureTransaction(session: session)
+        configurationTransaction = transaction; defer { configurationTransaction = nil }
+        do { try transaction.run(body) }
+        catch {
+            let restored = !(error is CameraCaptureTransaction.Failure)
+            videoInput = video.flatMap { previous in session.inputs.contains(where: { $0 === previous }) ? previous : nil }
+            audioInput = audio.flatMap { previous in session.inputs.contains(where: { $0 === previous }) ? previous : nil }
+            currentPosition = position
+            metadataOutput = metadata; depthDataOutput = depth; outputSynchronizer = synchronizer
+            videoOutput.videoSettings = settings; videoOutput.alwaysDiscardsLateVideoFrames = discards
+            isSessionConfigured = configured && restored
+            if !configured { photoOutput = AVCapturePhotoOutput() }
+            applyCurrentConnections(); installDeviceObservers()
+            throw error
+        }
+    }
     private func ensureSessionConfigured() throws {
         guard !isSessionConfigured else { return }
-        session.beginConfiguration()
-        defer { session.commitConfiguration() }
-        applySessionPreset()
-        try configureVideoInput(position: configuration.preferredPosition)
-        try configureVideoColorPolicy()
-        try configureAudioInputIfNeeded()
-        try configureVideoOutput()
-        try configureAudioOutputIfNeeded()
-        try configurePhotoOutput()
-        try configureMetadataOutputIfNeeded()
-        try configureDepthOutputIfNeeded()
-        applyCurrentConnections()
-        try applyInitialDeviceConfigurationIfNeeded()
-        installDeviceObservers()
-        isSessionConfigured = true
+        try configureTransaction {
+            self.applySessionPreset()
+            self.session.automaticallyConfiguresApplicationAudioSession = false
+            try self.configureVideoInput(position: self.configuration.preferredPosition)
+            try self.configureVideoColorPolicy()
+            try self.configureAudioInputIfNeeded()
+            try self.configureVideoOutput()
+            try self.configureAudioOutputIfNeeded()
+            try self.configurePhotoOutput()
+            try self.configureMetadataOutputIfNeeded()
+            try self.configureDepthOutputIfNeeded()
+            try self.connectPreviewIfNeeded()
+            self.applyCurrentConnections()
+            try self.applyInitialDeviceConfigurationIfNeeded()
+            self.installDeviceObservers()
+            self.isSessionConfigured = true
+        }
     }
 
     private func configureVideoInput(position: CameraPosition) throws {
@@ -1021,42 +1231,67 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard let device = findVideoDevice(position: resolvedPosition) else {
             throw CameraSourceError.captureDeviceUnavailable(position: resolvedPosition, preferredDeviceTypes: configuration.preferredDeviceTypes)
         }
+        configurationTransaction?.watch(device)
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else {
             throw CameraSourceError.cannotAddInput(.video)
         }
-        session.addInput(input)
+        if usesExplicitConnections { session.addInputWithNoConnections(input) } else { session.addInput(input) }
         videoInput = input
         currentPosition = resolvedPosition
     }
 
     private func replaceVideoInput(position: CameraPosition) throws {
-        let previousInput = videoInput
-        session.beginConfiguration()
-        defer {
-            session.commitConfiguration()
+        try configureTransaction {
+            if let previous = self.videoInput { self.session.removeInput(previous); self.videoInput = nil }
+            try self.configureVideoInput(position: position)
+            try self.configureVideoColorPolicy()
+            try self.configureVideoPixelFormat()
+            try self.reconnectVideoOutputsIfNeeded()
+            try self.configureDepthOutputIfNeeded()
+            try self.connectPreviewIfNeeded()
+            self.applyCurrentConnections()
+            try self.applyInitialDeviceConfigurationIfNeeded()
+            self.installDeviceObservers()
         }
-        if let previousInput {
-            session.removeInput(previousInput)
-            videoInput = nil
+    }
+    private var usesExplicitConnections: Bool {
+        if #available(iOS 13.0, *) { return session is AVCaptureMultiCamSession }
+        return false
+    }
+    private func connect(_ output: AVCaptureOutput, type: AVMediaType) throws {
+        guard usesExplicitConnections else { return }
+        let input = type == .audio ? audioInput : videoInput
+        guard let port = input?.ports.first(where: { $0.mediaType == type }) else { throw CameraSourceError.cannotAddOutput(type) }
+        let connection = AVCaptureConnection(inputPorts: [port], output: output)
+        guard session.canAddConnection(connection) else { throw CameraSourceError.cannotAddOutput(type) }
+        session.addConnection(connection)
+    }
+    private func add(_ output: AVCaptureOutput, type: AVMediaType) throws {
+        if usesExplicitConnections { session.addOutputWithNoConnections(output) } else { session.addOutput(output) }
+        try connect(output, type: type)
+    }
+    private func setCaptureConnectionsEnabled(_ enabled: Bool) {
+        let outputs: [AVCaptureOutput] = [videoOutput, audioOutput, photoOutput] + ([metadataOutput, depthDataOutput] as [AVCaptureOutput?]).compactMap { $0 }
+        outputs.flatMap(\.connections).forEach { $0.isEnabled = enabled }
+        previewLayer.connection?.isEnabled = enabled && nativePreviewEnabled
+    }
+    private func connectPreviewIfNeeded() throws {
+        guard usesExplicitConnections, previewLayer.connection == nil else { return }
+        guard let port = videoInput?.ports.first(where: { $0.mediaType == .video }) else { throw CameraSourceError.cannotAddInput(.video) }
+        let connection = AVCaptureConnection(inputPort: port, videoPreviewLayer: previewLayer)
+        guard session.canAddConnection(connection) else { throw CameraSourceError.cannotAddOutput(.video) }
+        session.addConnection(connection)
+    }
+    private func reconnectVideoOutputsIfNeeded() throws {
+        guard usesExplicitConnections else { return }
+        for output in [videoOutput, photoOutput] as [AVCaptureOutput] where session.outputs.contains(where: { $0 === output }) {
+            for connection in output.connections { session.removeConnection(connection) }
+            try connect(output, type: .video)
         }
-        do {
-            try configureVideoInput(position: position)
-            try configureVideoColorPolicy()
-            try configureVideoPixelFormat()
-            try configureDepthOutputIfNeeded()
-            applyCurrentConnections()
-            try applyInitialDeviceConfigurationIfNeeded()
-            installDeviceObservers()
-        } catch {
-            if let previousInput, session.canAddInput(previousInput) {
-                session.addInput(previousInput)
-                videoInput = previousInput
-                currentPosition = Self.cameraPosition(from: previousInput.device.position)
-                applyCurrentConnections()
-                installDeviceObservers()
-            }
-            throw error
+        if let metadataOutput {
+            for connection in metadataOutput.connections { session.removeConnection(connection) }
+            try connect(metadataOutput, type: .video)
         }
     }
 
@@ -1065,77 +1300,46 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard let device = AVCaptureDevice.default(for: .audio) else {
             throw CameraSourceError.cannotAddInput(.audio)
         }
+        configurationTransaction?.watch(device)
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else {
             throw CameraSourceError.cannotAddInput(.audio)
         }
-        session.addInput(input)
+        if usesExplicitConnections { session.addInputWithNoConnections(input) } else { session.addInput(input) }
         audioInput = input
     }
 
     private func configureVideoColorPolicy() throws {
-        if configuration.video.formatSelectionPolicy == .requireRequested {
-            guard let device = videoInput?.device else { throw CameraVideoSpecificationError.unsupportedSpecification }
-            let formats = device.formats
-            let candidates = formats.map { format in
-                let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                return CameraVideoFormatCandidate(width: Int(size.width), height: Int(size.height), frameRateRanges: format.videoSupportedFrameRateRanges.map {
-                    CameraFrameRateRange(minimumFramesPerSecond: $0.minFrameRate, maximumFramesPerSecond: $0.maxFrameRate)
-                })
-            }
-            if let index = try configuration.video.preferredFormatIndex(in: candidates, currentIndex: formats.firstIndex(of: device.activeFormat)) {
-                try device.lockForConfiguration()
-                device.activeFormat = formats[index]
-                device.unlockForConfiguration()
-            }
-        }
         let policy = configuration.video.colorPolicy
-        guard policy != .sourceCompatible else { return }
-        guard let device = videoInput?.device else { throw CameraSourceError.unsupportedFeature("相机尚未配置。") }
-        let colorSpace: AVCaptureColorSpace
-        if policy == .standardBT709 {
-            colorSpace = .sRGB
-        } else {
-            guard policy == .hdrHLG, configuration.video.codec == .hevc else {
-                throw CameraSourceError.unsupportedFeature("原生HDR采集需要HLG和HEVC；PQ由渲染后交付转换产生。")
-            }
-            guard #available(iOS 14.1, *) else { throw CameraSourceError.unsupportedFeature("当前系统不支持HLG采集。") }
-            colorSpace = .HLG_BT2020
+        guard policy != .hdrPQ, !policy.isHDR || configuration.video.codec == .hevc else {
+            throw CameraSourceError.unsupportedFeature("原生 HDR 采集需要 HLG 和 HEVC。")
         }
-        let dimensions = configuration.video.dimensions ?? CGSize(
-            width: Int(CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription).width),
-            height: Int(CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription).height))
-        guard dimensions.width.isFinite, dimensions.height.isFinite,
-              dimensions.width >= 1, dimensions.height >= 1,
-              dimensions.width.rounded() == dimensions.width, dimensions.height.rounded() == dimensions.height,
-              dimensions.width <= CGFloat(Int32.max), dimensions.height <= CGFloat(Int32.max) else {
-            throw CameraSourceError.unsupportedFeature("采集尺寸必须为有效的正像素值。")
-        }
-        if let range = configuration.video.preferredFrameRateRange {
-            guard range.minimumFramesPerSecond.isFinite, range.maximumFramesPerSecond.isFinite,
-                  range.minimumFramesPerSecond > 0, range.maximumFramesPerSecond >= range.minimumFramesPerSecond else {
-                throw CameraSourceError.unsupportedFeature("采集帧率范围必须为有限正数且上下限有序。")
-            }
-        }
-        let candidates = device.formats.filter { format in
+        guard let device = videoInput?.device else { throw CameraVideoSpecificationError.unsupportedSpecification }
+        let formats = device.formats
+        let candidates = formats.map { format -> CameraVideoFormatCandidate in
             let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-            guard size.width == Int32(dimensions.width), size.height == Int32(dimensions.height),
-                  format.supportedColorSpaces.contains(colorSpace) else { return false }
-            if let range = configuration.video.preferredFrameRateRange {
-                return format.videoSupportedFrameRateRanges.contains {
-                    $0.minFrameRate <= range.minimumFramesPerSecond && $0.maxFrameRate >= range.maximumFramesPerSecond
-                }
-            }
-            return true
+            var colors: [VideoExportColorPolicy] = [.sourceCompatible]
+            if format.supportedColorSpaces.contains(.sRGB) { colors.append(.standardBT709) }
+            if format.supportedColorSpaces.contains(.P3_D65) { colors.append(.standardDisplayP3) }
+            if #available(iOS 14.1, *), format.supportedColorSpaces.contains(.HLG_BT2020) { colors.append(.hdrHLG) }
+            return CameraVideoFormatCandidate(width: Int(size.width), height: Int(size.height), frameRateRanges: format.videoSupportedFrameRateRanges.map {
+                CameraFrameRateRange(minimumFramesPerSecond: $0.minFrameRate, maximumFramesPerSecond: $0.maxFrameRate)
+            }, colorPolicies: colors)
         }
-        guard let format = candidates.first else {
-            throw CameraSourceError.unsupportedFeature("设备不支持所请求尺寸和帧率的HLG采集。")
-        }
+        guard let index = try configuration.video.preferredFormatIndex(in: candidates, currentIndex: formats.firstIndex(of: device.activeFormat)) else { return }
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
-        session.automaticallyConfiguresCaptureDeviceForWideColor = false
-        device.activeFormat = format
-        device.activeColorSpace = colorSpace
+        device.activeFormat = formats[index]
+        switch policy {
+        case .sourceCompatible: break
+        case .standardBT709: device.activeColorSpace = .sRGB
+        case .standardDisplayP3: device.activeColorSpace = .P3_D65
+        case .hdrHLG:
+            guard #available(iOS 14.1, *) else { throw CameraVideoSpecificationError.unsupportedSpecification }
+            device.activeColorSpace = .HLG_BT2020
+        case .hdrPQ: throw CameraVideoSpecificationError.unsupportedSpecification
+        }
+        if policy != .sourceCompatible { session.automaticallyConfiguresCaptureDeviceForWideColor = false }
     }
 
     private func configureVideoPixelFormat() throws {
@@ -1152,7 +1356,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard session.canAddOutput(videoOutput) else {
             throw CameraSourceError.cannotAddOutput(.video)
         }
-        session.addOutput(videoOutput)
+        try add(videoOutput, type: .video)
     }
 
     private func configureAudioOutputIfNeeded() throws {
@@ -1161,14 +1365,15 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard session.canAddOutput(audioOutput) else {
             throw CameraSourceError.cannotAddOutput(.audio)
         }
-        session.addOutput(audioOutput)
+        try add(audioOutput, type: .audio)
     }
 
     private func configurePhotoOutput() throws {
         guard session.canAddOutput(photoOutput) else {
+            if configuration.captureMode != .photo { return }
             throw CameraSourceError.cannotAddOutput(.video)
         }
-        session.addOutput(photoOutput)
+        try add(photoOutput, type: .video)
         photoOutput.isHighResolutionCaptureEnabled = configuration.photo.isHighResolutionEnabled
         prepareMaximumPhotoDimensions()
         if #available(iOS 13.0, *) {
@@ -1190,7 +1395,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard session.canAddOutput(output) else {
             throw CameraSourceError.cannotAddMetadataOutput
         }
-        session.addOutput(output)
+        try add(output, type: .video)
         let supported = configuration.advanced.metadataObjectTypes.filter(output.availableMetadataObjectTypes.contains)
         output.metadataObjectTypes = supported
         output.setMetadataObjectsDelegate(self, queue: sessionQueue)
@@ -1211,7 +1416,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         guard session.canAddOutput(output) else {
             throw CameraSourceError.cannotAddDepthOutput
         }
-        session.addOutput(output)
+        try add(output, type: .depthData)
         depthDataOutput = output
         if let connection = output.connections.first, connection.isVideoOrientationSupported {
             connection.videoOrientation = currentOrientation
@@ -1289,6 +1494,11 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         } else if configuration.video.preferredFrameRateRange != nil, configuration.video.formatSelectionPolicy == .requireRequested {
             throw CameraVideoSpecificationError.unsupportedSpecification
         }
+        if configuration.video.formatSelectionPolicy == .requireRequested {
+            guard let actual = resolvedVideoSpecification, configuration.video.accepts(actual) else {
+                throw CameraVideoSpecificationError.unsupportedSpecification
+            }
+        }
     }
 
     private func findVideoDevice(position: CameraPosition) -> AVCaptureDevice? {
@@ -1337,8 +1547,16 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         return preferred
     }
 
+    private func acceptsStreamTime(_ time: CMTime?) -> Bool {
+        frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }
+        guard framesAreReady, let generation = currentActiveRunGeneration(), frameIngressGate.acceptsFrames(in: generation), !isPaused else { return false }
+        if let earliestFrameTime, let time, time.isNumeric, time < earliestFrameTime { return false }
+        return true
+    }
+
     private func emit(sampleBuffer: CMSampleBuffer, mediaType: AVMediaType) {
-        guard !isPaused else { return }
+        frameDeliveryFence.lock()
+        guard acceptsStreamTime(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) else { frameDeliveryFence.unlock(); return }
         frameIndex += 1
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let duration = CMSampleBufferGetDuration(sampleBuffer)
@@ -1368,13 +1586,13 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         )
         let mediaKind: CameraFrameIngressMediaKind = mediaType == .video ? .video : .audio
         let frameTransfer = CameraCallbackTransfer(frame)
-        if let observerToken = observerIngressGate.admit(mediaKind: mediaKind, branchCount: 1) {
+        let generation = currentActiveRunGeneration()
+        let observerToken = observerIngressGate.admit(mediaKind: mediaKind, branchCount: 1)
+        let ingressToken = frameIngressGate.admit(mediaKind: mediaKind, branchCount: 1)
+        frameDeliveryFence.unlock()
+        if let observerToken {
             DispatchQueue.main.async {
-                self.frameDeliveryFence.lock()
-                defer {
-                    self.frameDeliveryFence.unlock()
-                    self.observerIngressGate.completeBranch(for: observerToken)
-                }
+                defer { self.observerIngressGate.completeBranch(for: observerToken) }
                 guard self.observerIngressGate.isActive(observerToken) else { return }
                 self.frameHandler?(frameTransfer.value)
                 for delegate in self.mediaSourceDelegatesSnapshot(delivery: .main) {
@@ -1383,7 +1601,8 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                 }
             }
         }
-        guard let ingressToken = frameIngressGate.admit(mediaKind: mediaKind, branchCount: 1) else {
+        guard let ingressToken else {
+            guard let generation, frameIngressGate.acceptsFrames(in: generation) else { return }
             let pressure = frameIngressGate.snapshot
             if mediaKind == .audio, pressure.inFlightAudioFrameCount >= pressure.maximumInFlightAudioFrameCount {
                 self.mediaSourceDelegatesSnapshot(delivery: .processing).forEach {
@@ -1484,6 +1703,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func notifyAuthorizationFailure(generation: UInt64) {
+        releaseRunAudioLease()
+        sessionOwner.stop(sessionBranchID)
+        setLastVideoSampleBuffer(nil)
         let status = Self.authorizationStatus(for: configuration.captureMode)
         publish(.authorizationChanged(status))
         let error = CameraSourceError.authorizationDenied(requestedMediaTypes: configuration.requestedMediaTypes)
@@ -1525,9 +1747,12 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func beginRunIfNeeded() -> UInt64? {
+        frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }
         runLock.lock()
         defer { runLock.unlock() }
         return runLifecycle.begin {
+            framesAreReady = false; earliestFrameTime = nil
+            setLastVideoSampleBuffer(nil)
             observerIngressGate.reset()
             return frameIngressGate.reset()
         }
@@ -1550,6 +1775,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func beginTerminalIfNeeded() -> UInt64? {
+        frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }
+        framesAreReady = false; earliestFrameTime = nil
+        setLastVideoSampleBuffer(nil)
         runLock.lock()
         defer { runLock.unlock() }
         return runLifecycle.beginTerminal {
@@ -1559,6 +1787,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     }
 
     private func invalidateRunForFailure() -> UInt64 {
+        frameDeliveryFence.lock(); defer { frameDeliveryFence.unlock() }
+        framesAreReady = false; earliestFrameTime = nil
+        setLastVideoSampleBuffer(nil)
         runLock.lock()
         defer { runLock.unlock() }
         return runLifecycle.invalidate {
@@ -1595,13 +1826,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     /// 若并发 stop 在调用期间失效了 generation，则在 session owner 上立即回收本次启动。
     private func startSessionIfRunIsActive(generation: UInt64) -> Bool {
         guard isActiveRunGeneration(generation) else { return false }
-        if !session.isRunning {
-            session.startRunning()
-        }
+        sessionOwner.start(sessionBranchID)
         guard isActiveRunGeneration(generation) else {
-            if session.isRunning {
-                session.stopRunning()
-            }
+            sessionOwner.stop(sessionBranchID)
             return false
         }
         return true
@@ -1622,11 +1849,6 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         if shouldRestart { start() }
     }
 
-    private func waitForActiveFrameDeliveries() {
-        frameDeliveryFence.lock()
-        frameDeliveryFence.unlock()
-    }
-
     private func onSessionQueue(_ work: @escaping () -> Void) {
         if DispatchQueue.getSpecific(key: sessionQueueKey) != nil {
             work()
@@ -1635,11 +1857,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         }
     }
 
-    private func onSessionQueueSync<T>(_ work: () -> T) -> T {
-        if DispatchQueue.getSpecific(key: sessionQueueKey) != nil {
-            return work()
-        }
-        return sessionQueue.sync(execute: work)
+    private func onSessionQueueSync<T>(_ work: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: sessionQueueKey) != nil { return try work() }
+        return try sessionQueue.sync(execute: work)
     }
 
     private func startObservingNotifications() {
@@ -1648,9 +1868,9 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureSessionDidStartRunning, object: session, queue: nil) { [weak self] _ in
                 guard let self, let runGeneration = self.currentActiveRunGeneration() else { return }
-                self.onSessionQueue {
+                self.sessionQueue.async {
                     guard self.isActiveRunGeneration(runGeneration) else { return }
-                    self.publish(.didStartRunning)
+                    self.publishReady()
                 }
             }
         )
@@ -1661,7 +1881,6 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
                     guard !self.consumeExpectedStopNotification() else { return }
                     guard self.beginTerminalIfNeeded() != nil else { return }
                     let terminalDelegates = CameraCallbackTransfer(self.mediaSourceDelegatesSnapshot())
-                    self.waitForActiveFrameDeliveries()
                     self.publish(.didStopRunning)
                     DispatchQueue.main.async {
                         self.notifyDelegatesOfFinish(terminalDelegates.value)
@@ -1699,12 +1918,12 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         )
         notificationObservers.append(
             center.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
-                self?.updateCurrentOrientation()
+                self?.onSessionQueue { self?.updateCurrentOrientation() }
             }
         )
         notificationObservers.append(
             center.addObserver(forName: .AVCaptureDeviceSubjectAreaDidChange, object: nil, queue: nil) { [weak self] _ in
-                self?.deviceController.notifySubjectAreaChanged()
+                self?.sessionQueue.async { self?.deviceController.notifySubjectAreaChanged() }
             }
         )
         notificationObservers.append(
@@ -1724,7 +1943,7 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
 
     private func wireAudioSessionEvents() {
         audioSessionEventToken = audioSessionController.addEventObserver { [weak self] event in
-            self?.handleAudioSessionEvent(event)
+            self?.onSessionQueue { self?.handleAudioSessionEvent(event) }
         }
     }
 
@@ -1756,19 +1975,19 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             guard let runGeneration = currentActiveRunGeneration(),
                   authorizationStatus == .authorized else { return }
             CameraSessionRecovery.run(isCurrent: { self.isActiveRunGeneration(runGeneration) }, configure: {
-                self.session.beginConfiguration()
-                defer { self.session.commitConfiguration() }
-                try self.configureVideoColorPolicy()
-                try self.configureVideoPixelFormat()
-                self.applyCurrentConnections()
-                try self.applyInitialDeviceConfigurationIfNeeded()
-                self.installDeviceObservers()
+                try self.configureTransaction {
+                    try self.configureVideoColorPolicy()
+                    try self.configureVideoPixelFormat()
+                    self.applyCurrentConnections()
+                    try self.applyInitialDeviceConfigurationIfNeeded()
+                    self.installDeviceObservers()
+                }
             }, restart: {
                 guard self.startSessionIfRunIsActive(generation: runGeneration) else { return false }
                 guard self.session.isRunning else { throw CameraPhotoCaptureError.sessionUnavailable }
                 return true
             }, ready: {
-                self.publish(.didStartRunning)
+                self.publishReady()
             }, failed: {
                 self.finishRuntimeFailure($0)
             })
@@ -1781,13 +2000,13 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
     private func finishRuntimeFailure(_ error: Error) {
         guard let terminalGeneration = beginTerminalIfNeeded() else { return }
         publish(.runtimeError(isRecoverable: false, description: error.localizedDescription))
+        setCaptureConnectionsEnabled(false)
         setLastVideoSampleBuffer(nil)
         let terminalDelegates = CameraCallbackTransfer(mediaSourceDelegatesSnapshot())
-        waitForActiveFrameDeliveries()
-        if session.isRunning {
+        sessionOwner.stop(sessionBranchID) {
             expectStopNotification(generation: terminalGeneration)
-            session.stopRunning()
         }
+        releaseRunAudioLease()
         DispatchQueue.main.async {
             terminalDelegates.value.forEach { $0.mediaSource(self, didFail: error) }
             self.markTerminalCallbackDelivered()
@@ -1820,8 +2039,17 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         switch event {
         case .routeChanged(let route):
             publish(.audioRouteChanged(route))
-        case .didActivate, .didDeactivate, .activationFailed, .interruptionBegan, .interruptionEnded:
-            break
+        case .interruptionBegan:
+            guard configuration.audio.managesSession(for: configuration.captureMode) else { return }
+            handleSessionInterruption(isRecordingActive: isRecordingActiveProvider?() == true)
+        case .interruptionEnded(let shouldResume):
+            guard configuration.audio.managesSession(for: configuration.captureMode) else { return }
+            if shouldResume { handleSessionInterruptionEnded() }
+        case .activationFailed(let description):
+            if currentActiveRunGeneration() != nil, configuration.captureMode.includesAudio {
+                finishRuntimeFailure(NSError(domain: "Kakapos.CameraAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: description]))
+            }
+        case .didActivate, .didDeactivate: break
         }
     }
 
@@ -1831,31 +2059,31 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         deviceObservers.append(
             device.observe(\.isAdjustingFocus, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.emit(.focusAdjustmentChanged(value))
+                self?.sessionQueue.async { self?.deviceController.emit(.focusAdjustmentChanged(value)) }
             }
         )
         deviceObservers.append(
             device.observe(\.isAdjustingExposure, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.emit(.exposureAdjustmentChanged(value))
+                self?.sessionQueue.async { self?.deviceController.emit(.exposureAdjustmentChanged(value)) }
             }
         )
         deviceObservers.append(
             device.observe(\.lensPosition, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.emit(.lensPositionChanged(value))
+                self?.sessionQueue.async { self?.deviceController.emit(.lensPositionChanged(value)) }
             }
         )
         deviceObservers.append(
             device.observe(\.exposureDuration, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.emit(.exposureDurationChanged(value))
+                self?.sessionQueue.async { self?.deviceController.emit(.exposureDurationChanged(value)) }
             }
         )
         deviceObservers.append(
             device.observe(\.iso, options: [.new]) { [weak self] _, change in
                 guard let value = change.newValue else { return }
-                self?.deviceController.emit(.isoChanged(value))
+                self?.sessionQueue.async { self?.deviceController.emit(.isoChanged(value)) }
             }
         )
     }
@@ -1877,6 +2105,7 @@ extension CameraSource: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureA
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        guard output.connections.contains(where: { $0 === connection }) else { return }
         if outputSynchronizer != nil, output === videoOutput {
             return
         }
@@ -1894,10 +2123,9 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
         didFinishProcessingPhoto photo: AVCapturePhoto,
         error: Error?
     ) {
+        guard let delivery = takePhotoDelivery(photo.resolvedSettings.uniqueID) else { return }
         if let error {
-            DispatchQueue.main.async {
-                self.notifyDelegatesOfFailure(error)
-            }
+            failPhoto(delivery, error: error)
             return
         }
         let deliveredDepthData: Bool
@@ -1931,7 +2159,7 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
             advancedOutput.emitPortraitEffectsMatte(.init(deliveredInPhoto: true, matte: matte, timestamp: lastPresentationTime))
         }
         guard let data = photo.fileDataRepresentation() else {
-            DispatchQueue.main.async { self.notifyDelegatesOfFailure(CameraPhotoCaptureError.missingResource) }
+            failPhoto(delivery, error: CameraPhotoCaptureError.missingResource)
             return
         }
         let resource: CameraPhotoCaptureResource
@@ -1940,7 +2168,7 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
                 origin: .nativePhoto, isRaw: photo.isRawPhoto,
                 resolvedFlashEnabled: photo.resolvedSettings.isFlashEnabled, photoTimestampSeconds: photo.timestamp.seconds)
         } catch {
-            DispatchQueue.main.async { self.notifyDelegatesOfFailure(error) }
+            failPhoto(delivery, error: error)
             return
         }
         let result = CameraPhotoCaptureResult(
@@ -1950,13 +2178,18 @@ extension CameraSource: AVCapturePhotoCaptureDelegate {
         )
         let resultTransfer = CameraCallbackTransfer(result)
         DispatchQueue.main.async {
-            self.photoCaptureHandler?(resultTransfer.value)
+            delivery.handler?(resultTransfer.value)
         }
+    }
+    public func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        guard let error, let delivery = takePhotoDelivery(resolvedSettings.uniqueID) else { return }
+        failPhoto(delivery, error: error)
     }
 }
 
 extension CameraSource: AVCaptureMetadataOutputObjectsDelegate {
     public func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard metadataOutput === output, acceptsStreamTime(metadataObjects.first?.time) else { return }
         let transformed = metadataObjects.compactMap { previewLayer.transformedMetadataObject(for: $0) }
         advancedOutput.emitMetadataObjects(.init(objects: metadataObjects, previewObjects: transformed, timestamp: lastPresentationTime))
     }
@@ -1970,6 +2203,7 @@ extension CameraSource: AVCaptureDepthDataOutputDelegate {
         timestamp: CMTime,
         connection: AVCaptureConnection
     ) {
+        guard depthDataOutput === output, acceptsStreamTime(timestamp) else { return }
         advancedOutput.emitDepthData(.init(timestamp: timestamp, depthData: depthData, isSynchronized: false))
     }
 }
@@ -1980,7 +2214,8 @@ extension CameraSource: AVCaptureDataOutputSynchronizerDelegate {
         _ synchronizer: AVCaptureDataOutputSynchronizer,
         didOutput synchronizedDataCollection: AVCaptureSynchronizedDataCollection
     ) {
-        guard let synchronizedSampleBuffer = synchronizedDataCollection.synchronizedData(for: videoOutput) as? AVCaptureSynchronizedSampleBufferData else {
+        guard outputSynchronizer === synchronizer, acceptsStreamTime(nil),
+              let synchronizedSampleBuffer = synchronizedDataCollection.synchronizedData(for: videoOutput) as? AVCaptureSynchronizedSampleBufferData else {
             return
         }
         if synchronizedSampleBuffer.sampleBufferWasDropped == false {
@@ -1988,7 +2223,7 @@ extension CameraSource: AVCaptureDataOutputSynchronizerDelegate {
         }
         if let depthDataOutput,
            let synchronizedDepth = synchronizedDataCollection.synchronizedData(for: depthDataOutput) as? AVCaptureSynchronizedDepthData,
-           synchronizedDepth.depthDataWasDropped == false {
+           synchronizedDepth.depthDataWasDropped == false, acceptsStreamTime(synchronizedDepth.timestamp) {
             advancedOutput.emitDepthData(.init(timestamp: synchronizedDepth.timestamp, depthData: synchronizedDepth.depthData, isSynchronized: true))
         }
     }

@@ -8,6 +8,7 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import KakaposVideo
 
 public enum CameraVideoFormatSelectionPolicy: Equatable, Sendable {
     case bestEffort
@@ -24,11 +25,14 @@ public struct CameraVideoFormatCandidate: Equatable, Sendable {
     public let width: Int
     public let height: Int
     public let frameRateRanges: [CameraFrameRateRange]
+    public let colorPolicies: [VideoExportColorPolicy]
 
-    public init(width: Int, height: Int, frameRateRanges: [CameraFrameRateRange]) {
+    public init(width: Int, height: Int, frameRateRanges: [CameraFrameRateRange],
+        colorPolicies: [VideoExportColorPolicy] = [.sourceCompatible, .standardBT709]) {
         self.width = width
         self.height = height
         self.frameRateRanges = frameRateRanges
+        self.colorPolicies = colorPolicies
     }
 }
 
@@ -93,8 +97,10 @@ extension CameraVideoConfiguration {
 
     /// 宽松默认不接管系统格式选择；严格模式必须给出明确的传感器格式尺寸。
     public func preferredFormatIndex(in candidates: [CameraVideoFormatCandidate], currentIndex: Int? = nil) throws -> Int? {
-        guard formatSelectionPolicy == .requireRequested else { return nil }
-        guard let dimensions = captureDimensions,
+        guard formatSelectionPolicy == .requireRequested || colorPolicy != .sourceCompatible else { return nil }
+        let currentSize = currentIndex.flatMap { candidates.indices.contains($0) ? CGSize(width: candidates[$0].width, height: candidates[$0].height) : nil }
+        let requestedSize = formatSelectionPolicy == .requireRequested ? captureDimensions : (captureDimensions ?? dimensions ?? currentSize)
+        guard let dimensions = requestedSize,
               dimensions.width.isFinite, dimensions.height.isFinite,
               dimensions.width > 0, dimensions.height > 0,
               dimensions.width.rounded() == dimensions.width, dimensions.height.rounded() == dimensions.height,
@@ -103,7 +109,8 @@ extension CameraVideoConfiguration {
         }
         if let range = preferredFrameRateRange { _ = try range.frameDurations() }
         func matches(_ candidate: CameraVideoFormatCandidate) -> Bool {
-            guard candidate.width == Int(dimensions.width), candidate.height == Int(dimensions.height) else { return false }
+            guard candidate.width == Int(dimensions.width), candidate.height == Int(dimensions.height),
+                  colorPolicy == .sourceCompatible || candidate.colorPolicies.contains(colorPolicy) else { return false }
             guard let requested = preferredFrameRateRange else { return true }
             return candidate.frameRateRanges.contains {
                 $0.minimumFramesPerSecond <= requested.minimumFramesPerSecond

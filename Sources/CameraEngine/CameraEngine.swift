@@ -38,8 +38,17 @@ public final class CameraEngine {
     public let deviceController: CameraDeviceController
     public let advancedOutput: CameraAdvancedOutput
     public let audioSessionController: CameraAudioSessionController
-    public private(set) var previewController: CameraPreviewController?
-    public private(set) var recordingController: CameraRecordingController?
+    private let controllersLock = NSRecursiveLock()
+    private var storedPreviewController: CameraPreviewController?
+    private var storedRecordingController: CameraRecordingController?
+    public private(set) var previewController: CameraPreviewController? {
+        get { controllersLock.lock(); defer { controllersLock.unlock() }; return storedPreviewController }
+        set { controllersLock.lock(); storedPreviewController = newValue; controllersLock.unlock() }
+    }
+    public private(set) var recordingController: CameraRecordingController? {
+        get { controllersLock.lock(); defer { controllersLock.unlock() }; return storedRecordingController }
+        set { controllersLock.lock(); storedRecordingController = newValue; controllersLock.unlock() }
+    }
     public var recentEvents: [String] {
         recentEventsLock.lock()
         defer { recentEventsLock.unlock() }
@@ -50,6 +59,10 @@ public final class CameraEngine {
     private var storedRecentEvents: [String] = []
     private var recordingEventObserver: UUID?
     private var previewRecipe: PreviewRecipe?
+    private var creatingRecording = false
+    private var deferredRecordingStop: CameraRecordingController?
+    private var previewNeedsReplacement = false
+    var _beforePublishingRecordingForTesting: (() -> Void)?
 
     public var previewLayer: AVCaptureVideoPreviewLayer {
         source.previewLayer
@@ -151,7 +164,7 @@ public final class CameraEngine {
             controller = CameraPreviewController(source: source, mode: recipe.mode, processors: recipe.processors,
                 callbackQueue: recipe.callbackQueue, controlsSourceLifecycle: false, handler: recipe.handler)
         }
-        previewController = controller
+        controllersLock.lock(); previewNeedsReplacement = false; storedPreviewController = controller; controllersLock.unlock()
         return controller
     }
 
@@ -160,35 +173,54 @@ public final class CameraEngine {
             guard let previewRecipe else { return nil }
             return installPreviewController(from: previewRecipe)
         }
-        guard [.stopped, .failed].contains(previewController.state), let previewRecipe else {
+        controllersLock.lock(); let retiring = previewNeedsReplacement; controllersLock.unlock()
+        guard retiring || [.stopped, .failed].contains(previewController.state), let previewRecipe else {
             return previewController
         }
         return installPreviewController(from: previewRecipe)
     }
 
-    public func makeRecordingController(
-        outputURL: URL,
-        fileType: AVFileType = .mp4,
-        processors: [FrameProcessor] = []
-    ) throws -> CameraRecordingController {
-        let previousController = recordingController
-        let controller = try CameraRecordingController(
-            source: source,
-            outputURL: outputURL,
-            fileType: fileType,
-            processors: processors,
-            controlsSourceLifecycle: false
-        )
-        source.isRecordingActiveProvider = { [weak controller] in
-            controller?.isRecordingActive ?? false
+    private func configureRecording(_ body: (CameraRecordingController?) throws -> CameraRecordingController) throws -> CameraRecordingController {
+        controllersLock.lock()
+        guard !creatingRecording, storedRecordingController?.isRecordingActive != true else {
+            controllersLock.unlock(); throw CameraEngineError.recordingAlreadyActive
         }
-        recordingController = controller
-        wireRecordingDiagnostics(for: controller, previousController: previousController)
-        return controller
+        creatingRecording = true
+        let previous = storedRecordingController
+        controllersLock.unlock()
+        defer {
+            controllersLock.lock()
+            creatingRecording = false
+            let preview: CameraPreviewController?
+            if let pending = deferredRecordingStop, storedRecordingController === pending {
+                previewNeedsReplacement = true; preview = storedPreviewController
+                source.stop()
+            } else { preview = nil }
+            deferredRecordingStop = nil
+            controllersLock.unlock()
+            preview?.stop()
+        }
+        return try body(previous)
+    }
+    public func makeRecordingController(outputURL: URL, fileType: AVFileType = .mp4, processors: [FrameProcessor] = []) throws -> CameraRecordingController {
+        try makeRecordingController(outputURL: outputURL, fileType: fileType, processors: processors, startsImmediately: false)
+    }
+    private func makeRecordingController(outputURL: URL, fileType: AVFileType, processors: [FrameProcessor], startsImmediately: Bool) throws -> CameraRecordingController {
+        try configureRecording { previous in
+            let pipeline = try RecordingPipeline(source: source, outputURL: outputURL, fileType: fileType,
+                processors: processors, recorderConfiguration: source.recorderConfiguration, controlsSourceLifecycle: false)
+            pipeline.recorderSink.maximumDuration = source.configuration.video.maximumCaptureDuration
+            let controller = CameraRecordingController(existingPipeline: pipeline)
+            _beforePublishingRecordingForTesting?()
+            recordingController = controller
+            source.isRecordingActiveProvider = { [weak controller] in controller?.isRecordingActive ?? false }
+            wireRecordingDiagnostics(for: controller, previousController: previous)
+            if startsImmediately { controller.start() }
+            return controller
+        }
     }
 
     public func start() {
-        audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
         previewControllerForStart()?.start()
         source.start()
     }
@@ -200,7 +232,8 @@ public final class CameraEngine {
         handler: PreviewSink.Handler? = nil
     ) -> CameraPreviewController {
         let controller: CameraPreviewController
-        if let previewController,
+        controllersLock.lock(); let retiring = previewNeedsReplacement; controllersLock.unlock()
+        if let previewController, !retiring,
            ![CameraPreviewController.State.stopped, .failed].contains(previewController.state) {
             controller = previewController
         } else {
@@ -211,7 +244,6 @@ public final class CameraEngine {
                 handler: handler
             )
         }
-        audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
         controller.start()
         source.start()
         return controller
@@ -233,14 +265,12 @@ public final class CameraEngine {
         source.stop()
         previewController?.stop()
         recordingController?.stop()
-        audioSessionController.deactivate()
     }
 
     public func cancel() {
         source.cancel()
         previewController?.stop()
         recordingController?.cancel()
-        audioSessionController.deactivate()
     }
 
     @discardableResult
@@ -251,18 +281,17 @@ public final class CameraEngine {
     ) throws -> CameraRecordingController {
         let controller: CameraRecordingController
         if let recordingController,
-           [RecorderSink.State.preparing, .recording, .paused].contains(recordingController.state) {
+           recordingController.isRecordingActive {
             controller = recordingController
             controller.start()
         } else {
             controller = try makeRecordingController(
                 outputURL: outputURL,
                 fileType: fileType,
-                processors: processors
+                processors: processors,
+                startsImmediately: true
             )
-            audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
             previewControllerForStart()?.start()
-            controller.start()
             source.start()
         }
         return controller
@@ -277,28 +306,23 @@ public final class CameraEngine {
         frameProcessingTimeout: TimeInterval? = nil,
         previewSink: PreviewSink
     ) throws -> CameraRecordingController {
-        if let controller = recordingController, [.preparing, .recording, .paused].contains(controller.state) {
-            throw CameraEngineError.recordingAlreadyActive
+        try configureRecording { previous in
+            let pipeline = try RecordingPipeline(source: source, outputURL: outputURL, fileType: fileType,
+                processors: processors, recorderConfiguration: source.recorderConfiguration, controlsSourceLifecycle: false,
+                sharingPreview: previewSink, frameProcessingTimeout: frameProcessingTimeout)
+            pipeline.recorderSink.maximumDuration = source.configuration.video.maximumCaptureDuration
+            let controller = CameraRecordingController(existingPipeline: pipeline)
+            previewController?.previewPipeline?.cancel()
+            previewController = nil
+            previewRecipe = nil
+            _beforePublishingRecordingForTesting?()
+            recordingController = controller
+            source.isRecordingActiveProvider = { [weak controller] in controller?.isRecordingActive ?? false }
+            wireRecordingDiagnostics(for: controller, previousController: previous)
+            controller.start()
+            source.start()
+            return controller
         }
-        let config = source.configuration
-        let recorder = RecorderSink.Configuration(dimensions: config.video.dimensions, bitRate: config.video.bitRate,
-            codec: config.video.codec, scalingMode: config.video.scalingMode, transform: config.video.transform,
-            includesAudio: config.captureMode.includesAudio, audioBitRate: config.audio.bitRate,
-            audioSampleRate: config.audio.sampleRate, audioChannelCount: config.audio.channelCount, colorPolicy: config.video.colorPolicy)
-        let pipeline = try RecordingPipeline(source: source, outputURL: outputURL, fileType: fileType,
-            processors: processors, recorderConfiguration: recorder, controlsSourceLifecycle: false, sharingPreview: previewSink, frameProcessingTimeout: frameProcessingTimeout)
-        let previous = recordingController
-        let controller = CameraRecordingController(existingPipeline: pipeline)
-        previewController?.previewPipeline?.cancel()
-        previewController = nil
-        previewRecipe = nil
-        recordingController = controller
-        source.isRecordingActiveProvider = { [weak controller] in controller?.isRecordingActive ?? false }
-        wireRecordingDiagnostics(for: controller, previousController: previous)
-        audioSessionController.activate(prefersIndependentSession: source.configuration.audio.prefersIndependentSession)
-        controller.start()
-        source.start()
-        return controller
     }
 
     public func stopRecording(completion: @escaping (Result<RecordedClip, Error>) -> Void) {
@@ -306,10 +330,20 @@ public final class CameraEngine {
             completion(.failure(CameraEngineError.recordingControllerUnavailable))
             return
         }
-        recordingController.stopRecording { [weak self] result in
-            self?.previewController?.stop()
-            self?.source.stop()
-            self?.audioSessionController.deactivate()
+        recordingController.stopRecording { [weak self, weak recordingController] result in
+            if let self {
+                self.controllersLock.lock()
+                var preview: CameraPreviewController?
+                if self.storedRecordingController === recordingController {
+                    if self.creatingRecording { self.deferredRecordingStop = recordingController }
+                    else {
+                        self.previewNeedsReplacement = true; preview = self.storedPreviewController
+                        self.source.stop()
+                    }
+                }
+                self.controllersLock.unlock()
+                preview?.stop()
+            }
             completion(result)
         }
     }
@@ -318,7 +352,6 @@ public final class CameraEngine {
         recordingController?.cancel()
         previewController?.stop()
         source.cancel()
-        audioSessionController.deactivate()
     }
 
     @discardableResult
