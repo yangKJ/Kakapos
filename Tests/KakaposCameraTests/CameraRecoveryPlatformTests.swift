@@ -14,6 +14,36 @@ final class CameraRecoveryPlatformTests: XCTestCase {
     func testRecordingEntryConfigurationAndMaximumDuration() async throws { try await CameraRecoveryAcceptance.recordingLimits() }
     func testInitializationUsesSharedSessionOwner() async throws { try await CameraRecoveryAcceptance.initializationOwner() }
     func testQueuedPositionSwitchRespectsRunIdentity() async throws { try await CameraRecoveryAcceptance.positionSwitch() }
+    func testFrameRateUpdateRequiresCurrentRunAndDoesNotStartCapture() async throws {
+        let source = try CameraRecoveryAcceptance.source()
+        let range = CameraFrameRateRange(minimumFramesPerSecond: 30, maximumFramesPerSecond: 30)
+        do {
+            _ = try await source.updateFrameRateRange(range)
+            XCTFail("尚未运行时不能修改设备帧率")
+        } catch is CancellationError { }
+        XCTAssertFalse(source.session.isRunning)
+
+        source._setStateForTesting(.running)
+        do {
+            _ = try await source.updateFrameRateRange(range)
+            XCTFail("合成流没有设备，不应伪造帧率配置成功")
+        } catch CameraDeviceControlError.deviceUnavailable { }
+        XCTAssertFalse(source.session.isRunning)
+    }
+
+    func testReleasedSourceDetachesPreviewLayerOnItsSessionQueue() async throws {
+        var source: CameraSource? = try CameraRecoveryAcceptance.source()
+        let layer = source!.previewLayer
+        let owner = CameraSessionOwner.shared(for: source!.session)
+        weak var released = source
+        source = nil
+        XCTAssertNil(released)
+        await withCheckedContinuation { continuation in
+            owner.queue.async { continuation.resume() }
+        }
+        XCTAssertNil(layer.session)
+    }
+
     func testARResumeUsesHostRunOperation() throws { try CameraRecoveryAcceptance.arResume() }
     func testEmptyAndDynamicObserverRoutes() async throws { try await CameraRecoveryAcceptance.observerRoutes() }
     func testLegacyPhotoWaitsForFinalResultAndKeepsAcceptedDelivery() async throws { try await CameraRecoveryAcceptance.legacyPhotoTerminal() }

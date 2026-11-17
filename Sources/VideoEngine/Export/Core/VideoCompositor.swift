@@ -18,7 +18,7 @@ final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     var renderContext: AVVideoCompositionRenderContext?
     private let imageContext = CIContext(options: [.cacheIntermediates: false])
     private var requests: [UUID: (AVAsynchronousVideoCompositionRequest, FrameProcessingOperation?)] = [:]
-    #if os(macOS)
+    #if os(macOS) || targetEnvironment(macCatalyst)
     var sourcePixelBufferAttributes: [String : Sendable]? = [
         String(kCVPixelBufferPixelFormatTypeKey): [kCVPixelFormatType_32BGRA]
     ]

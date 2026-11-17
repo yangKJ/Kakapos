@@ -94,7 +94,7 @@ The board entry points above are the recommended path for new code.
 
 - `CameraEngine`: top-level camera orchestration entry that assembles source, preview, recording, and processor routing.
 - `CameraEngine` is the lifecycle owner when processed preview and recording share one `CameraSource`; both branches receive frames without competing to start or stop the capture session.
-- `CameraSource`: video, audio, photo, metadata-object, depth, and portrait-matte capture output.
+- `CameraSource`: video, audio, photo, metadata-object, depth, and portrait-matte capture output. `CameraSource.updateFrameRateRange` 在会话队列异步更新帧率，并拒绝旧运行请求；界面恢复时可避免同步等待相机启停。相机源释放会把原生预览层保留到会话队列完成解绑，调用方不需要在主线程等待拆图。
 - `CameraDeviceController`: focus, exposure, white balance, zoom, torch, flash, frame-rate, and format control.
 - `CameraPreviewController`: raw preview-layer mode and processed preview mode through `FrameProcessor`.
 - `CameraRecordingController`: recorder orchestration over `RecorderSink` and `RecordingSession`.

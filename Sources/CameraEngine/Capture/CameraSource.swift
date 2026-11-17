@@ -547,16 +547,21 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
         let owner = sessionOwner; let branch = sessionBranchID; let session = self.session
         let outputs: [AVCaptureOutput] = [videoOutput, audioOutput, photoOutput] + ([metadataOutput, depthDataOutput] as [AVCaptureOutput?]).compactMap { $0 }
         let inputs = [videoInput, audioInput].compactMap { $0 }
-        let preview = previewLayer.connection
+        let layer = previewLayer
+        let preview = layer.connection
         let audio = audioSessionController; let releasesAudio = ownsRunAudioLease
         owner.queue.async {
-            session.beginConfiguration()
-            if let preview, session.connections.contains(where: { $0 === preview }) { session.removeConnection(preview) }
-            for output in outputs where session.outputs.contains(where: { $0 === output }) { session.removeOutput(output) }
-            for input in inputs where session.inputs.contains(where: { $0 === input }) { session.removeInput(input) }
-            session.commitConfiguration()
-            owner.stop(branch)
-            if releasesAudio { audio.deactivate() }
+            // 预览层必须活到会话拆除结束，避免其在主线程析构时与会话配置互相等锁。
+            withExtendedLifetime(layer) {
+                session.beginConfiguration()
+                if let preview, session.connections.contains(where: { $0 === preview }) { session.removeConnection(preview) }
+                for output in outputs where session.outputs.contains(where: { $0 === output }) { session.removeOutput(output) }
+                for input in inputs where session.inputs.contains(where: { $0 === input }) { session.removeInput(input) }
+                session.commitConfiguration()
+                layer.session = nil
+                owner.stop(branch)
+                if releasesAudio { audio.deactivate() }
+            }
         }
     }
 
@@ -623,6 +628,28 @@ public final class CameraSource: NSObject, MediaSource, MediaSourceDelegateMulti
             DispatchQueue.main.async {
                 guard self.frameIngressGate.isCurrentGeneration(failureGeneration) else { return }
                 self.notifyDelegatesOfFailure(error)
+            }
+        }
+    }
+
+    /// 在原会话队列异步更新帧率，调用方不等待启动或停止；旧运行的请求直接取消。
+    public func updateFrameRateRange(_ range: CameraFrameRateRange) async throws -> CameraDeviceSnapshot {
+        try Task.checkCancellation()
+        guard let generation = currentActiveRunGeneration() else { throw CancellationError() }
+        return try await withCheckedThrowingContinuation { continuation in
+            sessionQueue.async {
+                guard self.isActiveRunGeneration(generation) else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                do {
+                    let current = self.deviceController.snapshot
+                    if current.activeFrameRateRange == range {
+                        continuation.resume(returning: current)
+                    } else {
+                        continuation.resume(returning: try self.deviceController.selectFrameRateRange(range))
+                    }
+                } catch { continuation.resume(throwing: error) }
             }
         }
     }
