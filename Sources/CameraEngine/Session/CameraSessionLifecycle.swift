@@ -73,6 +73,7 @@ struct CameraSessionLifecycle {
     private(set) var shouldAttemptRecovery: Bool
     private(set) var authorizationStatus: CameraAuthorizationStatus
     private var stateBeforeInterruption: CameraSessionState?
+    private var stateBeforePositionSwitch: CameraSessionState?
 
     init(position: CameraPosition, authorizationStatus: CameraAuthorizationStatus = .authorized) {
         self.state = .idle
@@ -119,6 +120,7 @@ struct CameraSessionLifecycle {
         case .didStopRunning:
             state = .stopped
             stateBeforeInterruption = nil
+            stateBeforePositionSwitch = nil
             shouldAttemptRecovery = false
             return .didStop
         case .wasInterrupted:
@@ -137,10 +139,12 @@ struct CameraSessionLifecycle {
             stateBeforeInterruption = nil
             return .interruptionEnded
         case .positionSwitchRequested(let position):
+            if stateBeforePositionSwitch == nil { stateBeforePositionSwitch = state }
             state = .reconfiguring
             self.position = position
             return .willSwitchPosition(position)
         case .runtimeError(let isRecoverable, let description):
+            if !isRecoverable { stateBeforePositionSwitch = nil }
             state = isRecoverable ? .recovering : .error
             shouldAttemptRecovery = isRecoverable
             return .runtimeError(isRecoverable: isRecoverable, description: description)
@@ -152,8 +156,9 @@ struct CameraSessionLifecycle {
         case .positionChanged(let position):
             self.position = position
             if state == .switchingPosition || state == .reconfiguring || state == .recovering {
-                state = .running
+                state = stateBeforePositionSwitch ?? .running
             }
+            stateBeforePositionSwitch = nil
             return .positionChanged(position)
         case .authorizationChanged(let status):
             authorizationStatus = status
@@ -163,6 +168,7 @@ struct CameraSessionLifecycle {
                 }
             } else {
                 state = .unauthorized
+                stateBeforePositionSwitch = nil
                 shouldAttemptRecovery = false
             }
             return .authorizationChanged(status)

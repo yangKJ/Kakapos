@@ -17,17 +17,20 @@ public final class ARFrameSource: NSObject, MediaSource {
     public struct Configuration {
         public let runHandler: ((ARSession) -> Void)?
         public let pauseHandler: ((ARSession) -> Void)?
+        public let resumeHandler: ((ARSession) -> Void)?
         public let stopHandler: ((ARSession) -> Void)?
         public let includesAudio: Bool
 
         public init(
             runHandler: ((ARSession) -> Void)? = nil,
             pauseHandler: ((ARSession) -> Void)? = nil,
+            resumeHandler: ((ARSession) -> Void)? = nil,
             stopHandler: ((ARSession) -> Void)? = nil,
             includesAudio: Bool = false
         ) {
             self.runHandler = runHandler
             self.pauseHandler = pauseHandler
+            self.resumeHandler = resumeHandler
             self.stopHandler = stopHandler
             self.includesAudio = includesAudio
         }
@@ -68,6 +71,7 @@ public final class ARFrameSource: NSObject, MediaSource {
     public let advancedOutput = CameraAdvancedOutput()
     public var frameHandler: ((MediaFrame) -> Void)?
     public private(set) var isRunning = false
+    private var isPaused = false
     public private(set) var frameCount: Int64 = 0
     public private(set) var lastPresentationTime: CMTime?
 
@@ -109,20 +113,28 @@ public final class ARFrameSource: NSObject, MediaSource {
     }
 
     public func start() {
+        isPaused = false
         isRunning = true
         configuration.runHandler?(session)
     }
 
     public func pause() {
+        guard isRunning else { return }
+        isPaused = true
         isRunning = false
         configuration.pauseHandler?(session)
     }
 
     public func resume() {
+        guard isPaused else { return }
+        isPaused = false
         isRunning = true
+        if let resume = configuration.resumeHandler { resume(session) }
+        else { configuration.runHandler?(session) }
     }
 
     public func stop() {
+        isPaused = false
         isRunning = false
         frameCount = 0
         lastPresentationTime = nil

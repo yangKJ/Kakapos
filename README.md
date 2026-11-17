@@ -498,3 +498,14 @@ Camera sources sharing an `AVCaptureSession` share its serial configuration and 
 Audio is managed only for modes that include audio. Managed camera sources share activation leases; the last lease releases the session, and a source does not release a lease previously acquired by its caller. Set `CameraAudioConfiguration(sessionOwnership: .hostManaged)` when the app owns audio category, activation, mixing, routes or interruptions. `CameraAudioSessionController.isActive` describes that controller's lease, not a measurement of hardware audio activity. Photo and silent-video modes do not activate audio. Conflicting managed mixing policies fail explicitly.
 
 Stopping rejects late stream frames before updating caches. A current-frame photo freezes its frame and callback when accepted, so a later handler replacement cannot receive that old request. Already accepted photos retain their request-specific delivery; new photos after stop cannot consume the previous run's cached frame.
+
+
+相机恢复录制时，已建立的视频轨道允许在对齐等待到期或收尾时单独排空音频。首次录制仍等待视频建立，真实音频预算耗尽继续显式失败。若恢复音频先确定了边界，晚到且与边界重叠的视频保留边界之后的有效时段。`maximumCaptureDuration` 统一传递到独立录制管线、控制器和 Engine 入口。
+
+`CameraPreviewController` 的 raw 与 processed 模式都遵守 `controlsSourceLifecycle`；Engine 内部继续统一管理共享源。停机前选择镜头只保留采集意图，不提前建立部分输入图；暂停或停机切镜完成后保持原运行状态，过期请求不能影响后续运行。共享会话初始化也在其串行 owner 中接线和更新 preset。
+
+`ARFrameSource.Configuration.resumeHandler` 可为恢复提供独立操作，避免将宿主的冷启动选项用于恢复；未设置时复用 `runHandler`。重复恢复不会再次执行操作，停止后需显式 `start()`。
+
+旧 `capturePhoto()` 在原生最终拍摄回调确认结果后完成交付。`capturePhoto(request:)` 支持 Task 取消并抛出 `CancellationError`；不能中止的系统捕获仍安全接收晚到回调，清理未交付文件。单纯停止相机继续保留已受理照片的交付。文件以返回的资源 URL 为准，相同请求 ID 的不同尝试也使用独立文件；正常交付的资源和可恢复的部分结果仍由调用方在可靠入库后清理。
+
+空观察路由不会占用主线程帧预算；动态主线程与处理订阅者继续使用原执行域和背压合同。

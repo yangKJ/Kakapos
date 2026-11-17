@@ -140,6 +140,10 @@ final class CameraFrameIngressGate {
         return isActive
     }
 
+    var currentGeneration: UInt64 {
+        lock.lock(); defer { lock.unlock() }; return generation
+    }
+
     func isCurrentGeneration(_ expectedGeneration: UInt64) -> Bool {
         lock.lock()
         let isCurrent = expectedGeneration == generation

@@ -209,7 +209,6 @@ public final class CameraEngine {
         try configureRecording { previous in
             let pipeline = try RecordingPipeline(source: source, outputURL: outputURL, fileType: fileType,
                 processors: processors, recorderConfiguration: source.recorderConfiguration, controlsSourceLifecycle: false)
-            pipeline.recorderSink.maximumDuration = source.configuration.video.maximumCaptureDuration
             let controller = CameraRecordingController(existingPipeline: pipeline)
             _beforePublishingRecordingForTesting?()
             recordingController = controller
@@ -310,7 +309,6 @@ public final class CameraEngine {
             let pipeline = try RecordingPipeline(source: source, outputURL: outputURL, fileType: fileType,
                 processors: processors, recorderConfiguration: source.recorderConfiguration, controlsSourceLifecycle: false,
                 sharingPreview: previewSink, frameProcessingTimeout: frameProcessingTimeout)
-            pipeline.recorderSink.maximumDuration = source.configuration.video.maximumCaptureDuration
             let controller = CameraRecordingController(existingPipeline: pipeline)
             previewController?.previewPipeline?.cancel()
             previewController = nil

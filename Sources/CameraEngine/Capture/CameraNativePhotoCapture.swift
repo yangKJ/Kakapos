@@ -69,60 +69,76 @@ public struct CameraPhotoCaptureArtifact: @unchecked Sendable {
     public let captureFailure: CameraPhotoCaptureError?
 }
 
-/// 每个请求持有独立 delegate；其可变结果只在锁内写入，终态只发送一次。
+extension CameraPhotoCaptureRequest {
+    func resourceURL(_ resourceID: UUID, suffix: String) -> URL {
+        outputDirectory.appendingPathComponent(id.uuidString + "-" + resourceID.uuidString + suffix)
+    }
+}
+
+/// 每个请求持有独立 delegate；终态在锁内冻结，编码和文件写入不占用状态锁。
 final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate, @unchecked Sendable {
-    private let requestID: UUID
-    private let outputDirectory: URL
-    private let expectsRaw: Bool
-    private let expectsLive: Bool
-    private let retainsEncodedData: Bool
-    private let requestedFlashMode: Int
+    private let request: CameraPhotoCaptureRequest
+    private let resourceID: UUID
     private let hardwareObservation: CameraHardwareObservation?
     private var finish: (@Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void)?
     private let lock = NSLock()
     private var processedPhoto: CameraPhotoCaptureResource?
     private var rawPhoto: CameraPhotoCaptureResource?
     private var movieURL: URL?
+    private var deliveredMovieURL: URL?
     private var keyTime: CMTime?
     private var failure: CameraPhotoCaptureError?
     private var completed = false
+    #if DEBUG
+    var _beforePublishingPhotoForTesting: (() -> Void)?
+    var _beforeCompletionForTesting: (() -> Void)?
+    #endif
 
     init(
         request: CameraPhotoCaptureRequest,
         hardwareObservation: CameraHardwareObservation?,
+        resourceID: UUID = UUID(),
         finish: @escaping @Sendable (Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>) -> Void
     ) {
+        self.request = request
+        self.resourceID = resourceID
         self.hardwareObservation = hardwareObservation
-        requestID = request.id
-        outputDirectory = request.outputDirectory
-        expectsRaw = request.format == .bayerRAW || request.format == .appleProRAW
-        expectsLive = request.includesLivePhoto
-        retainsEncodedData = request.retainsEncodedData
-        requestedFlashMode = request.flashMode.rawValue
         self.finish = finish
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        lock.lock(); defer { lock.unlock() }
-        guard !completed else { return }
-        if let error { failure = .captureFailed(error.localizedDescription); return }
-        guard let data = photo.fileDataRepresentation() else { failure = .missingResource; return }
+        lock.lock()
+        let accepts = !completed
+        lock.unlock()
+        guard accepts else { return }
+        if let error { recordFailure(.captureFailed(error.localizedDescription)); return }
+        guard let data = photo.fileDataRepresentation() else { recordFailure(.missingResource); return }
+        receivePhoto(data: data, metadata: photo.metadata, isRaw: photo.isRawPhoto,
+            resolvedFlashEnabled: photo.resolvedSettings.isFlashEnabled, timestamp: photo.timestamp.seconds)
+    }
+
+    func receivePhoto(
+        data: Data,
+        metadata: [String: Any],
+        isRaw: Bool,
+        resolvedFlashEnabled: Bool,
+        timestamp: Double
+    ) {
+        lock.lock()
+        let accepts = !completed
+        lock.unlock()
+        guard accepts else { return }
         var resource: CameraPhotoCaptureResource
         do {
-            resource = try CameraPhotoCaptureResource(
-                encodedData: data,
-                metadata: photo.metadata,
-                origin: .nativePhoto,
-                isRaw: photo.isRawPhoto,
-                requestedFlashMode: requestedFlashMode,
-                resolvedFlashEnabled: photo.resolvedSettings.isFlashEnabled,
-                photoTimestampSeconds: photo.timestamp.seconds,
-                hardwareObservation: hardwareObservation
-            )
-        } catch { failure = .missingResource; return }
+            resource = try CameraPhotoCaptureResource(encodedData: data, metadata: metadata,
+                origin: .nativePhoto, isRaw: isRaw, requestedFlashMode: request.flashMode.rawValue,
+                resolvedFlashEnabled: resolvedFlashEnabled, photoTimestampSeconds: timestamp,
+                hardwareObservation: hardwareObservation)
+        } catch { recordFailure(.missingResource); return }
+        var problem: CameraPhotoCaptureError?
         do {
             let suffix: String
-            if photo.isRawPhoto { suffix = "-raw.dng" }
+            if isRaw { suffix = "-raw.dng" }
             else {
                 switch resource.uniformTypeIdentifier {
                 case "public.heic", "public.heif": suffix = "-processed.heic"
@@ -131,60 +147,116 @@ final class NativePhotoRequestDelegate: NSObject, AVCapturePhotoCaptureDelegate,
                 default: throw CameraPhotoCaptureError.unsupportedFormat
                 }
             }
-            let url = outputDirectory.appendingPathComponent(requestID.uuidString + suffix)
-            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+            let url = request.resourceURL(resourceID, suffix: suffix)
+            try FileManager.default.createDirectory(at: request.outputDirectory, withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
-            resource.publish(at: url, retainingData: retainsEncodedData)
-        } catch let error as CameraPhotoCaptureError {
-            failure = error
-        } catch {
-            failure = .captureFailed(error.localizedDescription)
+            resource.publish(at: url, retainingData: request.retainsEncodedData)
+        } catch let error as CameraPhotoCaptureError { problem = error }
+        catch { problem = .captureFailed(error.localizedDescription) }
+        #if DEBUG
+        _beforePublishingPhotoForTesting?()
+        #endif
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            if let url = resource.fileURL { try? FileManager.default.removeItem(at: url) }
+            return
         }
-        if photo.isRawPhoto { rawPhoto = resource } else { processedPhoto = resource }
+        if failure == nil { failure = problem }
+        if isRaw { rawPhoto = resource } else { processedPhoto = resource }
+        lock.unlock()
+    }
+
+    private func recordFailure(_ error: CameraPhotoCaptureError) {
+        lock.lock()
+        defer { lock.unlock() }
+        if !completed, failure == nil { failure = error }
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput,
                      didFinishProcessingLivePhotoToMovieFileAt outputFileURL: URL,
                      duration: CMTime, photoDisplayTime: CMTime,
                      resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
-        lock.lock(); defer { lock.unlock() }
-        guard !completed else { return }
+        receiveMovie(at: outputFileURL, keyTime: photoDisplayTime, error: error)
+    }
+
+    func receiveMovie(at url: URL, keyTime: CMTime, error: Error?) {
+        lock.lock()
+        if completed {
+            let shouldRemove = url != deliveredMovieURL
+            lock.unlock()
+            if shouldRemove { removeMovieIfOwned(url) }
+            return
+        }
         if let error { failure = .captureFailed(error.localizedDescription) }
-        else { movieURL = outputFileURL; keyTime = photoDisplayTime }
+        else { movieURL = url; self.keyTime = keyTime }
+        lock.unlock()
+        if error != nil { removeMovieIfOwned(url) }
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput,
                      didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
                      error: Error?) {
-        complete(error: error.map { .captureFailed($0.localizedDescription) })
+        finishCapture(error: error.map { .captureFailed($0.localizedDescription) })
     }
 
-    func terminate(_ error: CameraPhotoCaptureError) { complete(error: error) }
+    func terminate(_ error: CameraPhotoCaptureError) { finishCapture(error: error) }
 
-    private func complete(error: CameraPhotoCaptureError?) {
+    func finishCapture(error: CameraPhotoCaptureError? = nil) {
         lock.lock()
-        guard !completed else { lock.unlock(); return }
+        guard !completed else {
+            let shouldRemove = deliveredMovieURL == nil
+            lock.unlock()
+            if shouldRemove { removeMovieIfOwned(request.resourceURL(resourceID, suffix: ".mov")) }
+            return
+        }
         completed = true
+        let expectsRaw = request.format == .bayerRAW || request.format == .appleProRAW
         let missing = processedPhoto == nil || (expectsRaw && rawPhoto == nil)
-            || (expectsLive && (movieURL == nil || keyTime == nil))
+            || (request.includesLivePhoto && (movieURL == nil || keyTime == nil))
         let problem = error ?? failure ?? (missing ? .missingResource : nil)
         let result: Result<CameraPhotoCaptureArtifact, CameraPhotoCaptureError>
         if processedPhoto != nil || rawPhoto != nil || movieURL != nil {
-            result = .success(CameraPhotoCaptureArtifact(
-                requestID: requestID,
-                processedPhoto: processedPhoto,
-                rawPhoto: rawPhoto,
-                livePhotoMovieURL: movieURL,
-                livePhotoKeyTime: keyTime,
-                captureFailure: problem
-            ))
-        } else {
-            result = .failure(problem ?? .missingResource)
-        }
-        let callback = finish; finish = nil
+            result = .success(CameraPhotoCaptureArtifact(requestID: request.id, processedPhoto: processedPhoto,
+                rawPhoto: rawPhoto, livePhotoMovieURL: movieURL, livePhotoKeyTime: keyTime, captureFailure: problem))
+        } else { result = .failure(problem ?? .missingResource) }
+        let callback = finish
+        deliveredMovieURL = movieURL
+        let shouldRemoveMovie = deliveredMovieURL == nil
+        finish = nil
         processedPhoto = nil; rawPhoto = nil; movieURL = nil; keyTime = nil
         lock.unlock()
+        if shouldRemoveMovie { removeMovieIfOwned(request.resourceURL(resourceID, suffix: ".mov")) }
+        #if DEBUG
+        _beforeCompletionForTesting?()
+        #endif
         callback?(result)
+    }
+
+    func cancel() {
+        lock.lock()
+        guard !completed else { lock.unlock(); return }
+        completed = true
+        let urls = [processedPhoto?.fileURL, rawPhoto?.fileURL].compactMap { $0 }
+        finish = nil
+        processedPhoto = nil; rawPhoto = nil; movieURL = nil; keyTime = nil
+        lock.unlock()
+        urls.forEach { try? FileManager.default.removeItem(at: $0) }
+        if request.includesLivePhoto { removeMovieIfOwned(request.resourceURL(resourceID, suffix: ".mov")) }
+    }
+
+    private func removeMovieIfOwned(_ url: URL) {
+        if request.includesLivePhoto, url == request.resourceURL(resourceID, suffix: ".mov") {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    static func discard(_ artifact: CameraPhotoCaptureArtifact, request: CameraPhotoCaptureRequest, resourceID: UUID) {
+        let owned = Set(["-processed.jpg", "-processed.heic", "-processed.tiff", "-raw.dng", ".mov"].map {
+            request.resourceURL(resourceID, suffix: $0)
+        })
+        [artifact.processedPhoto?.fileURL, artifact.rawPhoto?.fileURL, artifact.livePhotoMovieURL]
+            .compactMap { $0 }.filter { owned.contains($0) }.forEach { try? FileManager.default.removeItem(at: $0) }
     }
 }
 #endif

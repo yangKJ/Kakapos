@@ -60,6 +60,7 @@ public final class CameraPreviewController {
         case failed
     }
 
+    private let controlsSourceLifecycle: Bool
     public let source: CameraSource
     public let mode: Mode
     public let previewLayer: AVCaptureVideoPreviewLayer
@@ -110,6 +111,7 @@ public final class CameraPreviewController {
         handler: PreviewSink.Handler? = nil
     ) {
         self.source = source
+        self.controlsSourceLifecycle = controlsSourceLifecycle
         self.mode = mode
         self.previewLayer = source.previewLayer
         switch mode {
@@ -138,6 +140,7 @@ public final class CameraPreviewController {
         frameHandler: @escaping (MediaFrame) -> Void
     ) {
         self.source = source
+        self.controlsSourceLifecycle = controlsSourceLifecycle
         self.mode = mode
         self.previewLayer = source.previewLayer
         if mode == .raw {
@@ -153,22 +156,26 @@ public final class CameraPreviewController {
 
     public func start() {
         controllerState = .running
-        previewPipeline?.start()
+        if mode == .raw && controlsSourceLifecycle { source.start() }
+        else { previewPipeline?.start() }
     }
 
     public func pause() {
         controllerState = .paused
-        previewPipeline?.pause()
+        if mode == .raw && controlsSourceLifecycle { source.pause() }
+        else { previewPipeline?.pause() }
     }
 
     public func resume() {
         controllerState = .running
-        previewPipeline?.resume()
+        if mode == .raw && controlsSourceLifecycle { source.resume() }
+        else { previewPipeline?.resume() }
     }
 
     public func stop() {
         controllerState = .stopped
-        previewPipeline?.stop()
+        if mode == .raw && controlsSourceLifecycle { source.stop() }
+        else { previewPipeline?.stop() }
     }
 }
 #endif

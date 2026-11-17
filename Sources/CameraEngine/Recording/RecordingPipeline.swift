@@ -332,6 +332,9 @@ public final class RecordingPipeline {
         }
         #endif
         self.recorderSink = try RecorderSink(outputURL: outputURL, fileType: fileType, configuration: effectiveConfiguration)
+        #if canImport(UIKit) && !os(watchOS)
+        recorderSink.maximumDuration = (source as? CameraSource)?.configuration.video.maximumCaptureDuration
+        #endif
         let previewBranch = previewSink.map(RecordingPreviewBranch.init(preview:))
         self.previewBranch = previewBranch
         self.pipeline = MediaPipeline(
@@ -382,24 +385,12 @@ public extension RecordingPipeline {
         processors: [FrameProcessor] = []
     ) throws {
         let source = try CameraSource(configuration: configuration)
-        let recorderConfiguration = RecorderSink.Configuration(
-            dimensions: configuration.video.dimensions,
-            bitRate: configuration.video.bitRate,
-            codec: configuration.video.codec,
-            scalingMode: configuration.video.scalingMode,
-            transform: configuration.video.transform,
-            includesAudio: configuration.captureMode.includesAudio,
-            audioBitRate: configuration.audio.bitRate,
-            audioSampleRate: configuration.audio.sampleRate,
-            audioChannelCount: configuration.audio.channelCount,
-            colorPolicy: configuration.video.colorPolicy
-        )
         try self.init(
             source: source,
             outputURL: outputURL,
             fileType: fileType,
             processors: processors,
-            recorderConfiguration: recorderConfiguration
+            recorderConfiguration: source.recorderConfiguration
         )
     }
 

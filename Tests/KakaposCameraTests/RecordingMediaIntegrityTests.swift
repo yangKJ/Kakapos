@@ -216,4 +216,125 @@ private final class ManualCameraSource: MediaSource {
     func stop() { delegate?.mediaSourceDidFinish(self) }
     func cancel() { cancels += 1 }
 }
+extension RecordingMediaIntegrityTests {
+    func testAudioOnlyResumeDrainsAcceptedPacketsAtFinish() throws {
+        for origin in [0.0, 60.0] {
+            let sink = try RecorderSink(outputURL: url(), configuration: .init(includesAudio: true))
+            append(try video(origin), to: sink)
+            append(try audio(origin + 0.01), to: sink)
+            sink.pauseRecording()
+            sink.resumeRecording()
+            append(try audio(origin + 1), to: sink)
+            append(try audio(origin + 1 + 1024.0 / 44_100), to: sink)
+            let clip = try finish(sink)
+            XCTAssertEqual(sink.recordingCadence.audioSampleBufferCount, 3)
+            XCTAssertEqual(sink.recordingCadence.droppedAudioBuffers, 0)
+            XCTAssertEqual(clip.segments.count, 2)
+            XCTAssertEqual(clip.duration.seconds, 1.0 / 30 + 2048.0 / 44_100, accuracy: 0.001)
+            XCTAssertEqual(AVURLAsset(url: sink.outputURL).duration.seconds, clip.duration.seconds, accuracy: 0.003)
+            XCTAssertNotNil(AVURLAsset(url: sink.outputURL).tracks(withMediaType: .audio).first)
+        }
+    }
+
+    func testAudioOnlyResumeTimerDrainsBeforeBudgetExhaustion() throws {
+        let sink = try RecorderSink(outputURL: url(), configuration: .init(includesAudio: true))
+        append(try video(0), to: sink)
+        append(try audio(0.01), to: sink)
+        sink.pauseRecording()
+        sink.resumeRecording()
+        append(try audio(1), to: sink)
+        let end = Date().addingTimeInterval(2)
+        while sink.recordingCadence.audioSampleBufferCount < 2 && Date() < end { Thread.sleep(forTimeInterval: 0.001) }
+        XCTAssertEqual(sink.recordingCadence.audioSampleBufferCount, 2)
+        for index in 1..<13 {
+            let ready = Date().addingTimeInterval(2)
+            while !sink._audioInputReadyForTesting && Date() < ready { Thread.sleep(forTimeInterval: 0.001) }
+            append(try audio(1 + Double(index) * 1024.0 / 44_100), to: sink)
+        }
+        let clip = try finish(sink)
+        XCTAssertEqual(sink.recordingCadence.audioSampleBufferCount, 14)
+        XCTAssertEqual(sink.recordingCadence.droppedAudioBuffers, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sink.outputURL.path))
+    }
+
+    func testLateVideoOverlappingAudioResumeBoundaryRetainsValidFrame() throws {
+        let sink = try RecorderSink(outputURL: url(), configuration: .init(includesAudio: true))
+        append(try video(0), to: sink)
+        append(try audio(0.01), to: sink)
+        sink.pauseRecording()
+        sink.resumeRecording()
+        append(try audio(1.01), to: sink)
+        let end = Date().addingTimeInterval(2)
+        while sink.recordingCadence.audioSampleBufferCount < 2 && Date() < end { Thread.sleep(forTimeInterval: 0.001) }
+        append(try video(1), to: sink)
+        let clip = try finish(sink)
+        XCTAssertEqual(sink.recordingCadence.videoFrameCount, 2)
+        XCTAssertEqual(try count(sink.outputURL), 2)
+        XCTAssertEqual(sink.recordingCadence.droppedVideoFrames, 0)
+        XCTAssertEqual(AVURLAsset(url: sink.outputURL).duration.seconds, clip.duration.seconds, accuracy: 0.003)
+    }
+
+    func testInitialAudioPrefixStillRequiresVideoAndRetainsOverflowFailure() throws {
+        let sink = try RecorderSink(outputURL: url(), configuration: .init(includesAudio: true))
+        for index in 0..<13 {
+            let done = expectation(description: "初始音频预算")
+            sink.consume(try audio(Double(index) * 1024.0 / 44_100)) { result in
+                if index == 12 {
+                    guard case .failure(MediaCoreError.audioDeliveryOverflow) = result else { return XCTFail("真实溢出不能静默成功") }
+                } else if case .failure(let error) = result { XCTFail("\(error)") }
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 3)
+        }
+        XCTAssertEqual(sink.state, .failed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sink.outputURL.path))
+    }
+
+    func testVideoOnlyResumeCanFinishWithExistingAudioTrack() throws {
+        let sink = try RecorderSink(outputURL: url(), configuration: .init(includesAudio: true))
+        append(try video(0), to: sink)
+        append(try audio(0.01), to: sink)
+        sink.pauseRecording()
+        sink.resumeRecording()
+        append(try video(1), to: sink)
+        let clip = try finish(sink)
+        XCTAssertEqual(sink.recordingCadence.videoFrameCount, 2)
+        XCTAssertEqual(sink.recordingCadence.audioSampleBufferCount, 1)
+        XCTAssertEqual(try count(sink.outputURL), 2)
+    }
+
+    func testAudioOnlyResumeCancellationResolvesAndRemovesFile() throws {
+        let sink = try RecorderSink(outputURL: url(), configuration: .init(includesAudio: true))
+        append(try video(0), to: sink)
+        append(try audio(0.01), to: sink)
+        sink.pauseRecording()
+        sink.resumeRecording()
+        append(try audio(1), to: sink)
+        sink.cancel()
+        let done = expectation(description: "恢复暂存取消")
+        sink.finishRecording { result in
+            if case .success = result { XCTFail("取消不能交付成功") }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(sink.state, .cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sink.outputURL.path))
+    }
+
+    func testResumedAudioTriggersMaximumDurationWithNoNewVideo() throws {
+        let sink = try RecorderSink(outputURL: url(), configuration: .init(includesAudio: true))
+        sink.maximumDuration = time(0.07)
+        append(try video(0), to: sink)
+        append(try audio(0.01), to: sink)
+        sink.pauseRecording()
+        sink.resumeRecording()
+        append(try audio(1), to: sink)
+        append(try audio(1 + 1024.0 / 44_100), to: sink)
+        let end = Date().addingTimeInterval(5)
+        while sink.state != .finished && Date() < end { Thread.sleep(forTimeInterval: 0.001) }
+        XCTAssertEqual(sink.state, .finished)
+        XCTAssertEqual(sink.recordingCadence.audioSampleBufferCount, 3)
+        XCTAssertGreaterThanOrEqual(sink.recordedClip?.duration.seconds ?? 0, 0.07)
+    }
+}
 #endif

@@ -286,6 +286,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
 
     /// 离线夹具在断言暂停时序前等待编码器就绪，避免把合法实时背压当成时序错误。
     var _videoInputReadyForTesting: Bool { onQueueSync { videoInput?.isReadyForMoreMediaData ?? true } }
+    var _audioInputReadyForTesting: Bool { onQueueSync { audioInput?.isReadyForMoreMediaData ?? true } }
 
     public func consume(_ frame: MediaFrame, completion: @escaping (Result<Void, Error>) -> Void) {
         guard enqueueAcceptedFrame(frame, completion: completion) else {
@@ -452,7 +453,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         guard !isFlushing, !pendingFrames.isEmpty else { return }
         let video = pendingFrames.first { !isAudioMediaFrame($0) }
         let audio = pendingFrames.first { isAudioMediaFrame($0) }
-        guard video != nil || !configuration.includesVideo else { return }
+        guard video != nil || !configuration.includesVideo || (force && hasAcceptedVideoFrame && videoInput != nil) else { return }
         guard force || audio != nil || !configuration.includesAudio else { return }
         alignmentTimer?.cancel(); alignmentTimer = nil
         if let video, let buffer = extractPixelBuffer(video) { try setupVideoIfNeeded(pixelBuffer: buffer) }
@@ -505,8 +506,8 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         guard state != .cancelled && state != .finished else { return }
         guard frameTime(frame).isNumeric else { throw NSError(domain: "Kakapos.Recorder", code: -2101, userInfo: [NSLocalizedDescriptionKey: "录制帧时间戳必须为有限时间。"]) }
         if try stageIfNeeded(frame) { return }
-        if let resumeInputStart, frameTime(frame) < resumeInputStart { return }
         if let sampleBuffer = extractSampleBuffer(frame), CMSampleBufferGetImageBuffer(sampleBuffer) == nil {
+            if let resumeInputStart, frameTime(frame) < resumeInputStart { return }
             try appendAudio(sampleBuffer)
             return
         }
@@ -519,8 +520,15 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
                 throw VideoExportProfileError.invalidHDROutput
             }
         }
-        let duration = validDuration(frame.metadata.duration, fallback: CMTime(value: 1, timescale: 30))
-        let normalizedTime = adjustedPresentationTime(normalizedPresentationTime(for: frame.metadata.presentationTime),
+        var duration = validDuration(frame.metadata.duration, fallback: CMTime(value: 1, timescale: 30))
+        var inputTime = frame.metadata.presentationTime
+        if let resumeInputStart, inputTime < resumeInputStart {
+            let end = inputTime + duration
+            guard end > resumeInputStart else { return }
+            duration = end - resumeInputStart
+            inputTime = resumeInputStart
+        }
+        let normalizedTime = adjustedPresentationTime(normalizedPresentationTime(for: inputTime),
             sampleDuration: duration, previousTime: lastVideoPresentationTime)
         try setupAudioIfNeeded()
         try setupVideoIfNeeded(pixelBuffer: pixelBuffer)
@@ -534,7 +542,7 @@ public final class RecorderSink: MediaSink, @unchecked Sendable {
         updateCadence { $0.recordVideo(seconds: normalizedTime.seconds, duration: duration.seconds) }
         lastVideoPresentationTime = normalizedTime
         session.markVideoFrame(at: normalizedTime, duration: duration)
-        lastInputEnd = max(lastInputEnd ?? frame.metadata.presentationTime, frame.metadata.presentationTime + duration)
+        lastInputEnd = max(lastInputEnd ?? inputTime, inputTime + duration)
         if !hasAcceptedVideoFrame {
             hasAcceptedVideoFrame = true
         }
